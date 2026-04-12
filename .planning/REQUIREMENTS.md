@@ -16,6 +16,8 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 - [ ] **FND-05**: `golang-migrate`-driven schema migration pipeline runs on API start
 - [ ] **FND-06**: `pkg/docker/runner.go` (ported from MSV, strict arg validation) can `run`, `exec`, `inspect`, `stop`, `rm` containers from Go
 - [ ] **FND-07**: Phase-0 spike report documents per-target-agent `HTTPS_PROXY` vs `*_BASE_URL` honoring, `chat_io.mode` per agent, tmux+named-pipe round-trip latency, and gVisor runsc feasibility on the chosen Hetzner kernel
+- [ ] **FND-08**: Temporal server runs on the host (single-node dev/prod profile, bound to loopback); Go API includes a Temporal worker that registers workflows and activities for session spawn, session destroy, recipe install, and reconciliation
+- [ ] **FND-09**: Temporal namespace, task queues (`session`, `billing`, `reconciliation`), and worker identity are configured and observable via `tctl` / Temporal Web UI
 
 ### Authentication (AUTH)
 
@@ -75,7 +77,7 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 - [ ] **SES-04**: User can stop a session; orchestrator tears down the container, releases the invariant, and destroys the ephemeral volume if free tier
 - [ ] **SES-05**: A reconciliation loop runs every 30s, lists all `playground-*` containers + all DB sessions, and fixes divergence (kills orphaned containers, marks zombie DB rows `failed`)
 - [ ] **SES-06**: An idle reaper goroutine kills sessions whose `last_activity_at` exceeds the tier's idle TTL (free = 15min, paid = 4h); activity is defined as any chat message, any terminal keystroke, or any `/work` mtime change — not just WS frames
-- [ ] **SES-07**: Session create/destroy is implemented as a durable workflow (pg-boss / DBOS-style) so an API crash mid-spawn does not leave dangling state
+- [ ] **SES-07**: Session create/destroy is implemented as a **Temporal workflow** (not pg-boss) so an API crash mid-spawn does not leave dangling state; activities wrap `pkg/docker/runner.go` calls with retry + timeout policies
 - [ ] **SES-08**: Container heartbeat pings the host every 30s; missing 3 heartbeats marks the session `stale` and triggers reconciliation
 - [ ] **SES-09**: Two concurrent `POST /api/sessions` from the same user race cleanly — exactly one succeeds, the other returns 409 Conflict (MIN-7)
 
@@ -216,7 +218,6 @@ Explicitly excluded. Documented to prevent scope creep.
 | Shared global terminal | Every session is isolated per user. No shared state across users. |
 | Parallel sessions in v1 | Tier-gated v2 upgrade lever. Keeps v1 invariant simple. |
 | Monthly subscription billing in v1 | Credit balance only. Subscriptions can come later if users ask. |
-| Temporal workflow engine | MSV used it; we're dropping it. In-process orchestrator + pg-boss durable workflows is sufficient at v1 scale. |
 | Kubernetes / K3s / Nomad | One Hetzner box, Docker on host. K8s is overkill and defeats the cost model. |
 | Storing OAuth tokens in cookies | Server-side Postgres session row; cookie holds only an opaque signed session ID. |
 | Mounting the host Docker socket | Security non-starter. Never. |

@@ -54,6 +54,7 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
 ## Constraints
 
 - **Tech stack**: Go API + Next.js frontend — mirror MSV, transfer patterns and code directly.
+- **Workflow engine**: **Temporal** — used for all durable workflows (session create/destroy, recipe install, reconciliation, billing reconciliation). Mirrors MSV's executor pattern. Explicitly overrides the research recommendation to "drop Temporal" — user decision.
 - **Infra**: Hetzner dedicated box — same as MSV; one beefy host, Docker on host for per-user containers.
 - **Auth**: Google + GitHub OAuth only in v1 — no email/password.
 - **Billing**: Credit balance via Stripe for platform-billed mode; BYOK path has zero billing touchpoints.
@@ -77,6 +78,7 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
 | Google + GitHub OAuth | Dev audience has GitHub; Google is universal. Skip email/password to reduce auth surface. | — Pending |
 | Whole platform open source | The hosted service is the monetization, not the code. OSS drives the recipe catalog contributions long-term. | — Pending |
 | One active session per user in v1 | Simpler infra, tier-gating comes later as an upgrade lever. | — Pending |
+| Use Temporal for durable workflows | User override of research recommendation. Session spawn/destroy, recipe install, reconciliation, billing reconciliation all run as Temporal workflows. Mirrors MSV's executor. | — Pending |
 
 ## Evolution
 
