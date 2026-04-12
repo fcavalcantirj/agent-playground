@@ -227,16 +227,130 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Will be populated by the roadmapper.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| FND-01 | Phase 1 | Pending |
+| FND-02 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Pending |
+| FND-04 | Phase 1 | Pending |
+| FND-05 | Phase 1 | Pending |
+| FND-06 | Phase 1 | Pending |
+| FND-07 | Phase 1 | Pending |
+| FND-08 | Phase 1 | Pending |
+| FND-09 | Phase 1 | Pending |
+| SBX-01 | Phase 2 | Pending |
+| SBX-02 | Phase 2 | Pending |
+| SBX-03 | Phase 2 | Pending |
+| SBX-04 | Phase 2 | Pending |
+| SBX-05 | Phase 2 | Pending |
+| SBX-06 | Phase 2 | Pending |
+| SBX-07 | Phase 2 | Pending |
+| SBX-08 | Phase 2 | Pending |
+| SBX-09 | Phase 2 | Pending |
+| AUTH-01 | Phase 3 | Pending |
+| AUTH-02 | Phase 3 | Pending |
+| AUTH-03 | Phase 3 | Pending |
+| AUTH-04 | Phase 3 | Pending |
+| AUTH-05 | Phase 3 | Pending |
+| AUTH-06 | Phase 3 | Pending |
+| SEC-01 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Pending |
+| SEC-03 | Phase 3 | Pending |
+| SEC-04 | Phase 3 | Pending |
+| SEC-05 | Phase 3 | Pending |
+| SEC-06 | Phase 3 | Pending |
+| SEC-07 | Phase 3 | Pending |
+| SEC-08 | Phase 3 | Pending |
+| SEC-09 | Phase 3 | Pending |
+| SEC-10 | Phase 3 | Pending |
+| SEC-11 | Phase 3 | Pending |
+| REC-01 | Phase 4 | Pending |
+| REC-02 | Phase 4 | Pending |
+| REC-03 | Phase 4 | Pending |
+| REC-04 | Phase 4 | Pending |
+| REC-05 | Phase 4 | Pending |
+| REC-06 | Phase 4 | Pending |
+| REC-07 | Phase 4 | Pending |
+| REC-08 | Phase 4 | Pending |
+| REC-09 | Phase 4 | Pending |
+| REC-10 | Phase 4 | Pending |
+| REC-11 | Phase 4 | Pending |
+| REC-12 | Phase 4 | Pending |
+| SES-01 | Phase 5 | Pending |
+| SES-02 | Phase 5 | Pending |
+| SES-03 | Phase 5 | Pending |
+| SES-04 | Phase 5 | Pending |
+| SES-05 | Phase 5 | Pending |
+| SES-06 | Phase 5 | Pending |
+| SES-07 | Phase 5 | Pending |
+| SES-08 | Phase 5 | Pending |
+| SES-09 | Phase 5 | Pending |
+| CHT-01 | Phase 5 | Pending |
+| CHT-02 | Phase 5 | Pending |
+| CHT-03 | Phase 5 | Pending |
+| CHT-04 | Phase 5 | Pending |
+| CHT-05 | Phase 5 | Pending |
+| TRM-01 | Phase 5 | Pending |
+| TRM-02 | Phase 5 | Pending |
+| TRM-03 | Phase 5 | Pending |
+| TRM-04 | Phase 5 | Pending |
+| TRM-05 | Phase 5 | Pending |
+| TRM-06 | Phase 5 | Pending |
+| MET-01 | Phase 6 | Pending |
+| MET-02 | Phase 6 | Pending |
+| MET-03 | Phase 6 | Pending |
+| MET-04 | Phase 6 | Pending |
+| MET-05 | Phase 6 | Pending |
+| MET-06 | Phase 6 | Pending |
+| MET-07 | Phase 6 | Pending |
+| MET-08 | Phase 6 | Pending |
+| MET-09 | Phase 6 | Pending |
+| MET-10 | Phase 6 | Pending |
+| MET-11 | Phase 6 | Pending |
+| MET-12 | Phase 6 | Pending |
+| MET-13 | Phase 6 | Pending |
+| MET-14 | Phase 6 | Pending |
+| MET-15 | Phase 6 | Pending |
+| BIL-01 | Phase 6 | Pending |
+| BIL-02 | Phase 6 | Pending |
+| BIL-03 | Phase 6 | Pending |
+| BIL-04 | Phase 6 | Pending |
+| BIL-05 | Phase 6 | Pending |
+| BIL-06 | Phase 6 | Pending |
+| PER-01 | Phase 7 | Pending |
+| PER-02 | Phase 7 | Pending |
+| PER-03 | Phase 7 | Pending |
+| PER-04 | Phase 7 | Pending |
+| PER-05 | Phase 7 | Pending |
+| PER-06 | Phase 7 | Pending |
+| PER-07 | Phase 7 | Pending |
+| PER-08 | Phase 7 | Pending |
+| PER-09 | Phase 7 | Pending |
+| OSS-01 | Phase 7 | Pending |
+| OSS-02 | Phase 7 | Pending |
+| OSS-03 | Phase 7 | Pending |
+| OSS-04 | Phase 7 | Pending |
+| OSS-05 | Phase 7 | Pending |
+| OSS-06 | Phase 7 | Pending |
+| OSS-07 | Phase 7 | Pending |
+| OSS-08 | Phase 7 | Pending |
+| OSS-09 | Phase 7 | Pending |
+| OSS-10 | Phase 7 | Pending |
+| BST-01 | Phase 8 | Pending |
+| BST-02 | Phase 8 | Pending |
+| BST-03 | Phase 8 | Pending |
+| BST-04 | Phase 8 | Pending |
+| BST-05 | Phase 8 | Pending |
+| BST-06 | Phase 8 | Pending |
+| BST-07 | Phase 8 | Pending |
+| BST-08 | Phase 8 | Pending |
+| BST-09 | Phase 8 | Pending |
 
 **Coverage:**
-- v1 requirements: [computed after roadmap creation]
-- Mapped to phases: [computed]
-- Unmapped: [computed]
+- v1 requirements: 116
+- Mapped to phases: 116
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 after initial definition*
+*Last updated: 2026-04-11 after roadmap creation*
