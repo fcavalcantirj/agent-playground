@@ -7,7 +7,36 @@
 // spawns to fail at the docker-pull step.
 package recipes
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// AuthFile describes a recipe-specific auth artifact the session bridge
+// must template with a BYOK key and bind-mount into a running container.
+// Used when the agent binary inside the recipe image does NOT honor
+// /run/secrets/<key> or env vars directly and instead reads auth from
+// its own config file under $HOME.
+//
+// Example: picoclaw reads api_keys from ~/.picoclaw/.security.yml, NOT
+// from ANTHROPIC_API_KEY env or /run/secrets/anthropic_key. The recipe
+// declares an AuthFile so the handler can render a per-session
+// .security.yml into the secrets dir and mount it at the expected path.
+type AuthFile struct {
+	// HostFilename is the leaf name the handler will write into the
+	// per-session secrets directory (e.g. ".security.yml"). It is NOT a
+	// full path; the handler prepends /tmp/ap/secrets/<session-id>/.
+	HostFilename string
+	// ContainerPath is the absolute path inside the container where the
+	// file must appear (e.g. "/home/agent/.picoclaw/.security.yml").
+	// Docker bind-mounts overlay even read-only rootfs at this point.
+	ContainerPath string
+	// Render produces the file's content for a given BYOK key. Each
+	// recipe supplies its own template; picoclaw emits a .security.yml
+	// with `api_keys: [<key>]` under the model entry.
+	Render func(key string) string
+}
 
 // ChatIOMode selects how the session bridge layer talks to the in-container
 // agent binary. FIFO = long-lived agent process whose stdin/stdout we tee
@@ -104,6 +133,14 @@ type Recipe struct {
 	// session. Leave empty when the agent takes the model via ModelFlag.
 	ModelEnvVar string
 
+	// AgentAuthFiles are recipe-specific auth artifacts the session
+	// bridge renders per-session and bind-mounts into the container.
+	// Needed when the agent binary reads API keys from its own config
+	// file (e.g. picoclaw's ~/.picoclaw/.security.yml) instead of env
+	// vars or /run/secrets/. Empty for recipes whose agent honors
+	// ANTHROPIC_API_KEY / OPENAI_API_KEY / etc. directly.
+	AgentAuthFiles []AuthFile
+
 	// ResourceOverrides optionally tightens DefaultSandbox resource caps.
 	ResourceOverrides ResourceOverrides
 }
@@ -123,6 +160,17 @@ var AllRecipes = map[string]*Recipe{
 		EnvOverrides:       map[string]string{"PICOCLAW_PROVIDER": "anthropic"},
 		SupportedProviders: []string{"anthropic"},
 		ModelFlag:          "--model",
+		// Picoclaw reads api_keys from ~/.picoclaw/.security.yml, indexed
+		// by <model_name>:<index>. It does NOT honor ANTHROPIC_API_KEY or
+		// /run/secrets/anthropic_key. Confirmed against sipeed/picoclaw
+		// commit c7461f9 — pkg/config/config_struct.go#SecureModelList.
+		AgentAuthFiles: []AuthFile{
+			{
+				HostFilename:  "picoclaw-security.yml",
+				ContainerPath: "/home/agent/.picoclaw/.security.yml",
+				Render:        renderPicoclawSecurityYAML,
+			},
+		},
 	},
 	"hermes": {
 		Name:  "hermes",
@@ -149,4 +197,26 @@ var AllRecipes = map[string]*Recipe{
 // Callers should treat a nil return as a 404 at the API layer.
 func Get(name string) *Recipe {
 	return AllRecipes[name]
+}
+
+// renderPicoclawSecurityYAML emits the .security.yml picoclaw reads at
+// startup. Picoclaw indexes api_keys by "<model_name>:<index>"; ":0" is
+// the first (and only) occurrence of each model. The key is quoted to
+// survive YAML string escaping even though sk-ant- keys don't contain
+// YAML metacharacters in practice. Models that are not in Phase 2's
+// supported set get empty entries so picoclaw's loader still recognizes
+// the schema version 2 pattern the baked config expects.
+func renderPicoclawSecurityYAML(key string) string {
+	// Escape any embedded double quotes defensively.
+	escaped := strings.ReplaceAll(key, `"`, `\"`)
+	return fmt.Sprintf(`channels:
+  telegram: {}
+model_list:
+  claude-sonnet-4.6:0:
+    api_keys:
+      - "%s"
+web:
+  brave: {}
+  tavily: {}
+`, escaped)
 }

@@ -37,6 +37,7 @@ type SecretProvisioner interface {
 	Provision(sessionID uuid.UUID, required []string) (string, error)
 	Cleanup(sessionID uuid.UUID) error
 	BindMountSpec(sessionID uuid.UUID) string
+	WriteAuthFile(sessionID uuid.UUID, filename, containerPath, content string) (string, error)
 }
 
 // ContainerRunner is the subset of *docker.Runner the handler needs for
@@ -65,6 +66,7 @@ type Handler struct {
 	store   SessionStore
 	runner  ContainerRunner
 	secrets SecretProvisioner
+	source  SecretSource
 	bridge  *Bridge
 	logger  zerolog.Logger
 }
@@ -72,11 +74,14 @@ type Handler struct {
 // NewHandler constructs a Handler. All dependencies are required;
 // passing nil for any of them will surface as a nil-pointer panic at
 // the first request, which is the intended "fail loud in dev" posture.
-func NewHandler(store SessionStore, runner ContainerRunner, secrets SecretProvisioner, bridge *Bridge, logger zerolog.Logger) *Handler {
+// source is used only when a recipe declares AgentAuthFiles that need
+// the raw BYOK key inlined into a per-session config file.
+func NewHandler(store SessionStore, runner ContainerRunner, secrets SecretProvisioner, source SecretSource, bridge *Bridge, logger zerolog.Logger) *Handler {
 	return &Handler{
 		store:   store,
 		runner:  runner,
 		secrets: secrets,
+		source:  source,
 		bridge:  bridge,
 		logger:  logger,
 	}
@@ -182,6 +187,29 @@ func (h *Handler) create(c echo.Context) error {
 	opts.Image = recipe.Image
 	opts.Name = docker.BuildContainerName(userID, sess.ID)
 	opts.Mounts = append(opts.Mounts, h.secrets.BindMountSpec(sess.ID))
+
+	// Recipe-specific auth file injection (e.g. picoclaw's .security.yml).
+	// When the agent binary doesn't honor env vars or /run/secrets, the
+	// recipe declares AgentAuthFiles and we render + bind-mount each one.
+	if len(recipe.AgentAuthFiles) > 0 {
+		key, keyErr := h.source.Get("anthropic_key")
+		if keyErr != nil {
+			_ = h.secrets.Cleanup(sess.ID)
+			_ = h.store.UpdateStatus(ctx, sess.ID, StatusFailed)
+			h.logger.Error().Err(keyErr).Msg("session create: anthropic_key unavailable for auth file render")
+			return c.JSON(http.StatusServiceUnavailable, errorBody("BYOK key unavailable"))
+		}
+		for _, af := range recipe.AgentAuthFiles {
+			spec, afErr := h.secrets.WriteAuthFile(sess.ID, af.HostFilename, af.ContainerPath, af.Render(key))
+			if afErr != nil {
+				_ = h.secrets.Cleanup(sess.ID)
+				_ = h.store.UpdateStatus(ctx, sess.ID, StatusFailed)
+				h.logger.Error().Err(afErr).Msg("session create: auth file write failed")
+				return c.JSON(http.StatusInternalServerError, errorBody("auth file provisioning failed"))
+			}
+			opts.Mounts = append(opts.Mounts, spec)
+		}
+	}
 	if opts.Env == nil {
 		opts.Env = make(map[string]string, len(recipe.EnvOverrides)+1)
 	}

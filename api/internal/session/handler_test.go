@@ -107,6 +107,10 @@ func (m *mockSecretWriter) BindMountSpec(sessionID uuid.UUID) string {
 	return "/tmp/ap/secrets/" + sessionID.String() + ":/run/secrets:ro"
 }
 
+func (m *mockSecretWriter) WriteAuthFile(sessionID uuid.UUID, filename, containerPath, content string) (string, error) {
+	return "/tmp/ap/secrets/" + sessionID.String() + "/" + filename + ":" + containerPath + ":ro", nil
+}
+
 type mockContainerRunner struct {
 	runFn    func(ctx context.Context, opts docker.RunOptions) (string, error)
 	stopFn   func(ctx context.Context, id string) error
@@ -180,7 +184,7 @@ func buildHandlerTest(t *testing.T, store *mockStore, sw *mockSecretWriter, runn
 	}
 
 	bridge := session.NewBridge(runner)
-	h := session.NewHandler(store, runner, sw, bridge, zerolog.Nop())
+	h := session.NewHandler(store, runner, sw, &session.DevEnvSource{AnthropicKey: "sk-ant-test"}, bridge, zerolog.Nop())
 
 	e := echo.New()
 	e.HideBanner = true
@@ -237,7 +241,7 @@ func buildWithFixedUser(t *testing.T, uid uuid.UUID, store *mockStore, sw *mockS
 	if runner == nil {
 		runner = &mockContainerRunner{}
 	}
-	h := session.NewHandler(store, runner, sw, session.NewBridge(runner), zerolog.Nop())
+	h := session.NewHandler(store, runner, sw, &session.DevEnvSource{AnthropicKey: "sk-ant-test"}, session.NewBridge(runner), zerolog.Nop())
 	e := echo.New()
 	authed := e.Group("/api", func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

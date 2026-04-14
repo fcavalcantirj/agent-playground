@@ -172,3 +172,35 @@ func (w *SecretWriter) Cleanup(sessionID uuid.UUID) error {
 func (w *SecretWriter) BindMountSpec(sessionID uuid.UUID) string {
 	return fmt.Sprintf("%s/%s:/run/secrets:ro", DefaultSecretBaseDir, sessionID.String())
 }
+
+// WriteAuthFile materializes a recipe-specific auth file under the
+// per-session secrets dir and returns the "host:container:ro" bind
+// mount spec for it. Each auth file is a separate file-level bind
+// mount into the agent's $HOME so it overlays the image's baked copy
+// (ap-picoclaw bakes an empty .security.yml; this replaces it with a
+// key-populated one at session start).
+//
+// Called by the handler after Provision, once per entry in
+// recipe.AgentAuthFiles. The returned spec targets the ABSOLUTE path
+// that exists inside the Docker daemon's mount namespace — which is
+// DefaultSecretBaseDir, NOT w.BaseDir — because containers only know
+// about /tmp/ap/secrets (tests override BaseDir for isolation but
+// production always uses the default).
+func (w *SecretWriter) WriteAuthFile(sessionID uuid.UUID, filename, containerPath, content string) (string, error) {
+	if w == nil {
+		return "", errors.New("session: nil SecretWriter")
+	}
+	dir := filepath.Join(w.BaseDir, sessionID.String())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("session: mkdir secrets: %w", err)
+	}
+	hostPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(hostPath, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("session: write auth file %q: %w", filename, err)
+	}
+	if err := os.Chmod(hostPath, 0o644); err != nil {
+		return "", fmt.Errorf("session: chmod auth file %q: %w", filename, err)
+	}
+	prodPath := filepath.Join(DefaultSecretBaseDir, sessionID.String(), filename)
+	return fmt.Sprintf("%s:%s:ro", prodPath, containerPath), nil
+}

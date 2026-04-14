@@ -123,7 +123,7 @@ func main() {
 		secretWriter := session.NewSecretWriter(secretSource)
 		sessStore := session.NewStore(db.Pool)
 		bridge := session.NewBridge(runner)
-		sessHandler := session.NewHandler(sessStore, runner, secretWriter, bridge, logger)
+		sessHandler := session.NewHandler(sessStore, runner, secretWriter, secretSource, bridge, logger)
 		opts = append(opts, server.WithSessionHandler(sessHandler))
 	}
 
