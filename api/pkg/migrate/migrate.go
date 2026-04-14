@@ -7,6 +7,25 @@
 //
 // We intentionally do NOT use github.com/golang-migrate/migrate -- the embedded
 // approach keeps the binary single-file and matches the MSV operational model.
+//
+// # Migration authoring rules
+//
+// Every SQL migration file MUST be written to be idempotent. If a migration
+// fails after partial execution and is retried on the next startup, the retry
+// must succeed without producing duplicate data or errors. Use:
+//
+//   - CREATE TABLE IF NOT EXISTS
+//   - CREATE INDEX IF NOT EXISTS
+//   - ALTER TABLE ... ADD COLUMN IF NOT EXISTS  (Postgres 9.6+)
+//   - DO $$ BEGIN ... EXCEPTION WHEN duplicate_* THEN NULL; END $$
+//
+// Avoid bare ALTER TABLE ADD COLUMN, CREATE INDEX, or INSERT without conflict
+// handling — these will error on retry if the first attempt succeeded partially.
+//
+// The migrator wraps each migration's SQL execution and schema_migrations INSERT
+// in a single transaction, so a process crash between the two leaves neither
+// committed. The advisory lock prevents concurrent API instances from running
+// the same migration simultaneously.
 package migrate
 
 import (
