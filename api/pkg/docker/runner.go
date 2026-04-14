@@ -296,6 +296,77 @@ func (r *Runner) Exec(ctx context.Context, containerID string, cmd []string) ([]
 	return output, nil
 }
 
+// ExecWithStdin runs a command inside a running container with a stdin
+// stream, returning combined stdout/stderr. This extends the existing
+// Exec path for the Plan 02-05 FIFO chat bridge, which writes user
+// messages into /run/ap/chat.in via `sh -c "cat >> /run/ap/chat.in"`.
+//
+// As with Exec, the SDK passes cmd as []string directly to the daemon —
+// no shell interpretation — so argv injection is structurally blocked.
+// The caller is still responsible for validating individual argv
+// elements when they contain user-controlled data.
+//
+// If stdin is non-nil, its contents are copied into the hijacked
+// connection before the output is read. If the underlying conn
+// implements CloseWrite (all net.TCPConn do), it is half-closed after
+// the write so the remote `cat` sees EOF.
+func (r *Runner) ExecWithStdin(ctx context.Context, containerID string, cmd []string, stdin io.Reader) ([]byte, error) {
+	if err := validateContainerID(containerID); err != nil {
+		return nil, fmt.Errorf("docker exec: %w", err)
+	}
+
+	createRes, err := r.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		Cmd:          cmd,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("docker exec: create %s: %w", containerID, err)
+	}
+
+	attachRes, err := r.client.ExecAttach(ctx, createRes.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker exec: attach %s: %w", createRes.ID, err)
+	}
+	defer func() {
+		if attachRes.Conn != nil {
+			_ = attachRes.Conn.Close()
+		}
+	}()
+
+	if stdin != nil && attachRes.Conn != nil {
+		if _, err := io.Copy(attachRes.Conn, stdin); err != nil {
+			return nil, fmt.Errorf("docker exec: stdin write %s: %w", createRes.ID, err)
+		}
+		// Half-close the write side so the remote process sees EOF on
+		// stdin. net.TCPConn and *tls.Conn both implement CloseWrite;
+		// net.Pipe does not, hence the type-assert fallback.
+		if cw, ok := attachRes.Conn.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
+	}
+
+	var output []byte
+	if attachRes.Reader != nil {
+		output, err = io.ReadAll(attachRes.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("docker exec: read output %s: %w", createRes.ID, err)
+		}
+	}
+
+	inspectRes, err := r.client.ExecInspect(ctx, createRes.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return output, fmt.Errorf("docker exec: inspect %s: %w", createRes.ID, err)
+	}
+	if inspectRes.ExitCode != 0 {
+		return output, fmt.Errorf("docker exec: %s exited with code %d", createRes.ID, inspectRes.ExitCode)
+	}
+
+	r.logger.Debug().Str("container", containerID).Strs("cmd", cmd).Msg("exec (stdin) completed")
+	return output, nil
+}
+
 // Inspect returns a distilled view of a container's current state.
 func (r *Runner) Inspect(ctx context.Context, containerID string) (*ContainerInfo, error) {
 	if err := validateContainerID(containerID); err != nil {
