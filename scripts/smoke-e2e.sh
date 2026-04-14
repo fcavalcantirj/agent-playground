@@ -93,9 +93,9 @@ trap cleanup EXIT INT TERM
 
 # --- Step 1: dev compose stack ---
 log "verifying dev compose stack (postgres + redis)"
-if ! docker compose -f docker-compose.dev.yml ps --services --filter status=running 2>/dev/null | grep -q '^postgres$'; then
+if ! docker compose -f docker-compose.dev.yml ps --services --filter status=running 2>/dev/null | grep -q '^postgresql$'; then
     log "starting docker-compose dev stack"
-    docker compose -f docker-compose.dev.yml up -d postgres redis
+    docker compose -f docker-compose.dev.yml up -d postgresql redis
     sleep 3
 fi
 
