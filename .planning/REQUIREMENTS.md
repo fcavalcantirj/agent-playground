@@ -11,9 +11,9 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 
 - [ ] **FND-01**: Hetzner dedicated host provisioned with Docker Engine 27.x + `userns-remap` enabled
 - [ ] **FND-02**: PostgreSQL 17 + Redis 7 running as loopback-bound systemd services
-- [ ] **FND-03**: Go 1.25 + Echo v4.15 + pgx v5.8 binary builds, starts, and serves `/healthz`
+- [ ] **FND-03**: Go 1.25 + Echo v4.15 + pgx v5.x (v5.8+) binary builds, starts, and serves `/healthz`
 - [ ] **FND-04**: Next.js 16.2 + React 19.2 + Tailwind v4 + shadcn/ui frontend serves a mobile-first login-gated landing page (designed for phone viewport first, desktop enhances)
-- [ ] **FND-05**: `golang-migrate`-driven schema migration pipeline runs on API start
+- [ ] **FND-05**: Embedded-FS custom migrator (MSV pattern, pgx-native) runs schema migrations on API start
 - [ ] **FND-06**: `pkg/docker/runner.go` (ported from MSV, strict arg validation) can `run`, `exec`, `inspect`, `stop`, `rm` containers from Go
 - [ ] **FND-07**: Phase-0 spike report documents per-target-agent `HTTPS_PROXY` vs `*_BASE_URL` honoring, `chat_io.mode` per agent, tmux+named-pipe round-trip latency, and gVisor runsc feasibility on the chosen Hetzner kernel
 - [ ] **FND-08**: Temporal server runs on the host (single-node dev/prod profile, bound to loopback); Go API includes a Temporal worker that registers workflows and activities for session spawn, session destroy, recipe install, and reconciliation
