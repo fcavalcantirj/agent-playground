@@ -24,12 +24,33 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 3
-Next:  02 (Agent-in-a-Box + Minimal Substrate, **reshaped 2026-04-14**) — needs `/gsd-plan-phase 2`
-Plans complete: 6 of 6 (all Phase 1)
-Status: Ready to execute
+Phase: 02.5 (recon complete, ready for insertion)
+Next:  `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
+Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
+Status: Recon phase done. Ready for Phase 02.5 planning.
 
-Progress: [█░░░░░░░░░] 11% (1/9 phases — Phase 7.5 inserted during reshape)
+Progress: [██░░░░░░░░] 22% (2/9 phases; Phase 02.5 to insert between 2 and 3)
+
+## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
+
+**Primary resume file:** `.planning/research/PHASE-02.5-PREP.md`
+
+It captures: Phase 2 complete, 40-agent L1 recon done, schema prior-art research done,
+10-recipe schema draft ready, all locked decisions, and the exact next command.
+
+**The next command is:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
+
+Read files in this order after /clear:
+1. `.planning/research/PHASE-02.5-PREP.md` (anchor — read first)
+2. `.planning/STATE.md` (this file)
+3. `.planning/PROJECT.md`
+4. `./CLAUDE.md`
+5. `.planning/research/AGENT-MATRIX.md` (40-agent sweep)
+6. `.planning/research/SCHEMA-PRIOR-ART.md` (12-project schema research)
+7. `.planning/research/RECIPE-SCHEMA-DRAFT.md` (schema draft + 10 worked recipes)
+8. `.planning/research/agents/praktor.md` (#1 prior art)
+9. `.planning/research/agents/memoh.md` (#2 prior art)
+10. `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md`
 
 ## Quick Tasks Completed
 
@@ -248,10 +269,13 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-14 — Phase 2 discuss-phase + roadmap reshape
-Stopped at: Phase 2 context gathered with a scope reshape. ROADMAP.md + REQUIREMENTS.md updated; Phase 7.5 (Sandbox Hardening Spine) inserted. Phase 2 is now the hypothesis-forward "agent-in-a-box + stub session API" slice. Ready for planning.
+Last session: 2026-04-14 — Phase 2 executed + validated end-to-end + frontend quick-import + 40-agent L1 recon sweep + schema prior-art research + 10-recipe schema draft.
 
-**Next command:** `/gsd-plan-phase 2`
+Stopped at: Phase 2 complete (container-sandbox-spine validated end-to-end with real LLM reply through hardened sandbox + BYOK + FIFO bridge + demux fix). Frontend imported as `frontend/` with ported auth logic from `web/`. 40 agents swept (Wave 1 + Wave 2), 12-project schema prior-art research completed, `RECIPE-SCHEMA-DRAFT.md` written with 10 worked reference recipes. Ready to insert Phase 02.5 Recipe Manifest Reshape.
+
+**Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
+
+**Primary resume artifact:** `.planning/research/PHASE-02.5-PREP.md` — read first after /clear.
 
 ### Reading order for a fresh session after /clear
 
