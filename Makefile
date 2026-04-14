@@ -21,7 +21,8 @@ endif
 PICOCLAW_SHA := c7461f9e963496c4471336642ac6a8d91a456978
 HERMES_SHA := 5621fc449a7c00f11168328c87e024a0203792c3
 
-.PHONY: build-ap-base build-picoclaw build-hermes build-recipes clean-recipes smoke-test
+.PHONY: build-ap-base build-picoclaw build-hermes build-recipes clean-recipes smoke-test \
+	dev-frontend build-frontend lint-frontend install-frontend
 
 build-ap-base:
 	docker build -t $(AP_BASE_TAG) deploy/ap-base/
@@ -51,3 +52,20 @@ smoke-test:
 	fi
 	bash scripts/smoke-e2e.sh picoclaw
 	bash scripts/smoke-e2e.sh hermes
+
+# --- Frontend targets (Phase 3+) ---
+# frontend/ is the v0-authored marketing + dashboard tree with auth
+# logic ported from the legacy web/. The targets shell into that
+# directory and delegate to pnpm — the rest of the repo never imports
+# any Next.js build internals, so Makefile stays backend-first.
+install-frontend:
+	cd frontend && pnpm install
+
+dev-frontend:
+	cd frontend && pnpm dev
+
+build-frontend:
+	cd frontend && pnpm build
+
+lint-frontend:
+	cd frontend && pnpm lint
