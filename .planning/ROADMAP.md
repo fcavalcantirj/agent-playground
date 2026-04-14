@@ -18,12 +18,12 @@
 ## Phase Details
 
 ### Phase 1: Foundations, Spikes & Temporal
-**Goal**: A running Hetzner host with Docker, Postgres, Redis, Temporal, a Go API, a Next.js shell, and the Phase-0 spike answers committed — everything downstream phases consume.
+**Goal**: A running Hetzner host with Docker, Postgres, Redis, Temporal, a Go API, a mobile-first Next.js shell, the multi-agent baseline schema, and the Phase-0 spike answers committed — everything downstream phases consume.
 **Depends on**: Nothing (first phase).
-**Requirements**: FND-01, FND-02, FND-03, FND-04, FND-05, FND-06, FND-07, FND-08, FND-09
+**Requirements**: FND-01, FND-02, FND-03, FND-04, FND-05, FND-06, FND-07, FND-08, FND-09, FND-10
 **Success Criteria** (what must be TRUE):
-  1. `curl https://<host>/healthz` from the internet returns 200 from the Go API behind UFW, proving the Hetzner box, Docker 27.x with `userns-remap`, Postgres 17, Redis 7, Echo v4, and pgx v5 are all up and `golang-migrate` has applied the baseline schema at boot.
-  2. A developer visits the Next.js 16 login-gated landing page and sees it served from the same host — Next.js + React 19 + Tailwind v4 + shadcn/ui render correctly and the route refuses unauthenticated access.
+  1. `curl https://<host>/healthz` from the internet returns 200 from the Go API behind UFW, proving the Hetzner box, Docker 27.x with `userns-remap`, Postgres 17, Redis 7, Echo v4, and pgx v5 are all up and `golang-migrate` has applied the baseline schema (including the `agents` table) at boot.
+  2. A developer visits the Next.js 16 mobile-first login-gated landing page on a phone viewport and sees it served from the same host — Next.js + React 19 + Tailwind v4 + shadcn/ui render correctly with touch-friendly targets and the route refuses unauthenticated access.
   3. A Go unit test can call `pkg/docker/runner.go` to `run`, `exec`, `inspect`, `stop`, `rm` an `alpine` container on the host with strict arg validation and succeed end-to-end — the MSV-ported runner is live.
   4. A trivial Temporal workflow (`ping -> pong`) submitted to the `session` task queue via the Go API worker runs to completion and is observable in Temporal Web UI + `tctl`, proving worker identity, namespace, and all three task queues (`session`, `billing`, `reconciliation`) are wired.
   5. `.planning/research/SPIKE-REPORT.md` is committed documenting per-agent `HTTPS_PROXY` vs `*_BASE_URL` behavior, `chat_io.mode` for each curated agent, tmux+named-pipe round-trip latency, and gVisor `runsc` feasibility on the chosen Hetzner kernel.
@@ -133,8 +133,8 @@
 
 ## Coverage
 
-- **v1 requirements**: 116
-- **Mapped**: 116 (100%)
+- **v1 requirements**: 117
+- **Mapped**: 117 (100%)
 - **Unmapped**: 0
 - **Orphaned**: 0
 

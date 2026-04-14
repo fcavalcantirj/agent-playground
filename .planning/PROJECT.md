@@ -1,8 +1,12 @@
 # Agent Playground
 
+## Mission
+
+**Democratize agent deployment — the easiest way to deploy any agent × any model combination.**
+
 ## What This Is
 
-A web platform where logged-in users pick any combination of coding agent (OpenClaw, Hermes, HiClaw, PicoClaw, NanoClaw, and others from the clawclones catalog) and any model (OpenRouter, Anthropic, OpenAI) and get a dockerized session to drive it — via a browser chat UI or a web terminal into the same container. Inspired by `/Users/fcavalcanti/dev/meusecretariovirtual` (MSV) but without its constraints: no Telegram dependency, not locked to PicoClaw, not locked to Anthropic models.
+A mobile-first web platform where users create any number of agent instances — each combining a coding agent (OpenClaw, Hermes, HiClaw, PicoClaw, NanoClaw, and others from the clawclones catalog) with any model (OpenRouter, Anthropic, OpenAI) — and get a persistent dockerized container per agent, accessible via browser chat, web terminal, SSH, or webhook. Each agent is a tab on the mobile UI. Users create as many agents as their credits allow. Inspired by MSV but without its constraints: no Telegram dependency, not locked to one agent or one model.
 
 ## Core Value
 
@@ -23,19 +27,20 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
   - [ ] Deterministic, Docker-tested recipes for seed agents: Hermes, HiClaw, PicoClaw (plus OpenClaw as the default full agent)
   - [ ] Generic Claude-Code-driven bootstrap prompt for any git repo the user points at
   - [ ] Recipes stored in-repo under `agents/<name>/`
-- [ ] Per-user dockerized session on the Hetzner host, isolated filesystem
-- [ ] Hybrid session UX: browser chat as default, drop-into-web-terminal for power users (both views of the same container)
+- [ ] N agent instances per user — each is its own dockerized container with webhook URL, SSH access, and chat channel. Users create as many as credits allow.
+- [ ] Multi-surface access: mobile-first browser chat (primary), web terminal, SSH, webhook per agent
+- [ ] Mobile-first UI: agents as tabs for quick-switch chat; designed for phone first, desktop enhances
 - [ ] Session tiers: free = ephemeral container, paid = persistent container with backed-up volume
-- [ ] One active session per user (parallel sessions out of scope for v1)
+- [ ] v1 enforces 1 active (running) agent at a time — but schema, API, and UI designed for N-active. Flipping the limit is a config change, not a rewrite.
 - [ ] BYOK: user pastes their own OpenRouter / Anthropic / OpenAI keys, platform never sees billing
 - [ ] Platform-billed credits: Stripe top-up, metered per token/call, USD balance displayed and draining
 - [ ] Open-source the whole platform (frontend + Go API + recipe catalog + container bases) under a permissive license; monetize via the hosted service
 
 ### Out of Scope
 
-- **Telegram bot integration** — MSV's biggest constraint; we explicitly remove it. Interaction is browser-only.
+- **Telegram bot integration** — MSV's biggest constraint; we explicitly remove it.
 - **Locked-in single agent or single model provider** — the whole point is agent × model agnosticism.
-- **Multiple parallel sessions per user in v1** — one active session is simpler infra; tier-gated parallelism is a v2 lever.
+- **N active (running) agents simultaneously in v1** — schema supports N, v1 enforces 1 active. N-active is a v2 config flip.
 - **Monthly subscription billing in v1** — credit balance only. Subscriptions can come later if users ask.
 - **Cloud-managed hosting (AWS/GCP/Fly)** — Hetzner dedicated box mirrors MSV and keeps container costs predictable.
 - **Closed-source core** — platform is open source; monetization is the hosted service, not the code.
@@ -43,7 +48,7 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
 
 ## Context
 
-**Inspiration:** `/Users/fcavalcanti/dev/meusecretariovirtual` (MSV) — Go API + Next.js frontend, Hetzner dedicated, dockerized PicoClaw per user, Telegram onboarding. Proven pattern for "one container per user" at scale. This project mirrors the stack and deployment model, drops the Telegram dependency, and generalizes the agent + model choice.
+**Inspiration:** `/Users/fcavalcanti/dev/meusecretariovirtual` (MSV) — Go API + Next.js frontend, Hetzner dedicated, dockerized PicoClaw per user, Telegram onboarding. Proven pattern for "one container per user" at scale. This project mirrors the stack and deployment model, drops the Telegram dependency, and generalizes to N agents per user × any model choice.
 
 **Agent ecosystem:** Catalog lives at <https://clawclones.com/#clones> — OpenClaw, Hermes-agent, grip-ai, NanoClaw, Carapace, IronClaw, ZeroClaw, OpenFang, Poco, nanobot, plus PicoClaw and HiClaw. Most are open source, most support multiple providers. The ecosystem is growing, which is exactly why the platform has to be agent-agnostic from day one rather than bet on a fixed list.
 
@@ -60,7 +65,9 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
 - **Billing**: Credit balance via Stripe for platform-billed mode; BYOK path has zero billing touchpoints.
 - **Models**: Must support OpenRouter, Anthropic direct, and OpenAI direct on day 1. Local/Ollama is a later tier.
 - **Open source**: Whole platform ships OSS under a permissive license (MIT or Apache-2.0) — decision deferred to planning.
-- **Session concurrency**: One active session per user; multi-session is tier-gated v2 work.
+- **Mobile-first**: All UI is designed for mobile viewport first, desktop enhances. Phone is the primary device.
+- **Multi-agent model**: N agents per user (each = container + webhook + SSH + chat channel), v1 limits 1 active (running), schema + API ready for N-active. Flipping the limit = config change.
+- **Access channels**: Browser chat (primary), web terminal, SSH, webhook per agent. Not browser-only.
 - **Security**: Per-user isolated Docker container on a shared host; recipe execution inside containers must not trust user-supplied repo URLs blindly (sandbox hardening is a hard requirement for the generic bootstrap path).
 
 ## Key Decisions
@@ -77,7 +84,10 @@ A web platform where logged-in users pick any combination of coding agent (OpenC
 | BYOK is first-class, not an afterthought | Some users will never top up credits; they want to use their own keys. Must be supported from v1. | — Pending |
 | Google + GitHub OAuth | Dev audience has GitHub; Google is universal. Skip email/password to reduce auth surface. | — Pending |
 | Whole platform open source | The hosted service is the monetization, not the code. OSS drives the recipe catalog contributions long-term. | — Pending |
-| One active session per user in v1 | Simpler infra, tier-gating comes later as an upgrade lever. | — Pending |
+| N agents per user, 1 active in v1, N-active ready | Schema + API support N agents from day 1. v1 enforces 1 running at a time via config. N-active is a v2 config flip, not a rewrite. | User override of "one session" model |
+| Mobile-first design | Phone is the primary device. Agents as tabs for quick-switch chat. Desktop enhances, not the other way. | User decision during Phase 1 discuss |
+| Multi-surface access (web + SSH + webhook) | Each agent gets browser chat, web terminal, SSH, and webhook URL. Not browser-only. | User decision during Phase 1 discuss |
+| Mission: democratize agent deployment | The easiest way to deploy any agent × any model combination, in one click. | User decision during Phase 1 discuss |
 | Use Temporal for durable workflows | User override of research recommendation. Session spawn/destroy, recipe install, reconciliation, billing reconciliation all run as Temporal workflows. Mirrors MSV's executor. | — Pending |
 
 ## Evolution
@@ -98,4 +108,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-11 after initialization*
+*Last updated: 2026-04-13 — multi-agent model, mobile-first, mission statement, multi-surface access (Phase 1 discuss)*

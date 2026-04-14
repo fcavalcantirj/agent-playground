@@ -12,12 +12,13 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 - [ ] **FND-01**: Hetzner dedicated host provisioned with Docker Engine 27.x + `userns-remap` enabled
 - [ ] **FND-02**: PostgreSQL 17 + Redis 7 running as loopback-bound systemd services
 - [ ] **FND-03**: Go 1.25 + Echo v4.15 + pgx v5.8 binary builds, starts, and serves `/healthz`
-- [ ] **FND-04**: Next.js 16.2 + React 19.2 + Tailwind v4 + shadcn/ui frontend serves a login-gated landing page
+- [ ] **FND-04**: Next.js 16.2 + React 19.2 + Tailwind v4 + shadcn/ui frontend serves a mobile-first login-gated landing page (designed for phone viewport first, desktop enhances)
 - [ ] **FND-05**: `golang-migrate`-driven schema migration pipeline runs on API start
 - [ ] **FND-06**: `pkg/docker/runner.go` (ported from MSV, strict arg validation) can `run`, `exec`, `inspect`, `stop`, `rm` containers from Go
 - [ ] **FND-07**: Phase-0 spike report documents per-target-agent `HTTPS_PROXY` vs `*_BASE_URL` honoring, `chat_io.mode` per agent, tmux+named-pipe round-trip latency, and gVisor runsc feasibility on the chosen Hetzner kernel
 - [ ] **FND-08**: Temporal server runs on the host (single-node dev/prod profile, bound to loopback); Go API includes a Temporal worker that registers workflows and activities for session spawn, session destroy, recipe install, and reconciliation
 - [ ] **FND-09**: Temporal namespace, task queues (`session`, `billing`, `reconciliation`), and worker identity are configured and observable via `tctl` / Temporal Web UI
+- [ ] **FND-10**: Baseline migration includes an `agents` table (user_id FK, agent_type, model_provider, model_id, key_source, status, webhook_url, container_id, ssh_port, config jsonb) — multi-agent data model from day 1, ready for N-active in v2
 
 ### Authentication (AUTH)
 
@@ -72,7 +73,7 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 ### Session Lifecycle (SES)
 
 - [ ] **SES-01**: User can create a new session by selecting `(agent, model_provider, model_id, key_source, tier)`; session goes from `pending → provisioning → ready → running` with observable state transitions
-- [ ] **SES-02**: Exactly one active session per user is enforced at two layers: a Postgres partial-unique index on `(user_id) WHERE status IN ('provisioning','ready','running')` and a Redis `SETNX session:create:{user_id}` lock with 60s TTL
+- [ ] **SES-02**: v1 enforces max 1 active (running) agent per user at two layers: a Postgres partial-unique index on `(user_id) WHERE status IN ('provisioning','ready','running')` and a Redis `SETNX agent:activate:{user_id}` lock with 60s TTL. Schema and API support N-active — flipping the limit is a config change (v2), not a migration.
 - [ ] **SES-03**: Container creation installs the recipe and launches the agent inside a tmux window named `chat` attached to named pipes `/work/.ap/chat.in` and `/work/.ap/chat.out`; TTY ready in ≤10s from click
 - [ ] **SES-04**: User can stop a session; orchestrator tears down the container, releases the invariant, and destroys the ephemeral volume if free tier
 - [ ] **SES-05**: A reconciliation loop runs every 30s, lists all `playground-*` containers + all DB sessions, and fixes divergence (kills orphaned containers, marks zombie DB rows `failed`)
@@ -238,6 +239,7 @@ Explicitly excluded. Documented to prevent scope creep.
 | FND-07 | Phase 1 | Pending |
 | FND-08 | Phase 1 | Pending |
 | FND-09 | Phase 1 | Pending |
+| FND-10 | Phase 1 | Pending |
 | SBX-01 | Phase 2 | Pending |
 | SBX-02 | Phase 2 | Pending |
 | SBX-03 | Phase 2 | Pending |
@@ -347,10 +349,10 @@ Explicitly excluded. Documented to prevent scope creep.
 | BST-09 | Phase 8 | Pending |
 
 **Coverage:**
-- v1 requirements: 116
-- Mapped to phases: 116
+- v1 requirements: 117
+- Mapped to phases: 117
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 after roadmap creation*
+*Last updated: 2026-04-13 — added FND-10 (multi-agent schema), updated FND-04 (mobile-first), updated SES-02 (N-agent model)*
