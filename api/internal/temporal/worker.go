@@ -75,13 +75,17 @@ func NewWorkers(temporalHost, namespace string, logger zerolog.Logger) (*Workers
 }
 
 // Start starts all registered workers. Each worker.Start is non-blocking and
-// spawns its own background pollers. If any worker fails to start the method
-// returns the first error without attempting to stop the already-started
-// workers -- the caller is expected to treat that as fatal and exit the
-// process, at which point the Temporal client cleanup happens in defer Stop().
+// spawns its own background pollers. If any worker fails to start, all
+// already-started workers are stopped and the Temporal client is closed before
+// returning the error, preventing goroutine leaks.
 func (w *Workers) Start() error {
 	for i, wr := range w.workers {
 		if err := wr.Start(); err != nil {
+			// Roll back all already-started workers before returning.
+			for j := 0; j < i; j++ {
+				w.workers[j].Stop()
+			}
+			w.Client.Close()
 			return fmt.Errorf("temporal worker %d start: %w", i, err)
 		}
 	}
