@@ -9,8 +9,13 @@
 //   - Build server via internal/server.New (functional options pattern)
 //   - Start Echo, wait for SIGINT/SIGTERM, shut down gracefully
 //
-// Plan 01-01 Task 2 will wire DevAuthHandler + SessionProvider through
+// Plan 01-01 Task 2 wires DevAuthHandler + SessionProvider through
 // server.WithDevAuth(...) without changing the Task 1 wiring shape.
+//
+// Plan 01-05 Task 2 wires Temporal workers via server.WithWorkers(...) --
+// still no change to the server.New signature. When TEMPORAL_HOST is empty
+// the Temporal block is skipped entirely so `go run` against a laptop with
+// no Temporal server keeps working.
 package main
 
 import (
@@ -25,6 +30,7 @@ import (
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
 	"github.com/agentplayground/api/internal/server"
+	apitemporal "github.com/agentplayground/api/internal/temporal"
 	"github.com/agentplayground/api/pkg/database"
 	"github.com/agentplayground/api/pkg/migrate"
 	apredis "github.com/agentplayground/api/pkg/redis"
@@ -61,15 +67,47 @@ func main() {
 		logger.Fatal().Err(err).Msg("migrate run failed")
 	}
 
+	// Temporal workers (optional). When TEMPORAL_HOST is empty we skip the
+	// dial entirely so `go run ./cmd/server` against a laptop without a
+	// Temporal server still starts and serves /healthz. When set, we build
+	// three workers (session/billing/reconciliation), start their pollers,
+	// and hand them to the server via the WithWorkers functional option so
+	// Shutdown can Stop them. The Server.Workers field stays nil when the
+	// option is not supplied, matching Plan 01-01's TestIntegration_NoOptionsWiring
+	// contract.
+	var workerOpt server.Option
+	var temporalWorkers *apitemporal.Workers
+	if cfg.TemporalHost != "" {
+		w, err := apitemporal.NewWorkers(cfg.TemporalHost, cfg.TemporalNamespace, logger)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("failed to create temporal workers")
+		}
+		if err := w.Start(); err != nil {
+			logger.Fatal().Err(err).Msg("failed to start temporal workers")
+		}
+		logger.Info().
+			Str("host", cfg.TemporalHost).
+			Str("namespace", cfg.TemporalNamespace).
+			Msg("temporal workers started")
+		temporalWorkers = w
+		workerOpt = server.WithWorkers(w)
+	} else {
+		logger.Warn().Msg("TEMPORAL_HOST empty, skipping temporal worker startup")
+	}
+
 	// Server -- functional options pattern. Task 1 booted with zero options;
-	// Task 2 wires the dev cookie auth via WithDevAuth(...). Plan 01-05 will
-	// add WithWorkers(...) for Temporal without touching this call.
+	// Plan 01-01 Task 2 wires the dev cookie auth via WithDevAuth(...). Plan
+	// 01-05 adds WithWorkers(...) for Temporal. Plan 01-01's
+	// TestIntegration_NoOptionsWiring contract still holds: any of these
+	// options can be omitted and server.New continues to compile and run.
 	checker := handler.NewInfraChecker(db, rdb)
 	sessionStore := handler.NewDevSessionStore(db.Pool)
 	devAuth := handler.NewDevAuthHandler(db.Pool, sessionStore, []byte(cfg.SessionSecret), cfg.DevMode)
-	srv := server.New(cfg, logger, checker,
-		server.WithDevAuth(devAuth, sessionStore),
-	)
+	opts := []server.Option{server.WithDevAuth(devAuth, sessionStore)}
+	if workerOpt != nil {
+		opts = append(opts, workerOpt)
+	}
+	srv := server.New(cfg, logger, checker, opts...)
 
 	// Run Echo in a goroutine so we can listen for shutdown signals.
 	go func() {
@@ -88,6 +126,15 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error().Err(err).Msg("server shutdown error")
+	}
+
+	// Drain Temporal workers after Echo has stopped accepting new requests.
+	// Stopping before Echo.Shutdown could kill in-flight workflow callers;
+	// stopping after is the safer order. We use the concrete type (not
+	// srv.Workers) so Stop is deterministic even if the server struct is
+	// garbage-collected out from under us.
+	if temporalWorkers != nil {
+		temporalWorkers.Stop()
 	}
 }
 
