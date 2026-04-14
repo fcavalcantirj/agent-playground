@@ -2,12 +2,15 @@ package docker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -573,6 +576,81 @@ func TestRunOptions_NoPrivilegedField(t *testing.T) {
 	// SBX-05 invariant: RunOptions must never expose a Privileged field.
 	_, found := reflect.TypeOf(RunOptions{}).FieldByName("Privileged")
 	assert.False(t, found, "RunOptions must not expose a Privileged field (SBX-05)")
+}
+
+// ---------- ExecWithStdin (Plan 02-04) ----------
+
+func TestRunner_ExecWithStdin_SetsAttachStdin(t *testing.T) {
+	// Use net.Pipe to model the hijacked connection. The runner writes
+	// stdin into clientConn; we consume it from serverConn in a goroutine
+	// so the io.Copy doesn't deadlock.
+	serverConn, clientConn := net.Pipe()
+	readDone := make(chan []byte, 1)
+	go func() {
+		defer func() { _ = serverConn.Close() }()
+		buf := make([]byte, 256)
+		n, _ := serverConn.Read(buf)
+		readDone <- buf[:n]
+	}()
+
+	hijacked := client.HijackedResponse{
+		Conn:   clientConn,
+		Reader: bufio.NewReader(&bytes.Buffer{}),
+	}
+
+	m := &mockDockerClient{
+		execCreateResp:  client.ExecCreateResult{ID: "exec-stdin-1"},
+		execAttachResp:  client.ExecAttachResult{HijackedResponse: hijacked},
+		execInspectResp: client.ExecInspectResult{ID: "exec-stdin-1", ExitCode: 0, Running: false},
+	}
+	r := newTestRunner(t, m)
+
+	payload := strings.NewReader("hello-fifo\n")
+	_, err := r.ExecWithStdin(context.Background(), "cid-1", []string{"sh", "-c", "cat >> /run/ap/chat.in"}, payload)
+	require.NoError(t, err)
+
+	require.Len(t, m.execCreateCalls, 1)
+	assert.Equal(t, "cid-1", m.execCreateCalls[0].containerID)
+	assert.True(t, m.execCreateCalls[0].opts.AttachStdin, "AttachStdin must be true")
+	assert.True(t, m.execCreateCalls[0].opts.AttachStdout)
+	assert.True(t, m.execCreateCalls[0].opts.AttachStderr)
+	assert.Equal(t, []string{"sh", "-c", "cat >> /run/ap/chat.in"}, []string(m.execCreateCalls[0].opts.Cmd))
+
+	// Confirm the stdin bytes flowed through the hijacked conn.
+	select {
+	case got := <-readDone:
+		assert.Equal(t, "hello-fifo\n", string(got))
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for stdin bytes to reach hijacked conn")
+	}
+}
+
+func TestRunner_ExecWithStdin_RejectsInvalidContainerID(t *testing.T) {
+	m := &mockDockerClient{}
+	r := newTestRunner(t, m)
+	_, err := r.ExecWithStdin(context.Background(), "; rm -rf /", []string{"ls"}, strings.NewReader(""))
+	assert.Error(t, err)
+	assert.Empty(t, m.execCreateCalls)
+}
+
+func TestRunner_ExecWithStdin_NonZeroExitReturnsError(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	go func() {
+		defer func() { _ = serverConn.Close() }()
+		_, _ = io.ReadAll(serverConn)
+	}()
+	hijacked := client.HijackedResponse{
+		Conn:   clientConn,
+		Reader: bufio.NewReader(&bytes.Buffer{}),
+	}
+	m := &mockDockerClient{
+		execCreateResp:  client.ExecCreateResult{ID: "exec-stdin-2"},
+		execAttachResp:  client.ExecAttachResult{HijackedResponse: hijacked},
+		execInspectResp: client.ExecInspectResult{ID: "exec-stdin-2", ExitCode: 7, Running: false},
+	}
+	r := newTestRunner(t, m)
+	_, err := r.ExecWithStdin(context.Background(), "cid-2", []string{"false"}, strings.NewReader(""))
+	assert.Error(t, err)
 }
 
 // ---------- Integration test (skipped under -short) ----------
