@@ -178,18 +178,10 @@ func (h *DevAuthHandler) Me(c echo.Context) error {
 }
 
 // extractToken parses the cookie value and returns the underlying token if
-// the HMAC matches. Used by Logout to look up the session row to destroy.
+// the HMAC matches. Delegates to middleware.VerifyCookie for constant-time
+// HMAC verification to prevent timing-based forgery attacks.
 func extractToken(cookieValue string, secret []byte) (string, bool) {
-	for i := 0; i < len(cookieValue); i++ {
-		if cookieValue[i] == '.' {
-			sig, token := cookieValue[:i], cookieValue[i+1:]
-			if middleware.SignCookieValue(token, secret) == sig+"."+token {
-				return token, true
-			}
-			return "", false
-		}
-	}
-	return "", false
+	return middleware.VerifyCookie(cookieValue, secret)
 }
 
 // DevSessionStore is the Plan 01-01 SessionProvider implementation. Sessions

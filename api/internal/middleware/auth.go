@@ -59,7 +59,7 @@ func AuthMiddleware(provider SessionProvider, secret []byte) echo.MiddlewareFunc
 				return unauthorized(c)
 			}
 
-			token, ok := verifyCookie(cookie.Value, secret)
+			token, ok := VerifyCookie(cookie.Value, secret)
 			if !ok {
 				return unauthorized(c)
 			}
@@ -86,9 +86,9 @@ func SignCookieValue(token string, secret []byte) string {
 	return sig + "." + token
 }
 
-// verifyCookie parses a `<hmac_hex>.<token>` value and returns the token if
+// VerifyCookie parses a `<hmac_hex>.<token>` value and returns the token if
 // the signature matches. Constant-time comparison via hmac.Equal.
-func verifyCookie(value string, secret []byte) (string, bool) {
+func VerifyCookie(value string, secret []byte) (string, bool) {
 	idx := strings.IndexByte(value, '.')
 	if idx <= 0 || idx == len(value)-1 {
 		return "", false
