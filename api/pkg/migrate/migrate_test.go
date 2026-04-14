@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,13 @@ import (
 func startEmbeddedPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	port := uint32(45433 + time.Now().UnixNano()%1000)
+	// Use an OS-assigned ephemeral port to avoid collisions when tests run in
+	// parallel. We grab a free port, close the listener, then hand the port
+	// number to embedded-postgres before it can be reused.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := uint32(l.Addr().(*net.TCPAddr).Port)
+	l.Close()
 	tmpDir, err := os.MkdirTemp("", "ap-migrate-test-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })

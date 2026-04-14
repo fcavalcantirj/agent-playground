@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,7 +29,13 @@ import (
 func startTestPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	port := uint32(46500 + time.Now().UnixNano()%1000)
+	// Use an OS-assigned ephemeral port to avoid collisions when tests run in
+	// parallel. We grab a free port, close the listener, then hand the port
+	// number to embedded-postgres before it can be reused.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := uint32(l.Addr().(*net.TCPAddr).Port)
+	l.Close()
 	tmpDir, err := os.MkdirTemp("", "ap-devauth-test-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
