@@ -22,7 +22,6 @@ services:
       - POSTGRES_USER=temporal
       - POSTGRES_PWD=${TEMPORAL_PG_PASSWORD}
       - POSTGRES_SEEDS=127.0.0.1
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
     restart: unless-stopped
 
   temporal-ui:
