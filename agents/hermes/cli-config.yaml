@@ -1,0 +1,30 @@
+# agents/hermes/cli-config.yaml — pre-baked for Phase 2 smoke test
+# Forces Anthropic provider, local terminal backend, CLI toolset.
+# All other settings inherit upstream defaults.
+#
+# Note: the messaging gateways (Telegram/Discord/Slack/WhatsApp/Signal/Matrix)
+# are NOT activated by config — they are spawned only by `hermes gateway`,
+# which Phase 2 NEVER invokes. So there is no "disable channel daemon" key.
+# CONTEXT D-21 was wrong about needing one. (Verified: hermes_cli/main.py)
+
+model:
+  default: "anthropic/claude-sonnet-4-6"
+  provider: "anthropic"
+  base_url: "https://api.anthropic.com"
+
+terminal:
+  backend: "local"        # CRITICAL: prevents container-in-container backends (docker/ssh/modal/daytona/singularity)
+  cwd: "/home/agent/work"
+  timeout: 180
+  lifetime_seconds: 300
+
+platform_toolsets:
+  cli: [hermes-cli]
+
+memory:
+  memory_enabled: false   # ephemeral memory in Phase 2 (no persistent volume; Phase 7 adds ap-vol-<user>)
+  user_profile_enabled: false
+
+agent:
+  verbose: false
+  reasoning_effort: "medium"
