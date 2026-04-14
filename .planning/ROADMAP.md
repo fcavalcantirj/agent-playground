@@ -57,12 +57,12 @@ Plans:
   5. **Hypothesis proof via end-to-end curl smoke test**: `POST /api/sessions` (with `recipe`, `model_provider`, `model_id`) spawns the container via direct runner.go call (no Temporal in Phase 2, HTTP contract compatible with Phase 5's Temporal upgrade). `POST /api/sessions/:id/message {text}` exchanges a real message with a real Anthropic model via BYOK env injection, returns the response. `DELETE /api/sessions/:id` tears down cleanly. Test passes for **both picoclaw and Hermes** with no dangling `playground-*` containers afterwards. "API-driven agent start without Telegram" is demonstrated from curl.
 **Plans:** 6 plans
 Plans:
-- [ ] 02-01-PLAN.md -- ap-base image (Dockerfile + entrypoint + tmux + ttyd + gosu drop) [Wave 1]
-- [ ] 02-02-PLAN.md -- runner.go sandbox fields + container naming helper [Wave 1]
-- [ ] 02-03-PLAN.md -- Two recipe overlays (ap-picoclaw FIFO + ap-hermes single-query) [Wave 2]
-- [ ] 02-04-PLAN.md -- Sessions migration + recipes package + secrets writer + ExecWithStdin (foundations) [Wave 2]
-- [ ] 02-05-PLAN.md -- Session HTTP handlers + chat bridge + main.go wiring (API surface) [Wave 3]
-- [ ] 02-06-PLAN.md -- End-to-end smoke test + integration tests + human verification [Wave 4]
+- [x] 02-01-PLAN.md -- ap-base image (Dockerfile + entrypoint + tmux + ttyd + gosu drop) [Wave 1]
+- [x] 02-02-PLAN.md -- runner.go sandbox fields + container naming helper [Wave 1]
+- [x] 02-03-PLAN.md -- Two recipe overlays (ap-picoclaw FIFO + ap-hermes single-query) [Wave 2]
+- [x] 02-04-PLAN.md -- Sessions migration + recipes package + secrets writer + ExecWithStdin (foundations) [Wave 2]
+- [x] 02-05-PLAN.md -- Session HTTP handlers + chat bridge + main.go wiring (API surface) [Wave 3]
+- [x] 02-06-PLAN.md -- End-to-end smoke test + integration tests + human verification [Wave 4]
 **UI hint**: no (API-only; Phase 5 adds the browser UX)
 **Reshape rationale**: See `02-CONTEXT.md` `<domain>` section. Hardening deferred = zero work lost (runner.go hooks are plumbed; Phase 7.5 fills them in against a substrate known to work).
 
