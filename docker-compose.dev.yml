@@ -29,7 +29,7 @@ services:
       retries: 10
 
   temporal:
-    image: temporalio/auto-setup:latest
+    image: temporalio/auto-setup:1.29.3
     depends_on:
       postgresql:
         condition: service_healthy
@@ -44,7 +44,7 @@ services:
     restart: on-failure
 
   temporal-ui:
-    image: temporalio/ui:latest
+    image: temporalio/ui:2.34.0
     depends_on:
       - temporal
     environment:
