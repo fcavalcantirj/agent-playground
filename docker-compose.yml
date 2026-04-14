@@ -1,0 +1,37 @@
+version: "3.8"
+
+# Production compose file for the Hetzner host.
+#
+# On the production host, Postgres and Redis run as systemd services directly
+# on the host (installed via deploy/hetzner/install-postgres.sh and
+# install-redis.sh). This compose file is ONLY for Temporal and its Web UI —
+# Temporal runs in Docker because the auto-setup image handles its own schema
+# bootstrap and version upgrades cleanly.
+#
+# `network_mode: host` lets Temporal talk to the host's loopback Postgres
+# without exposing any ports to the internet. UFW (deploy/hetzner/harden-ufw.sh)
+# blocks everything except 22/tcp and 443/tcp from outside.
+
+services:
+  temporal:
+    image: temporalio/auto-setup:latest
+    network_mode: host
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=${TEMPORAL_PG_PASSWORD}
+      - POSTGRES_SEEDS=127.0.0.1
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    network_mode: host
+    environment:
+      - TEMPORAL_ADDRESS=127.0.0.1:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_UI_PORT=8233
+    restart: unless-stopped
+    depends_on:
+      - temporal
