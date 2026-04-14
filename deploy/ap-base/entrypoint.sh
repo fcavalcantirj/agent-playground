@@ -24,7 +24,10 @@ if [ "$(id -u)" = "0" ]; then
     # bind-mount it is just an empty dir. This preserves Pitfall 7 semantics at
     # runtime the same way the Dockerfile did at build time.
     mkdir -p "$RUN_DIR" /run/secrets
-    chmod 0500 /run/secrets
+    # chmod is a no-op when /run/secrets is a read-only bind-mount (Plan 04
+    # SecretWriter attaches :ro), so tolerate EROFS — the host already set the
+    # correct mode on the source dir.
+    chmod 0500 /run/secrets 2>/dev/null || true
 
     # Fix ownership of any mounted volumes (Phase 7 will mount /work as a
     # named volume; Phase 2 uses tmpfs, so this is a no-op then). Tolerate

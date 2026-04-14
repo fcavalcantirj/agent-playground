@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -182,10 +183,22 @@ func (h *Handler) create(c echo.Context) error {
 	opts.Name = docker.BuildContainerName(userID, sess.ID)
 	opts.Mounts = append(opts.Mounts, h.secrets.BindMountSpec(sess.ID))
 	if opts.Env == nil {
-		opts.Env = make(map[string]string, len(recipe.EnvOverrides))
+		opts.Env = make(map[string]string, len(recipe.EnvOverrides)+1)
 	}
 	for k, v := range recipe.EnvOverrides {
 		opts.Env[k] = v
+	}
+	// For FIFO-mode recipes, tell ap-base's entrypoint.sh which agent process
+	// to launch in the tmux chat window. The entrypoint interpolates this into
+	// `bash -c '$AP_AGENT_CMD < $FIFO_IN > $FIFO_OUT'`, so join with spaces.
+	// ExecMode recipes (Hermes) leave AP_AGENT_CMD empty — POST /messages does
+	// one `docker exec` per message instead.
+	if recipe.ChatIO.Mode == recipes.ChatIOFIFO && len(recipe.ChatIO.LaunchCmd) > 0 {
+		launch := append([]string{}, recipe.ChatIO.LaunchCmd...)
+		if recipe.ModelFlag != "" {
+			launch = append(launch, recipe.ModelFlag, req.ModelID)
+		}
+		opts.Env["AP_AGENT_CMD"] = strings.Join(launch, " ")
 	}
 	// Resource overrides only touch Memory / CPUs / PidsLimit — security knobs
 	// stay locked (T-02-02 mitigation).
@@ -272,7 +285,7 @@ func (h *Handler) message(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("session recipe no longer available"))
 	}
 
-	reply, err := h.bridge.SendMessage(ctx, *sess.ContainerID, recipe, req.Text)
+	reply, err := h.bridge.SendMessage(ctx, *sess.ContainerID, recipe, sess.ModelID, req.Text)
 	if err != nil {
 		if errors.Is(err, ErrTimeout) {
 			return c.JSON(http.StatusGatewayTimeout, errorBody("agent response timeout"))

@@ -89,7 +89,7 @@ func TestBridge_FIFOMode(t *testing.T) {
 		},
 	}
 
-	resp, err := b.SendMessage(context.Background(), "abc123", rec, "hello")
+	resp, err := b.SendMessage(context.Background(), "abc123", rec, "", "hello")
 	require.NoError(t, err)
 	assert.Equal(t, "hello back", resp)
 
@@ -127,7 +127,7 @@ func TestBridge_ExecMode(t *testing.T) {
 		},
 	}
 
-	resp, err := b.SendMessage(context.Background(), "cid", rec, "hi there")
+	resp, err := b.SendMessage(context.Background(), "cid", rec, "", "hi there")
 	require.NoError(t, err)
 	assert.Equal(t, "ok: got your message", resp)
 
@@ -158,7 +158,7 @@ func TestBridge_Timeout(t *testing.T) {
 		},
 	}
 
-	_, err := b.SendMessage(context.Background(), "cid", rec, "hi")
+	_, err := b.SendMessage(context.Background(), "cid", rec, "", "hi")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, session.ErrTimeout), "expected ErrTimeout, got %v", err)
 }
@@ -179,7 +179,7 @@ func TestBridge_TextWithShellMetacharacters(t *testing.T) {
 	}
 
 	malicious := "; rm -rf / $(whoami) `id`"
-	_, err := b.SendMessage(context.Background(), "cid", rec, malicious)
+	_, err := b.SendMessage(context.Background(), "cid", rec, "", malicious)
 	require.NoError(t, err)
 
 	require.Len(t, m.execCalls, 1)
@@ -205,7 +205,7 @@ func TestBridge_StripsANSI(t *testing.T) {
 		},
 	}
 
-	resp, err := b.SendMessage(context.Background(), "cid", rec, "err")
+	resp, err := b.SendMessage(context.Background(), "cid", rec, "", "err")
 	require.NoError(t, err)
 	assert.Equal(t, "ERR", resp)
 }

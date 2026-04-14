@@ -92,6 +92,18 @@ type Recipe struct {
 	// Phase 2 every recipe supports "anthropic" and only anthropic.
 	SupportedProviders []string
 
+	// ModelFlag is the CLI flag the recipe's agent binary uses to accept a
+	// model name (e.g. "--model" for picoclaw). The handler appends
+	// `ModelFlag <user-chosen model>` to LaunchCmd (FIFO recipes) or
+	// ExecCmd (Exec recipes) per session. Leave empty when the agent picks
+	// its model from an env var via EnvOverrides + ModelEnvVar instead.
+	ModelFlag string
+
+	// ModelEnvVar is the env-var name the recipe's agent binary reads to
+	// pick a model. The handler sets opts.Env[ModelEnvVar] = modelID per
+	// session. Leave empty when the agent takes the model via ModelFlag.
+	ModelEnvVar string
+
 	// ResourceOverrides optionally tightens DefaultSandbox resource caps.
 	ResourceOverrides ResourceOverrides
 }
@@ -110,6 +122,7 @@ var AllRecipes = map[string]*Recipe{
 		RequiredSecrets:    []string{"anthropic_key"},
 		EnvOverrides:       map[string]string{"PICOCLAW_PROVIDER": "anthropic"},
 		SupportedProviders: []string{"anthropic"},
+		ModelFlag:          "--model",
 	},
 	"hermes": {
 		Name:  "hermes",
@@ -125,6 +138,7 @@ var AllRecipes = map[string]*Recipe{
 			"HERMES_QUIET":              "1",
 		},
 		SupportedProviders: []string{"anthropic"},
+		ModelFlag:          "--model",
 		ResourceOverrides: ResourceOverrides{
 			Memory: 2 << 30, // 2 GiB; Hermes's Python venv + chromium is heavier
 		},

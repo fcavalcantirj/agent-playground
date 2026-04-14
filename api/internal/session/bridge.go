@@ -60,7 +60,7 @@ func NewBridge(r RunnerExec) *Bridge {
 // The context is wrapped with recipe.ChatIO.ResponseTimeout so callers
 // that pass a longer-lived context still honor the per-recipe cap.
 // Timeouts surface as ErrTimeout (HTTP 504 at the handler layer).
-func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.Recipe, text string) (string, error) {
+func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
 	if recipe == nil {
 		return "", fmt.Errorf("session bridge: nil recipe")
 	}
@@ -72,7 +72,7 @@ func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *re
 
 	switch recipe.ChatIO.Mode {
 	case recipes.ChatIOExec:
-		return b.execMode(ctx, containerID, recipe, text)
+		return b.execMode(ctx, containerID, recipe, modelID, text)
 	case recipes.ChatIOFIFO:
 		return b.fifoMode(ctx, containerID, recipe, text)
 	default:
@@ -89,8 +89,12 @@ func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *re
 // between Go and the container's exec layer. The user text therefore
 // cannot be interpreted as shell metacharacters even if it contains
 // `;`, `$()`, or backticks.
-func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recipes.Recipe, text string) (string, error) {
-	cmd := append(slices.Clone(recipe.ChatIO.ExecCmd), text)
+func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
+	cmd := slices.Clone(recipe.ChatIO.ExecCmd)
+	if recipe.ModelFlag != "" && modelID != "" {
+		cmd = append(cmd, recipe.ModelFlag, modelID)
+	}
+	cmd = append(cmd, text)
 	out, err := b.runner.Exec(ctx, containerID, cmd)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {

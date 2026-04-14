@@ -16,12 +16,14 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/rs/zerolog"
@@ -258,6 +260,7 @@ func (r *Runner) Exec(ctx context.Context, containerID string, cmd []string) ([]
 
 	createRes, err := r.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
+		User:         "agent",
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -276,20 +279,23 @@ func (r *Runner) Exec(ctx context.Context, containerID string, cmd []string) ([]
 		}
 	}()
 
-	var output []byte
+	// Docker multiplexes stdout/stderr over a single framed stream when the
+	// exec was created without Tty=true. Demux via stdcopy so the caller
+	// receives clean stdout bytes, not `\x01\x00\x00\x00...` frame headers.
+	var stdout, stderr bytes.Buffer
 	if attachRes.Reader != nil {
-		output, err = io.ReadAll(attachRes.Reader)
-		if err != nil {
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, attachRes.Reader); err != nil {
 			return nil, fmt.Errorf("docker exec: read output %s: %w", createRes.ID, err)
 		}
 	}
+	output := stdout.Bytes()
 
 	inspectRes, err := r.client.ExecInspect(ctx, createRes.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return output, fmt.Errorf("docker exec: inspect %s: %w", createRes.ID, err)
 	}
 	if inspectRes.ExitCode != 0 {
-		return output, fmt.Errorf("docker exec: %s exited with code %d", createRes.ID, inspectRes.ExitCode)
+		return output, fmt.Errorf("docker exec: %s exited with code %d: %s", createRes.ID, inspectRes.ExitCode, strings.TrimSpace(stderr.String()))
 	}
 
 	r.logger.Debug().Str("container", containerID).Strs("cmd", cmd).Msg("exec completed")
@@ -317,6 +323,7 @@ func (r *Runner) ExecWithStdin(ctx context.Context, containerID string, cmd []st
 
 	createRes, err := r.client.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
+		User:         "agent",
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -347,20 +354,21 @@ func (r *Runner) ExecWithStdin(ctx context.Context, containerID string, cmd []st
 		}
 	}
 
-	var output []byte
+	// Demux the multiplexed stdout/stderr stream (see Exec for rationale).
+	var stdout, stderr bytes.Buffer
 	if attachRes.Reader != nil {
-		output, err = io.ReadAll(attachRes.Reader)
-		if err != nil {
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, attachRes.Reader); err != nil {
 			return nil, fmt.Errorf("docker exec: read output %s: %w", createRes.ID, err)
 		}
 	}
+	output := stdout.Bytes()
 
 	inspectRes, err := r.client.ExecInspect(ctx, createRes.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return output, fmt.Errorf("docker exec: inspect %s: %w", createRes.ID, err)
 	}
 	if inspectRes.ExitCode != 0 {
-		return output, fmt.Errorf("docker exec: %s exited with code %d", createRes.ID, inspectRes.ExitCode)
+		return output, fmt.Errorf("docker exec: %s exited with code %d: %s", createRes.ID, inspectRes.ExitCode, strings.TrimSpace(stderr.String()))
 	}
 
 	r.logger.Debug().Str("container", containerID).Strs("cmd", cmd).Msg("exec (stdin) completed")

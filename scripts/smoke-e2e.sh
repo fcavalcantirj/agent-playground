@@ -44,7 +44,7 @@ cd "$REPO_ROOT"
 
 API_PORT="${API_PORT:-8080}"
 API_BASE="http://localhost:${API_PORT}"
-MODEL_ID="${AP_SMOKE_MODEL:-claude-sonnet-4-5}"
+MODEL_ID="${AP_SMOKE_MODEL:-claude-sonnet-4.6}"
 COOKIE_JAR="$(mktemp -t ap-smoke-cookie.XXXXXX)"
 API_LOG="$(mktemp -t ap-smoke-api.XXXXXX.log)"
 API_PID=""
@@ -72,7 +72,7 @@ cleanup() {
 
     # Belt-and-suspenders: force-remove any leaked playground-* containers.
     local leaked
-    leaked="$(docker ps -a --filter name=playground- --format '{{.ID}}' 2>/dev/null || true)"
+    leaked="$(docker ps -a --filter name=^playground- --format '{{.ID}}' 2>/dev/null || true)"
     if [[ -n "$leaked" ]]; then
         echo "$leaked" | xargs -r docker rm -f >/dev/null 2>&1 || true
     fi
@@ -202,7 +202,7 @@ SESSION_ID=""
 
 # --- Step 8: ZERO dangling containers ---
 sleep 2
-DANGLING="$(docker ps -a --filter name=playground- --format '{{.Names}}')"
+DANGLING="$(docker ps -a --filter name=^playground- --format '{{.Names}}')"
 if [[ -n "$DANGLING" ]]; then
     fail "dangling playground containers after delete: ${DANGLING}"
 fi

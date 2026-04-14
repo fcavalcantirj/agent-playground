@@ -34,8 +34,15 @@ func DefaultSandbox() docker.RunOptions {
 			"/tmp": "rw,noexec,nosuid,size=128m",
 			"/run": "rw,noexec,nosuid,size=16m",
 		},
-		CapDrop:    []string{"ALL"},
-		CapAdd:     nil,
+		CapDrop: []string{"ALL"},
+		// Init-time caps needed ONLY for the root→agent drop in ap-base entrypoint:
+		//   CHOWN   — phase-1 `chown agent:agent /run/ap` on the tmpfs
+		//   SETUID  — gosu setuid(10000)
+		//   SETGID  — gosu setgid(10000)
+		//   SETPCAP — gosu clears the cap bounding set
+		// NoNewPrivs below structurally prevents any re-escalation after the drop,
+		// so these caps are only live during the entrypoint's root phase.
+		CapAdd:     []string{"CHOWN", "SETUID", "SETGID", "SETPCAP"},
 		NoNewPrivs: true,
 		Runtime:    "", // runc
 		Network:    "bridge",

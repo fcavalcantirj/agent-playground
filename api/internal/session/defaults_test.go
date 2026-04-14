@@ -23,7 +23,17 @@ func TestDefaultSandbox_Hardened(t *testing.T) {
 	assert.Equal(t, "", s.Runtime, "Runtime empty = runc default")
 }
 
-func TestDefaultSandbox_NoCapAdd(t *testing.T) {
+func TestDefaultSandbox_InitCapsOnly(t *testing.T) {
 	s := session.DefaultSandbox()
-	assert.Empty(t, s.CapAdd, "CapAdd must be empty — Phase 2 recipes need zero capabilities")
+	// Phase 2 init-only caps: needed by ap-base entrypoint for the root→agent
+	// gosu drop + /run/ap chown. NoNewPrivs locks privs after init.
+	assert.ElementsMatch(t,
+		[]string{"CHOWN", "SETUID", "SETGID", "SETPCAP"},
+		s.CapAdd,
+		"CapAdd must be exactly the ap-base init caps")
+	// Caps that must NEVER appear (privilege-escalation / network-tampering):
+	for _, forbidden := range []string{"SYS_ADMIN", "NET_ADMIN", "NET_RAW", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH", "SYS_RAWIO"} {
+		assert.NotContains(t, s.CapAdd, forbidden,
+			"CapAdd must not include %s", forbidden)
+	}
 }
