@@ -84,6 +84,17 @@ func TestLoad_TemporalDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	require.Equal(t, "localhost:7233", cfg.TemporalHost)
+	// TemporalHost has no default: empty means "skip Temporal dial" so that
+	// operators who don't run Temporal don't need to set TEMPORAL_HOST="".
+	require.Equal(t, "", cfg.TemporalHost)
 	require.Equal(t, "default", cfg.TemporalNamespace)
+}
+
+func TestLoad_TemporalHostExplicit(t *testing.T) {
+	resetEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("TEMPORAL_HOST", "temporal.example.com:7233")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "temporal.example.com:7233", cfg.TemporalHost)
 }

@@ -33,7 +33,9 @@ type Config struct {
 	// Must be at least 32 bytes for HMAC-SHA256.
 	SessionSecret string
 
-	// TemporalHost is the Temporal frontend address. Defaults to "localhost:7233".
+	// TemporalHost is the Temporal frontend address. Empty means "no Temporal"
+	// and cmd/server/main.go skips the worker dial entirely. Set TEMPORAL_HOST
+	// explicitly to connect (e.g. "localhost:7233" in local dev).
 	TemporalHost string
 
 	// TemporalNamespace is the Temporal namespace this binary uses. Defaults to "default".
@@ -50,7 +52,7 @@ func Load() (*Config, error) {
 		LogLevel:          getEnvDefault("LOG_LEVEL", "info"),
 		DevMode:           strings.EqualFold(os.Getenv("AP_DEV_MODE"), "true"),
 		SessionSecret:     os.Getenv("AP_SESSION_SECRET"),
-		TemporalHost:      getEnvDefault("TEMPORAL_HOST", "localhost:7233"),
+		TemporalHost:      os.Getenv("TEMPORAL_HOST"),
 		TemporalNamespace: getEnvDefault("TEMPORAL_NAMESPACE", "default"),
 	}
 
