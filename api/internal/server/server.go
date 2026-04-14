@@ -63,6 +63,9 @@ func WithWorkers(w Workers) Option {
 // SessionProvider interface -- callers stay unchanged.
 func WithDevAuth(h *handler.DevAuthHandler, provider middleware.SessionProvider) Option {
 	return func(s *Server) {
+		if len(s.Config.SessionSecret) < 32 {
+			panic("WithDevAuth requires AP_SESSION_SECRET of at least 32 bytes")
+		}
 		s.devAuth = h
 		s.sessionProvider = provider
 	}

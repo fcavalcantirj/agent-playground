@@ -58,13 +58,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	if cfg.DevMode {
-		if cfg.SessionSecret == "" {
-			return nil, fmt.Errorf("AP_SESSION_SECRET is required when AP_DEV_MODE=true")
-		}
-		if len(cfg.SessionSecret) < 32 {
-			return nil, fmt.Errorf("AP_SESSION_SECRET must be at least 32 bytes (got %d)", len(cfg.SessionSecret))
-		}
+	// Validate length whenever a secret is provided, regardless of DevMode.
+	// A short HMAC key is cryptographically weak; a zero-length key makes every
+	// token produce the same signature.
+	if cfg.SessionSecret != "" && len(cfg.SessionSecret) < 32 {
+		return nil, fmt.Errorf("AP_SESSION_SECRET must be at least 32 bytes (got %d)", len(cfg.SessionSecret))
+	}
+
+	// In dev mode the secret is required (the dev cookie auth path always uses it).
+	if cfg.DevMode && cfg.SessionSecret == "" {
+		return nil, fmt.Errorf("AP_SESSION_SECRET is required when AP_DEV_MODE=true")
 	}
 
 	return cfg, nil
