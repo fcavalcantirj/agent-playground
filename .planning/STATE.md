@@ -31,6 +31,12 @@ Status: Ready to execute
 
 Progress: [█░░░░░░░░░] 11% (1/9 phases — Phase 7.5 inserted during reshape)
 
+## Quick Tasks Completed
+
+| ID | Date | Description | Notes |
+|----|------|-------------|-------|
+| 260414-mwo | 2026-04-14 | Import v0 frontend as `frontend/` monorepo member | v0 tree at `/frontend`, ported `api.ts`/`middleware.ts`/`dev-login-form.tsx` from legacy `/web`, added Makefile targets. `/web` still on disk — deletion deferred to Phase 3 after new tree is verified end-to-end. |
+
 ### ⚠️ Phase 02 Reshape (2026-04-14) — READ BEFORE PLANNING
 
 The original Phase 02 in the roadmap bundled substrate + full hardening. After a discuss-phase session, the user challenged whether the hardening half actually moved the project hypothesis forward. Conclusion: it did not, and it should land against a known-working substrate rather than a speculative one.
