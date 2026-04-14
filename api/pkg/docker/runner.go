@@ -53,7 +53,7 @@ type RunOptions struct {
 	// Name is an optional container name. If empty, Docker assigns a random one.
 	Name string
 	// Env holds environment variables passed to the container. Keys must match
-	// [A-Z_][A-Z0-9_]*; values must not contain backticks or $( ) sequences.
+	// [A-Za-z_][A-Za-z0-9_]*; values must not contain backticks or $( ) sequences.
 	Env map[string]string
 	// Mounts is a list of bind mounts in "host:container[:ro]" format.
 	Mounts []string
@@ -314,8 +314,11 @@ var (
 	// period, slash, and dash; optional :tag suffix.
 	imageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./\-]*(:[a-zA-Z0-9_.\-]+)?$`)
 
-	// envKeyPattern: standard POSIX-ish env var key.
-	envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	// envKeyPattern: POSIX env var key allowing upper- and lower-case letters,
+	// digits, and underscores, starting with a letter or underscore. Lowercase
+	// is accepted to support tools and proxy conventions (e.g. http_proxy,
+	// https_proxy, no_proxy) that use lowercase keys by POSIX convention.
+	envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 const (

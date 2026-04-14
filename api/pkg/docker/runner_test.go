@@ -87,6 +87,10 @@ func TestValidateEnvVar(t *testing.T) {
 		"MULTI_WORD_KEY=some value with spaces",
 		"_UNDERSCORE=ok",
 		"A=1",
+		// Lowercase keys are valid: POSIX proxy conventions (http_proxy, etc.)
+		"http_proxy=http://proxy.example.com:3128",
+		"https_proxy=http://proxy.example.com:3128",
+		"no_proxy=localhost,127.0.0.1",
 	}
 	for _, env := range valid {
 		t.Run("accept/"+env, func(t *testing.T) {
@@ -99,7 +103,6 @@ func TestValidateEnvVar(t *testing.T) {
 		"no_equals_sign",
 		"FOO=$(evil)",
 		"BAR=`cmd`",
-		"lowercase=bad",
 		"1BAD=bad",
 		"FOO BAR=bad",
 		"FOO=value with $(subshell)",
