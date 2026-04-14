@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: phase_01_complete
-stopped_at: Phase 01 executed, code-reviewed, fixed, verified. Visual UAT cleared. Spike 4 (gVisor on Hetzner) still pending — needs SSH access to prod box. Ready for `/gsd-discuss-phase 2`.
-last_updated: "2026-04-14T02:20:00Z"
-last_activity: 2026-04-14 -- Phase 01 complete; ready for Phase 02 discuss
+status: completed
+stopped_at: Phase 2 context gathered (reshaped to hypothesis-forward agent-in-a-box + minimal substrate; hardening spine deferred)
+last_updated: "2026-04-14T02:50:22.377Z"
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 6
   completed_plans: 6
-  percent: 12
+  percent: 100
 ---
 
 # Project State
@@ -62,6 +61,7 @@ From PROJECT.md Key Decisions:
 ### Phase 01 Outcomes (what now exists in the repo)
 
 **Go API (`api/`):**
+
 - Echo v4.15.1 + pgx v5.9.1 + Redis v9.18 + zerolog
 - `cmd/server/main.go` boot: config → DB → Redis → migrations → server.New(...opts) → graceful shutdown
 - `pkg/database/postgres.go` — pgxpool wrapper
@@ -74,6 +74,7 @@ From PROJECT.md Key Decisions:
 - `internal/temporal/` — 3 workers (session/billing/reconciliation queues), 5 stub workflows (SessionSpawn, SessionDestroy, RecipeInstall, ReconcileContainers, ReconcileBilling) + PingPong proof. Workers.Start() rolls back partial startups (CR-03 fix). Empty TEMPORAL_HOST short-circuits to skip Temporal entirely (WR-01 fix).
 
 **Next.js frontend (`web/`):**
+
 - Next 16.2 + React 19.2 + Tailwind v4 + shadcn/ui + Inter font + dark mode default + emerald accent
 - `src/app/page.tsx` — auth-gated landing. **Uses versioned auth re-fetch pattern**: `authVersion` state bumped by `refreshAuth` callback re-runs the /api/me effect. (Was using `router.refresh()` which only re-runs server components — fixed in `eecbef4`.)
 - `src/components/dev-login-form.tsx` — emerald 44px touch-target button, calls `onLoginSuccess` callback prop after POST /api/dev/login
@@ -84,6 +85,7 @@ From PROJECT.md Key Decisions:
 - **CRITICAL:** `web/AGENTS.md` says "This is NOT the Next.js you know" — Next 16 has breaking changes; future agents must read `node_modules/next/dist/docs/` before touching Next-specific code. Already burned by NODE_ENV=development causing build failure during 01-03.
 
 **Infrastructure:**
+
 - `docker-compose.dev.yml` — Postgres 17 + Redis 7 + **Temporal 1.29.3** + **Temporal UI 2.34.0** (CR-05 fix: pinned versions). All ports `127.0.0.1`-bound. `condition: service_healthy` on temporal→postgresql. **Removed `DYNAMIC_CONFIG_FILE_PATH`** env var (compose fix `480d5b4`) — image doesn't ship the file and we don't mount it.
 - `docker-compose.yml` — production Temporal + UI, `network_mode: host`, same pinned versions
 - `deploy/dev/init-db.sh` — creates `agent_playground` DB after first compose up
@@ -91,6 +93,7 @@ From PROJECT.md Key Decisions:
 - `.env.example` — all env vars documented
 
 **Spike report (`.planning/research/SPIKE-REPORT.md`):**
+
 - **Spike 1** (per-agent HTTPS_PROXY vs *_BASE_URL): OpenClaw + PicoClaw both honor BOTH; HTTPS_PROXY env wins for v1 transparent metering proxy. Hermes/HiClaw/NanoClaw deferred to Phase 4 recipe authoring (sources not local).
 - **Spike 2** (chat_io.mode per agent): OpenClaw = `gateway-websocket`; PicoClaw = `cli-stdio` + per-channel adapters. Drives `chat_io.mode` enum addition to Phase 4 recipe schema.
 - **Spike 3** (tmux + named-pipe RTT): **min 69µs / p50 85µs / p95 138µs / p99 0.19ms / max 238µs** measured locally in alpine:3.20 Docker. PASS — 262× headroom under 50ms budget.
@@ -102,6 +105,7 @@ From PROJECT.md Key Decisions:
 `01-REVIEW-FIX.md`: 11/11 critical+warning fixed in single pass, 0 skipped. Info findings deferred (run `/gsd-code-review-fix 01 --all` to address).
 
 Notable info-severity items deferred:
+
 - INF-01: HMAC compare logic duplicated in 2 places (now uses shared VerifyCookie after CR-01, but constant could be extracted)
 - INF-02: Related — VerifyCookie naming
 - INF-03: docker-compose missing temporal healthcheck (currently relies on restart: on-failure)
@@ -112,6 +116,7 @@ Notable info-severity items deferred:
 
 `01-VERIFICATION.md`: status `human_needed`, score 9/10 must-haves verified.
 `01-HUMAN-UAT.md`: 2 items
+
 1. ✅ **CLEARED** — Visual mobile-first frontend verification (375px viewport) — passed live test after `eecbef4` fix to login/logout reload bug
 2. ⏳ **PENDING** — Spike 4: gVisor runsc on Hetzner — needs human SSH
 
@@ -166,11 +171,14 @@ fec45dd feat(01-03): auth-gated landing page + dev login + dashboard shell
 ## Local Dev Stack — How to Bring It Back Up
 
 ```bash
+
 # Compose stack (currently running — postgres + redis + temporal + temporal UI)
+
 docker compose -f docker-compose.dev.yml up -d
 ./deploy/dev/init-db.sh   # only on first start
 
 # Go API
+
 cd api && \
   AP_DEV_MODE=true \
   AP_SESSION_SECRET=test-secret-that-is-at-least-32-characters-long \
@@ -182,24 +190,27 @@ cd api && \
   go run ./cmd/server/
 
 # Next.js
+
 cd web && pnpm dev
 
 # Trigger PingPong workflow (proves Temporal end-to-end)
+
 docker exec agent-playground-temporal-1 sh -c 'temporal --address $(hostname -i):7233 workflow execute --type PingPong --task-queue session --workflow-id ping-pong-test --input "\"hello\""'
 ```
 
 URLs:
+
 - http://localhost:8080/healthz — Go API health
 - http://localhost:3000 — Frontend
 - http://localhost:8233 — Temporal Web UI
 
 ## Session Continuity
 
-Last session: 2026-04-13/14 (one long session)
-Stopped at: Phase 01 fully complete and verified. Compose stack still running in background. Dev servers (Go API + Next.js) torn down. Ready to start Phase 02 with `/gsd-discuss-phase 2`.
+Last session: 2026-04-14T02:50:22.373Z
+Stopped at: Phase 2 context gathered (reshaped to hypothesis-forward agent-in-a-box + minimal substrate; hardening spine deferred)
 
 **Next command:** `/gsd-discuss-phase 2`
 
 Phase 02 from ROADMAP.md is **Recipes & Sandbox**. It will consume Spike 1 + 2 results from `.planning/research/SPIKE-REPORT.md` (per-agent proxy/baseURL behavior, chat_io.mode enum) and define the curated recipe schema + recipe loader + Tier-1 sandbox hardening (drop caps, read-only rootfs, pids/memory/CPU limits, userns-remap verification).
 
-Resume file: `.planning/STATE.md` (this file) + `.planning/phases/01-foundations-spikes-temporal/01-VERIFICATION.md` + `.planning/phases/01-foundations-spikes-temporal/01-REVIEW-FIX.md` + `.planning/research/SPIKE-REPORT.md`
+Resume file: .planning/phases/02-container-sandbox-spine/02-CONTEXT.md
