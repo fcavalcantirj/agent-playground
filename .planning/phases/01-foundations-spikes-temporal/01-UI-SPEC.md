@@ -62,9 +62,9 @@ Exceptions: Touch targets use 44px minimum height/width per D-13 (not a spacing 
 | Role | Size | Weight | Line Height | Usage |
 |------|------|--------|-------------|-------|
 | Body | 16px | 400 (regular) | 1.5 | Default text, descriptions, empty state copy |
-| Label | 14px | 500 (medium) | 1.4 | Button text, nav items, metadata, badges |
+| Label | 14px | 400 (regular) | 1.4 | Button text, nav items, metadata, badges |
 | Heading | 20px | 600 (semibold) | 1.3 | Page headings, card titles, section headers |
-| Display | 28px | 700 (bold) | 1.2 | Hero headline on the landing page only |
+| Display | 28px | 600 (semibold) | 1.2 | Hero headline on the landing page only |
 
 **Mobile-first note:** Body at 16px prevents iOS zoom-on-focus behavior. Do not use body text below 16px on mobile. Label at 14px is acceptable only for non-input, non-editable text.
 
@@ -142,7 +142,7 @@ Mobile-first (D-12). Styles are written for mobile, then enhanced upward.
 |---------|------|
 | Logo/wordmark | "Agent Playground" in Display size (28px/700), centered |
 | Tagline | "Any agent. Any model. One click." in Body size (16px/400), centered, muted foreground |
-| Mission line | "The easiest way to deploy any coding agent" in Label size (14px/500), centered, muted foreground |
+| Mission line | "The easiest way to deploy any coding agent" in Label size (14px/400), centered, muted foreground |
 | Dev Login button | Full-width on mobile (min-height 44px), accent background, white text, Label weight. Text: "Dev Login". Rounded corners (--radius). |
 | Dev mode badge | Below button: "Development mode" in Label size, muted, with a terminal icon (Lucide `Terminal`) |
 | Spacing | 16px gap between tagline and mission. 32px gap between mission and button. 8px gap between button and dev-mode badge. |
@@ -160,7 +160,7 @@ Mobile-first (D-12). Styles are written for mobile, then enhanced upward.
 | Empty state icon | Lucide `Bot` icon, 48px, muted foreground |
 | Empty state heading | "No agents yet" in Heading size (20px/600) |
 | Empty state body | "Your coding agents will appear here. Agent setup arrives in a future update." in Body size (16px/400), muted foreground, max-width 280px, centered |
-| Footer hint | "Phase 1 -- Foundation shell" in Label size (14px/500), muted, bottom of viewport with 16px padding. Only visible in dev mode. |
+| Footer hint | "Phase 1 -- Foundation shell" in Label size (14px/400), muted, bottom of viewport with 16px padding. Only visible in dev mode. |
 
 **Behavior:** Sign-out button sends `POST /api/dev/logout` (or `DELETE /api/dev/session`), clears cookie, redirects to `/` unauthenticated state.
 
