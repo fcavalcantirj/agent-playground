@@ -18,6 +18,7 @@ import (
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
 	"github.com/agentplayground/api/internal/middleware"
+	"github.com/agentplayground/api/internal/session"
 )
 
 // Workers is the minimal interface that Plan 01-05 (Temporal worker) and any
@@ -46,6 +47,11 @@ type Server struct {
 	// /healthz).
 	devAuth         *handler.DevAuthHandler
 	sessionProvider middleware.SessionProvider
+
+	// sessionHandler is set by WithSessionHandler and mounts the three
+	// Plan 02-05 /api/sessions* routes on the authed group. nil means
+	// session routes are skipped (Phase 1 tests, etc.).
+	sessionHandler *session.Handler
 }
 
 // WithWorkers attaches a background worker subsystem to the Server. Plan 01-05
@@ -69,6 +75,18 @@ func WithDevAuth(h *handler.DevAuthHandler, provider middleware.SessionProvider)
 		s.devAuth = h
 		s.sessionProvider = provider
 	}
+}
+
+// WithSessionHandler mounts the Plan 02-05 session routes
+// (POST /api/sessions, POST /api/sessions/:id/message, DELETE
+// /api/sessions/:id) behind the existing auth middleware. Following
+// the same functional-options shape as WithDevAuth / WithWorkers so
+// Phase 1 callers that omit it continue to work unchanged.
+//
+// The handler is only wired if WithDevAuth (or its Phase 3 successor)
+// is ALSO supplied — session routes require an authenticated group.
+func WithSessionHandler(h *session.Handler) Option {
+	return func(s *Server) { s.sessionHandler = h }
 }
 
 // New constructs the Server. Required arguments cover what every Phase 1
@@ -118,6 +136,12 @@ func New(
 			middleware.AuthMiddleware(s.sessionProvider, []byte(cfg.SessionSecret)),
 		)
 		authed.GET("/me", s.devAuth.Me)
+
+		// Plan 02-05: session routes behind the same authed group.
+		// Skipped if WithSessionHandler was not passed.
+		if s.sessionHandler != nil {
+			s.sessionHandler.Register(authed)
+		}
 	}
 
 	return s

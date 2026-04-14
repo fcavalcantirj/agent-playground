@@ -30,8 +30,10 @@ import (
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
 	"github.com/agentplayground/api/internal/server"
+	"github.com/agentplayground/api/internal/session"
 	apitemporal "github.com/agentplayground/api/internal/temporal"
 	"github.com/agentplayground/api/pkg/database"
+	"github.com/agentplayground/api/pkg/docker"
 	"github.com/agentplayground/api/pkg/migrate"
 	apredis "github.com/agentplayground/api/pkg/redis"
 )
@@ -101,12 +103,30 @@ func main() {
 	// TestIntegration_NoOptionsWiring contract still holds: any of these
 	// options can be omitted and server.New continues to compile and run.
 	checker := handler.NewInfraChecker(db, rdb)
-	sessionStore := handler.NewDevSessionStore(db.Pool)
-	devAuth := handler.NewDevAuthHandler(db.Pool, sessionStore, []byte(cfg.SessionSecret), cfg.DevMode)
-	opts := []server.Option{server.WithDevAuth(devAuth, sessionStore)}
+	sessionCookieStore := handler.NewDevSessionStore(db.Pool)
+	devAuth := handler.NewDevAuthHandler(db.Pool, sessionCookieStore, []byte(cfg.SessionSecret), cfg.DevMode)
+	opts := []server.Option{server.WithDevAuth(devAuth, sessionCookieStore)}
 	if workerOpt != nil {
 		opts = append(opts, workerOpt)
 	}
+
+	// Plan 02-05: wire the session HTTP handler. The Docker runner is
+	// optional — if NewRunner fails (no Docker daemon available, e.g.
+	// CI or a dev box without Docker) we skip session wiring and log a
+	// warning, matching the same "missing-infra degrades gracefully"
+	// pattern the Temporal block uses above.
+	runner, runnerErr := docker.NewRunner(logger)
+	if runnerErr != nil {
+		logger.Warn().Err(runnerErr).Msg("docker runner unavailable, session routes disabled")
+	} else {
+		secretSource := session.NewDevEnvSource()
+		secretWriter := session.NewSecretWriter(secretSource)
+		sessStore := session.NewStore(db.Pool)
+		bridge := session.NewBridge(runner)
+		sessHandler := session.NewHandler(sessStore, runner, secretWriter, bridge, logger)
+		opts = append(opts, server.WithSessionHandler(sessHandler))
+	}
+
 	srv := server.New(cfg, logger, checker, opts...)
 
 	// Run Echo in a goroutine so we can listen for shutdown signals.
