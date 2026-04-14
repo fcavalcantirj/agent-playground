@@ -66,6 +66,16 @@ Plans:
 **UI hint**: no (API-only; Phase 5 adds the browser UX)
 **Reshape rationale**: See `02-CONTEXT.md` `<domain>` section. Hardening deferred = zero work lost (runner.go hooks are plumbed; Phase 7.5 fills them in against a substrate known to work).
 
+### Phase 02.5: Recipe Manifest Reshape (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 02.5 to break down)
+
 ### Phase 3: Auth, Secrets & BYOK Key Handling
 **Goal**: A user can log in with Google or GitHub, manage BYOK keys safely, and the whole secret-handling pipeline (storage, injection, log scrubbing, audit) is hardened before the first BYOK-using session is ever spawned.
 **Depends on**: Phase 1 (API + DB + Next.js) and Phase 2 (the sandbox that will later consume the injected secrets).

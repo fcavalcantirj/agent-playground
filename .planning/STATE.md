@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 2 context gathered with a scope reshape. ROADMAP.md + REQUIREMENTS.md updated; Phase 7.5 (Sandbox Hardening Spine) inserted. Phase 2 is now the hypothesis-forward "agent-in-a-box + stub session API" slice. Ready for planning.
-last_updated: "2026-04-14T18:59:51.964Z"
+status: planning
+stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
+last_updated: "2026-04-14T23:58:57.646Z"
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 2
   total_plans: 12
   completed_plans: 12
@@ -20,43 +20,47 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 02 planning next — reshaped scope.
+**Current focus:** Phase 02.5 planning next — context captured, matrix acceptance gate locked.
 
 ## Current Position
 
-Phase: 02.5 (recon complete, ready for insertion)
-Next:  `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
+Phase: 02.5 (discuss complete, ready for planning)
+Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
-Status: Recon phase done. Ready for Phase 02.5 planning.
+Status: 02.5 CONTEXT.md written. Scope: recipe manifest YAML + 10 recipes + 4 chat_io bridges + 6 lifecycle hooks + N×N matrix smoke test with Anthropic + OpenRouter. No UI, no Temporal (both deferred).
 
-Progress: [██░░░░░░░░] 22% (2/9 phases; Phase 02.5 to insert between 2 and 3)
+Progress: [██░░░░░░░░] 20% (2/10 phases)
 
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
-**Primary resume file:** `.planning/research/PHASE-02.5-PREP.md`
+**Primary resume file:** `.planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md`
 
-It captures: Phase 2 complete, 40-agent L1 recon done, schema prior-art research done,
-10-recipe schema draft ready, all locked decisions, and the exact next command.
+It captures: all 54 Phase 02.5 decisions (D-01..D-54), the matrix acceptance gate (`whoareyou` probe, ≥2 providers, ≥36 green cells), the filesystem template registry contract, the cut-to-4 chat_io mode decision, the Temporal-stays-in-Phase-5 call, and every deferred idea.
 
-**The next command is:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
+**The next command is:** `/gsd-plan-phase 02.5`
 
 Read files in this order after /clear:
-1. `.planning/research/PHASE-02.5-PREP.md` (anchor — read first)
-2. `.planning/STATE.md` (this file)
-3. `.planning/PROJECT.md`
-4. `./CLAUDE.md`
-5. `.planning/research/AGENT-MATRIX.md` (40-agent sweep)
-6. `.planning/research/SCHEMA-PRIOR-ART.md` (12-project schema research)
-7. `.planning/research/RECIPE-SCHEMA-DRAFT.md` (schema draft + 10 worked recipes)
-8. `.planning/research/agents/praktor.md` (#1 prior art)
-9. `.planning/research/agents/memoh.md` (#2 prior art)
-10. `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md`
+
+1. `.planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md` (anchor — read first)
+2. `.planning/phases/02.5-recipe-manifest-reshape/02.5-DISCUSSION-LOG.md` (audit trail if you need the rationale)
+3. `.planning/STATE.md` (this file)
+4. `.planning/PROJECT.md`
+5. `./CLAUDE.md`
+6. `.planning/research/PHASE-02.5-PREP.md` (recon anchor — locked decisions before discuss)
+7. `.planning/research/RECIPE-SCHEMA-DRAFT.md` (the schema spec Phase 02.5 implements)
+8. `.planning/research/SCHEMA-PRIOR-ART.md` (12-project schema research)
+9. `.planning/research/AGENT-MATRIX.md` (40-agent sweep)
+10. `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` (Phase 2 substrate 02.5 extends)
 
 ## Quick Tasks Completed
 
 | ID | Date | Description | Notes |
 |----|------|-------------|-------|
 | 260414-mwo | 2026-04-14 | Import v0 frontend as `frontend/` monorepo member | v0 tree at `/frontend`, ported `api.ts`/`middleware.ts`/`dev-login-form.tsx` from legacy `/web`, added Makefile targets. `/web` still on disk — deletion deferred to Phase 3 after new tree is verified end-to-end. |
+
+### Roadmap Evolution
+
+- Phase 02.5 inserted after Phase 2: Recipe Manifest Reshape (URGENT) — 2026-04-14
 
 ### ⚠️ Phase 02 Reshape (2026-04-14) — READ BEFORE PLANNING
 
@@ -269,9 +273,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-14 — Phase 2 executed + validated end-to-end + frontend quick-import + 40-agent L1 recon sweep + schema prior-art research + 10-recipe schema draft.
+Last session: 2026-04-14T23:58:57.619Z
 
-Stopped at: Phase 2 complete (container-sandbox-spine validated end-to-end with real LLM reply through hardened sandbox + BYOK + FIFO bridge + demux fix). Frontend imported as `frontend/` with ported auth logic from `web/`. 40 agents swept (Wave 1 + Wave 2), 12-project schema prior-art research completed, `RECIPE-SCHEMA-DRAFT.md` written with 10 worked reference recipes. Ready to insert Phase 02.5 Recipe Manifest Reshape.
+Stopped at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
 
 **Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
 
@@ -295,4 +299,4 @@ Stopped at: Phase 2 complete (container-sandbox-spine validated end-to-end with 
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: .planning/phases/02-container-sandbox-spine/02-CONTEXT.md
+Resume file: .planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md
