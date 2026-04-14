@@ -72,6 +72,37 @@ type RunOptions struct {
 	// Cmd is the command to run inside the container. If empty, the image
 	// ENTRYPOINT/CMD is used.
 	Cmd []string
+
+	// SeccompProfile is the path to a seccomp JSON profile file on the host.
+	// Empty string = use Docker's default seccomp profile (recommended for
+	// Phase 2). Phase 7.5 sets this to a custom-authored profile.
+	SeccompProfile string
+
+	// ReadOnlyRootfs makes the container's root filesystem read-only.
+	// Use Tmpfs to provide writable scratch directories.
+	ReadOnlyRootfs bool
+
+	// Tmpfs declares tmpfs mounts. Key = container path, value = mount
+	// options (e.g. "rw,noexec,nosuid,size=128m"). Empty value = defaults.
+	Tmpfs map[string]string
+
+	// CapDrop is the list of Linux capabilities to drop. Use ["ALL"] to
+	// drop everything and add back only what's needed via CapAdd.
+	CapDrop []string
+
+	// CapAdd is the list of capabilities to add back after CapDrop.
+	// Phase 2 picoclaw + hermes need ZERO capabilities — leave empty.
+	CapAdd []string
+
+	// NoNewPrivs sets the no-new-privileges security option, preventing
+	// setuid binaries from gaining privileges (defense against local
+	// privilege escalation inside the container).
+	NoNewPrivs bool
+
+	// Runtime selects the OCI runtime ("" = runc default, "runsc" = gVisor,
+	// "sysbox-runc" = Sysbox). Phase 2 always passes "" (runc).
+	// Phase 7.5 wires the runtime selector for hardened recipes.
+	Runtime string
 }
 
 // ContainerInfo is the Runner's distilled view of a Docker container. It is
@@ -160,6 +191,32 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (string, error) {
 	if opts.PidsLimit > 0 {
 		pl := opts.PidsLimit
 		hostCfg.PidsLimit = &pl
+	}
+
+	// --- Phase 2 sandbox fields ---
+	hostCfg.ReadonlyRootfs = opts.ReadOnlyRootfs
+	if len(opts.Tmpfs) > 0 {
+		hostCfg.Tmpfs = opts.Tmpfs
+	}
+	if len(opts.CapDrop) > 0 {
+		hostCfg.CapDrop = opts.CapDrop
+	}
+	if len(opts.CapAdd) > 0 {
+		hostCfg.CapAdd = opts.CapAdd
+	}
+	if opts.Runtime != "" {
+		hostCfg.Runtime = opts.Runtime
+	}
+	// SecurityOpt is composed from NoNewPrivs + SeccompProfile.
+	var secOpt []string
+	if opts.NoNewPrivs {
+		secOpt = append(secOpt, "no-new-privileges:true")
+	}
+	if opts.SeccompProfile != "" {
+		secOpt = append(secOpt, "seccomp="+opts.SeccompProfile)
+	}
+	if len(secOpt) > 0 {
+		hostCfg.SecurityOpt = secOpt
 	}
 
 	createRes, err := r.client.ContainerCreate(ctx, client.ContainerCreateOptions{

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -437,6 +438,141 @@ func TestRunner_Remove_RejectsInvalidContainerID(t *testing.T) {
 	err := r.Remove(context.Background(), "")
 	assert.Error(t, err)
 	assert.Empty(t, m.removeCalls)
+}
+
+// ---------- Phase 2 sandbox fields ----------
+
+func TestRunOptions_AppliesNoNewPrivs(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:      "alpine:3.19",
+		NoNewPrivs: true,
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Contains(t, hc.SecurityOpt, "no-new-privileges:true")
+}
+
+func TestRunOptions_AppliesSeccompProfile(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:          "alpine:3.19",
+		SeccompProfile: "/etc/docker/seccomp.json",
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Contains(t, hc.SecurityOpt, "seccomp=/etc/docker/seccomp.json")
+}
+
+func TestRunOptions_ComposesSecurityOpt(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:          "alpine:3.19",
+		NoNewPrivs:     true,
+		SeccompProfile: "/x",
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.ElementsMatch(t, []string{"no-new-privileges:true", "seccomp=/x"}, hc.SecurityOpt)
+}
+
+func TestRunOptions_AppliesReadOnlyRootfs(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:          "alpine:3.19",
+		ReadOnlyRootfs: true,
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.True(t, hc.ReadonlyRootfs)
+}
+
+func TestRunOptions_AppliesTmpfs(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image: "alpine:3.19",
+		Tmpfs: map[string]string{"/tmp": "rw,size=64m"},
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Equal(t, "rw,size=64m", hc.Tmpfs["/tmp"])
+}
+
+func TestRunOptions_AppliesCapDrop(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:   "alpine:3.19",
+		CapDrop: []string{"ALL"},
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Contains(t, []string(hc.CapDrop), "ALL")
+}
+
+func TestRunOptions_AppliesCapAdd(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:  "alpine:3.19",
+		CapAdd: []string{"NET_BIND_SERVICE"},
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Contains(t, []string(hc.CapAdd), "NET_BIND_SERVICE")
+}
+
+func TestRunOptions_AppliesRuntime(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{
+		Image:   "alpine:3.19",
+		Runtime: "runsc",
+	})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Equal(t, "runsc", hc.Runtime)
+
+	// Empty runtime passes through as empty.
+	m2 := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-2"}}
+	r2 := newTestRunner(t, m2)
+	_, err = r2.Run(context.Background(), RunOptions{Image: "alpine:3.19"})
+	require.NoError(t, err)
+	assert.Equal(t, "", m2.createCalls[0].opts.HostConfig.Runtime)
+}
+
+func TestRunOptions_DefaultsAreEmpty(t *testing.T) {
+	m := &mockDockerClient{createResp: client.ContainerCreateResult{ID: "cid-1"}}
+	r := newTestRunner(t, m)
+	_, err := r.Run(context.Background(), RunOptions{Image: "alpine:3.19"})
+	require.NoError(t, err)
+	hc := m.createCalls[0].opts.HostConfig
+	require.NotNil(t, hc)
+	assert.Empty(t, hc.SecurityOpt)
+	assert.False(t, hc.ReadonlyRootfs)
+	assert.Empty(t, hc.Tmpfs)
+	assert.Empty(t, []string(hc.CapDrop))
+	assert.Empty(t, []string(hc.CapAdd))
+	assert.Equal(t, "", hc.Runtime)
+}
+
+func TestRunOptions_NoPrivilegedField(t *testing.T) {
+	// SBX-05 invariant: RunOptions must never expose a Privileged field.
+	_, found := reflect.TypeOf(RunOptions{}).FieldByName("Privileged")
+	assert.False(t, found, "RunOptions must not expose a Privileged field (SBX-05)")
 }
 
 // ---------- Integration test (skipped under -short) ----------
