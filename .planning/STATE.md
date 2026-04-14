@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: phase_02_context_gathered
-stopped_at: Phase 2 context gathered with a major reshape (hypothesis-forward agent-in-a-box + minimal substrate + stub session API; hardening spine moved to new Phase 7.5). ROADMAP.md + REQUIREMENTS.md updated to match. Ready for `/gsd-plan-phase 2`.
-last_updated: "2026-04-14T12:00:00Z"
+status: executing
+stopped_at: Phase 2 context gathered with a scope reshape. ROADMAP.md + REQUIREMENTS.md updated; Phase 7.5 (Sandbox Hardening Spine) inserted. Phase 2 is now the hypothesis-forward "agent-in-a-box + stub session API" slice. Ready for planning.
+last_updated: "2026-04-14T04:13:40.360Z"
 progress:
   total_phases: 9
   completed_phases: 1
-  total_plans: 6
+  total_plans: 12
   completed_plans: 6
-  percent: 11
+  percent: 50
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 Phase: 01 (foundations-spikes-temporal) — ✅ COMPLETE
 Next:  02 (Agent-in-a-Box + Minimal Substrate, **reshaped 2026-04-14**) — needs `/gsd-plan-phase 2`
 Plans complete: 6 of 6 (all Phase 1)
-Status: Phase 02 context gathered + ROADMAP reshaped; awaiting plan-phase
+Status: Ready to execute
 
 Progress: [█░░░░░░░░░] 11% (1/9 phases — Phase 7.5 inserted during reshape)
 
@@ -36,6 +36,7 @@ Progress: [█░░░░░░░░░] 11% (1/9 phases — Phase 7.5 inserte
 The original Phase 02 in the roadmap bundled substrate + full hardening. After a discuss-phase session, the user challenged whether the hardening half actually moved the project hypothesis forward. Conclusion: it did not, and it should land against a known-working substrate rather than a speculative one.
 
 **Phase 02 now ships:**
+
 1. `ap-base` image (tini PID 1 + tmux chat/shell windows + ttyd on loopback + MSV entrypoint/gosu pattern ported from `meusecretariovirtual/infra/picoclaw/`)
 2. Sandbox options wired into `pkg/docker/runner.go` `RunOptions` as fields (SeccompProfile, ReadOnlyRootfs, Tmpfs, CapDrop, NoNewPrivs, Runtime, NetworkMode, PidsLimit, Memory, CPUs) — safe defaults applied at call sites, no custom seccomp JSON yet
 3. Deterministic container naming `playground-<user_uuid>-<session_uuid>` + validator + helper in runner.go
@@ -47,6 +48,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 9. **Hypothesis proof smoke test:** `make smoke-test` or equivalent runs curl against the API, starts both agents, exchanges a real message with a real Anthropic model via BYOK, tears down cleanly, asserts no dangling `playground-*` containers. The curl output IS the demo — no browser UX until Phase 5.
 
 **Phase 02 does NOT ship (deferred to new Phase 7.5):**
+
 - Custom seccomp profile JSON
 - `ap-net` Docker bridge + iptables DOCKER-USER egress allowlist
 - Falco or Tetragon + rule set + alerting sink
@@ -56,6 +58,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 **Phase 7.5 (new, inserted 2026-04-14): Sandbox Hardening Spine.** Fills in every sandbox knob Phase 2 plumbed, against a known-working substrate, right before Phase 8 introduces the first untrusted-code path. Requirements moved there: SBX-02 (custom seccomp portion), SBX-04, SBX-06, SBX-07 (Falco portion), SBX-08.
 
 **Critical forward-compatibility signals from discuss-phase (user verbatim):**
+
 - *"API-driven start without Telegram is the hypothesis proof"* — Phase 2 completion gate is curl → real model response for both agents
 - *"this list will grow"* — recipe abstraction must accept new agents as recipe YAML + Dockerfile, no code changes to `ap-base`, `runner.go`, or session handlers. Hermes being the architecturally hardest agent validates the pattern.
 - *"Hermes is totally different from OpenClaw"* — OpenClaw (gateway-WebSocket, Node, pairing) vs Hermes (PTY TUI, Python 3.11, multi-channel daemon, six execution backends). Both must fit `ap-base` without special-casing. Hermes's chat bridge mechanism (PTY screen-scrape vs MCP via `mcp_serve.py` vs hypothetical CLI `--message` flag) is a Phase 2 **planning research** item.
