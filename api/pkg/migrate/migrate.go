@@ -40,9 +40,14 @@ func EmbeddedMigrations() fs.FS {
 // DB defines the database operations needed by the migrator. Both
 // *pgxpool.Pool and *pgx.Conn satisfy this interface, which makes the migrator
 // trivially testable against an embedded postgres in tests.
+//
+// Begin is required to wrap each migration's apply+record steps in a single
+// transaction and to acquire a session-level advisory lock that serializes
+// concurrent migrators (preventing TOCTOU races on startup).
 type DB interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // Migration represents a single parsed SQL migration file.
@@ -112,10 +117,31 @@ func ParseMigrations(fsys fs.FS) ([]Migration, error) {
 	return migrations, nil
 }
 
+// migrationAdvisoryLock is a stable, arbitrary integer used as the key for the
+// Postgres session-level advisory lock that serializes concurrent migrators.
+// Any two-process race on startup will block on this lock rather than racing
+// through the TOCTOU check-then-insert gap.
+const migrationAdvisoryLock = 8675309
+
 // Run executes all pending migrations in version order. It is safe to call
 // multiple times -- migrations already recorded in `schema_migrations` are
 // skipped.
+//
+// Correctness guarantees:
+//   - A session-level advisory lock (pg_advisory_lock) prevents two processes
+//     from running migrations concurrently.
+//   - Each migration's SQL execution and schema_migrations INSERT are wrapped
+//     in a single transaction so that a crash between the two steps cannot
+//     leave the migration half-recorded.
 func (m *Migrator) Run(ctx context.Context) error {
+	// Acquire session-level advisory lock. This blocks until no other session
+	// holds the lock, serialising concurrent API instances on rolling deploys.
+	if _, err := m.db.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLock); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	// Release the lock when Run returns, even on error.
+	defer m.db.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock) //nolint:errcheck
+
 	if _, err := m.db.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INTEGER PRIMARY KEY,
@@ -155,15 +181,28 @@ func (m *Migrator) Run(ctx context.Context) error {
 			Str("name", migration.Name).
 			Msg("applying migration")
 
-		if _, err = m.db.Exec(ctx, migration.SQL); err != nil {
+		// Wrap apply + record in a single transaction so a crash between the
+		// two steps cannot leave schema_migrations inconsistent with the schema.
+		tx, err := m.db.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin transaction for migration %s: %w", migration.Filename, err)
+		}
+
+		if _, err = tx.Exec(ctx, migration.SQL); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migration %s failed: %w", migration.Filename, err)
 		}
 
-		if _, err = m.db.Exec(ctx,
+		if _, err = tx.Exec(ctx,
 			"INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
 			migration.Version, migration.Filename,
 		); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("record migration %s: %w", migration.Filename, err)
+		}
+
+		if err = tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit migration %s: %w", migration.Filename, err)
 		}
 
 		m.logger.Info().
