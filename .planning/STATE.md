@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 2 context gathered (reshaped to hypothesis-forward agent-in-a-box + minimal substrate; hardening spine deferred)
-last_updated: "2026-04-14T02:50:22.377Z"
+status: phase_02_context_gathered
+stopped_at: Phase 2 context gathered with a major reshape (hypothesis-forward agent-in-a-box + minimal substrate + stub session API; hardening spine moved to new Phase 7.5). ROADMAP.md + REQUIREMENTS.md updated to match. Ready for `/gsd-plan-phase 2`.
+last_updated: "2026-04-14T12:00:00Z"
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 1
   total_plans: 6
   completed_plans: 6
-  percent: 100
+  percent: 11
 ---
 
 # Project State
@@ -20,16 +20,49 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Ready to start Phase 02 — Recipes & Sandbox
+**Current focus:** Phase 02 planning next — reshaped scope.
 
 ## Current Position
 
 Phase: 01 (foundations-spikes-temporal) — ✅ COMPLETE
-Next:  02 (Recipes & Sandbox) — needs `/gsd-discuss-phase 2`
-Plans complete: 6 of 6
-Status: Phase 01 done; awaiting Phase 02 discuss
+Next:  02 (Agent-in-a-Box + Minimal Substrate, **reshaped 2026-04-14**) — needs `/gsd-plan-phase 2`
+Plans complete: 6 of 6 (all Phase 1)
+Status: Phase 02 context gathered + ROADMAP reshaped; awaiting plan-phase
 
-Progress: [█░░░░░░░░░] 12% (1/8 phases)
+Progress: [█░░░░░░░░░] 11% (1/9 phases — Phase 7.5 inserted during reshape)
+
+### ⚠️ Phase 02 Reshape (2026-04-14) — READ BEFORE PLANNING
+
+The original Phase 02 in the roadmap bundled substrate + full hardening. After a discuss-phase session, the user challenged whether the hardening half actually moved the project hypothesis forward. Conclusion: it did not, and it should land against a known-working substrate rather than a speculative one.
+
+**Phase 02 now ships:**
+1. `ap-base` image (tini PID 1 + tmux chat/shell windows + ttyd on loopback + MSV entrypoint/gosu pattern ported from `meusecretariovirtual/infra/picoclaw/`)
+2. Sandbox options wired into `pkg/docker/runner.go` `RunOptions` as fields (SeccompProfile, ReadOnlyRootfs, Tmpfs, CapDrop, NoNewPrivs, Runtime, NetworkMode, PidsLimit, Memory, CPUs) — safe defaults applied at call sites, no custom seccomp JSON yet
+3. Deterministic container naming `playground-<user_uuid>-<session_uuid>` + validator + helper in runner.go
+4. Two pre-built recipe images: **picoclaw** (Go CLI, pinned SHA from `/Users/fcavalcanti/dev/picoclaw`, `stdin_fifo` chat path) + **Hermes** (Python 3.11, pinned SHA from `github.com/NousResearch/hermes-agent`, MIT, TUI-first, multi-channel daemon disabled via pre-populated `~/.hermes/cli-config.yaml`, backend forced to `local`)
+5. **Minimal non-durable session API stubs** pulled forward from Phase 5 scope: `POST /api/sessions`, `POST /api/sessions/:id/message` (synchronous FIFO bridge via `docker exec`), `DELETE /api/sessions/:id`. Direct runner.go calls — **no Temporal in Phase 2.** Phase 5 upgrades internals with SessionSpawn/SessionDestroy workflows, HTTP contract stays stable.
+6. Dev BYOK via `AP_DEV_BYOK_KEY` env → tmpfs `/run/secrets/*_key` injection (file-based mechanism is Phase 2; Phase 3 replaces the source with the encrypted vault).
+7. Hardcoded recipe structs in new `internal/recipes/` package (Phase 4 replaces with YAML schema + loader)
+8. New migration `0002_sessions.sql` — `sessions` table (id, user_id, recipe_name, model_provider, model_id, container_id, status, created_at, updated_at). One-active-per-user enforced via Postgres partial unique index.
+9. **Hypothesis proof smoke test:** `make smoke-test` or equivalent runs curl against the API, starts both agents, exchanges a real message with a real Anthropic model via BYOK, tears down cleanly, asserts no dangling `playground-*` containers. The curl output IS the demo — no browser UX until Phase 5.
+
+**Phase 02 does NOT ship (deferred to new Phase 7.5):**
+- Custom seccomp profile JSON
+- `ap-net` Docker bridge + iptables DOCKER-USER egress allowlist
+- Falco or Tetragon + rule set + alerting sink
+- Escape-test CI harness (mount/unshare/setns/docker.sock/evil egress)
+- gVisor `runsc` install + per-recipe runtime selection (Spike 4 still pending — not a Phase 2 blocker anymore, only gates Phase 7.5 + Phase 8)
+
+**Phase 7.5 (new, inserted 2026-04-14): Sandbox Hardening Spine.** Fills in every sandbox knob Phase 2 plumbed, against a known-working substrate, right before Phase 8 introduces the first untrusted-code path. Requirements moved there: SBX-02 (custom seccomp portion), SBX-04, SBX-06, SBX-07 (Falco portion), SBX-08.
+
+**Critical forward-compatibility signals from discuss-phase (user verbatim):**
+- *"API-driven start without Telegram is the hypothesis proof"* — Phase 2 completion gate is curl → real model response for both agents
+- *"this list will grow"* — recipe abstraction must accept new agents as recipe YAML + Dockerfile, no code changes to `ap-base`, `runner.go`, or session handlers. Hermes being the architecturally hardest agent validates the pattern.
+- *"Hermes is totally different from OpenClaw"* — OpenClaw (gateway-WebSocket, Node, pairing) vs Hermes (PTY TUI, Python 3.11, multi-channel daemon, six execution backends). Both must fit `ap-base` without special-casing. Hermes's chat bridge mechanism (PTY screen-scrape vs MCP via `mcp_serve.py` vs hypothetical CLI `--message` flag) is a Phase 2 **planning research** item.
+
+**Full reshape rationale + every decision + canonical refs:** `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md`
+
+**Discussion audit trail:** `.planning/phases/02-container-sandbox-spine/02-DISCUSSION-LOG.md`
 
 ## Performance Metrics
 
@@ -206,11 +239,27 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-14T02:50:22.373Z
-Stopped at: Phase 2 context gathered (reshaped to hypothesis-forward agent-in-a-box + minimal substrate; hardening spine deferred)
+Last session: 2026-04-14 — Phase 2 discuss-phase + roadmap reshape
+Stopped at: Phase 2 context gathered with a scope reshape. ROADMAP.md + REQUIREMENTS.md updated; Phase 7.5 (Sandbox Hardening Spine) inserted. Phase 2 is now the hypothesis-forward "agent-in-a-box + stub session API" slice. Ready for planning.
 
-**Next command:** `/gsd-discuss-phase 2`
+**Next command:** `/gsd-plan-phase 2`
 
-Phase 02 from ROADMAP.md is **Recipes & Sandbox**. It will consume Spike 1 + 2 results from `.planning/research/SPIKE-REPORT.md` (per-agent proxy/baseURL behavior, chat_io.mode enum) and define the curated recipe schema + recipe loader + Tier-1 sandbox hardening (drop caps, read-only rootfs, pids/memory/CPU limits, userns-remap verification).
+### Reading order for a fresh session after /clear
+
+1. `.planning/STATE.md` (this file) — top-level situational awareness + Phase 2 reshape summary above
+2. `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` — **source of truth for Phase 2 decisions**. Every decision from the discuss-phase is in `<decisions>`; every doc downstream agents need is in `<canonical_refs>`; every deferred idea is in `<deferred>`.
+3. `.planning/phases/02-container-sandbox-spine/02-DISCUSSION-LOG.md` — full Q&A audit trail (optional; use if you need to understand WHY a decision was made, not just WHAT was decided)
+4. `.planning/ROADMAP.md` §Phase 2 — reshaped success criteria + requirement mapping (points at 02-CONTEXT.md)
+5. `.planning/ROADMAP.md` §Phase 7.5 — new phase inserted during reshape; holds the deferred hardening work
+6. `.planning/REQUIREMENTS.md` — SBX-02 partial, SBX-04/06/07/08 moved to Phase 7.5
+7. `.planning/research/SPIKE-REPORT.md` — Phase 1 spike findings (Hermes gap; Phase 2 planning must extend Spike 1+2 for Hermes)
+8. `/Users/fcavalcanti/dev/meusecretariovirtual/infra/picoclaw/Dockerfile` + `entrypoint.sh` — MSV's battle-tested dockerized-agent pattern to port into `ap-base` (entry point, privilege drop via gosu, pre-populated config baked at build)
+
+### Planning research items Phase 2 must resolve (flagged in 02-CONTEXT.md D-23)
+
+- Hermes chat bridge mechanism: PTY screen-scrape vs MCP (via `mcp_serve.py`) vs hypothetical `hermes --message` non-interactive CLI flag. Fetch the `cli-config.yaml.example` from `github.com/NousResearch/hermes-agent` to pin exact keys.
+- Exact YAML keys in Hermes `cli-config.yaml` for (a) disabling Telegram/Discord/Slack/WhatsApp/Signal/SMS/Email/Matrix/Mattermost gateway daemons and (b) forcing `backend: local`.
+- Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
+- Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
 Resume file: .planning/phases/02-container-sandbox-spine/02-CONTEXT.md

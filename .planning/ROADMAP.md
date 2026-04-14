@@ -7,12 +7,13 @@
 ## Phases
 
 - [ ] **Phase 1: Foundations, Spikes & Temporal** - Provision Hetzner host, stand up Postgres/Redis/Docker/Temporal, land the Go+Next.js skeleton, and burn down the four Phase-0 unknowns.
-- [ ] **Phase 2: Container Sandbox Spine** - Build the hardened `ap-base` image, Docker daemon hardening, gVisor, seccomp, network allowlist, and anomaly detection -- the security spine every later phase inherits.
+- [ ] **Phase 2: Agent-in-a-Box + Minimal Substrate (reshaped 2026-04-13)** - Ship `ap-base` (tini + tmux + ttyd + MSV-ported entrypoint), wire sandbox knobs into runner.go, deterministic naming, two thin curated recipes (picoclaw + Hermes), minimal non-durable session API stubs. Prove API-driven agent start from curl for both agents -- the hypothesis proof. Full hardening spine moves to new Phase 7.5.
 - [ ] **Phase 3: Auth, Secrets & BYOK Key Handling** - Google + GitHub OAuth, encrypted BYOK vault, safe key injection pipeline, and the BYOK settings UI with test/mask/delete flows.
 - [ ] **Phase 4: Recipe System & Curated Catalog** - Ship `ap.recipe/v1` schema, the Go recipe loader, four curated recipes (OpenClaw, Hermes, HiClaw, PicoClaw), and the local + CI smoke-test rig.
-- [ ] **Phase 5: Demoable MVP -- Session Lifecycle, Chat & Terminal** - Wire the orchestrator (Temporal-backed), one-active invariant, chat WS, terminal WSS, reconciliation, and idle reaper into the demoable "log in -> paste key -> chat with OpenClaw" milestone.
+- [ ] **Phase 5: Demoable MVP -- Session Lifecycle, Chat & Terminal** - Wire the orchestrator (Temporal-backed), one-active invariant, chat WS, terminal WSS, reconciliation, and idle reaper into the demoable "log in -> paste key -> chat with OpenClaw" milestone. Upgrades Phase 2's stub API to durable Temporal-backed workflows, same HTTP contract.
 - [ ] **Phase 6: Metering, Billing & Credits** - LiteLLM proxy, per-session virtual keys, Stripe top-ups with idempotent webhooks, atomic ledger, circuit breakers, and the live credit-drain UI.
 - [ ] **Phase 7: Persistent Tier & OSS Hardening** - Paid-tier volumes with backups/restore, disk pressure guards, audit log, rate limits, Apache-2.0 release, public CI, and ops runbooks.
+- [ ] **Phase 7.5: Sandbox Hardening Spine (inserted 2026-04-13)** - Custom seccomp JSON, `ap-net` egress allowlist + iptables, Falco/Tetragon anomaly detection, escape-test CI harness, gVisor `runsc` install and per-recipe runtime selection. Fills in the sandbox knobs Phase 2 plumbed. Lands against a known-working substrate, right before Phase 8 introduces the first untrusted-code path.
 - [ ] **Phase 8: Generic Claude-Code Bootstrap** - Ship the "paste any git repo" differentiator on the gVisor path with content-addressed recipe caching and a human-review promotion flow.
 
 ## Phase Details
@@ -29,24 +30,34 @@
   5. `.planning/research/SPIKE-REPORT.md` is committed documenting per-agent `HTTPS_PROXY` vs `*_BASE_URL` behavior, `chat_io.mode` for each curated agent, tmux+named-pipe round-trip latency, and gVisor `runsc` feasibility on the chosen Hetzner kernel.
 **Plans:** 6 plans
 Plans:
-- [ ] 01-01-PLAN.md -- Go API skeleton + migrations + dev-cookie auth
-- [ ] 01-02-PLAN.md -- Docker runner ported from MSV
-- [ ] 01-03-PLAN.md -- Next.js mobile-first frontend shell
-- [ ] 01-04-PLAN.md -- Infrastructure scripts + docker-compose
-- [ ] 01-05-PLAN.md -- Temporal worker + task queues + PingPong proof
-- [ ] 01-06-PLAN.md -- Spike report (4 unknowns)
+- [x] 01-01-PLAN.md -- Go API skeleton + migrations + dev-cookie auth
+- [x] 01-02-PLAN.md -- Docker runner ported from MSV
+- [x] 01-03-PLAN.md -- Next.js mobile-first frontend shell
+- [x] 01-04-PLAN.md -- Infrastructure scripts + docker-compose
+- [x] 01-05-PLAN.md -- Temporal worker + task queues + PingPong proof
+- [x] 01-06-PLAN.md -- Spike report (4 unknowns)
 
-### Phase 2: Container Sandbox Spine
-**Goal**: The `ap-base` image and host-level isolation posture that every user container inherits -- gVisor available, caps dropped, egress locked down, anomaly detection live, naming deterministic.
-**Depends on**: Phase 1 (needs Docker + the spike's gVisor feasibility answer).
-**Requirements**: SBX-01, SBX-02, SBX-03, SBX-04, SBX-05, SBX-06, SBX-07, SBX-08, SBX-09
+### Phase 2: Agent-in-a-Box + Minimal Substrate
+**Reshaped on 2026-04-13.** Original scope bundled substrate + full hardening; the hardening spine moved to Phase 7.5 so the substrate can be validated against real agents first.
+
+**Goal**: Prove the hypothesis "any agent x any model, API-driven, no Telegram" for two architecturally different agents (picoclaw, Hermes), on top of an `ap-base` image forwards-compatible with the long-tail recipe catalog. **Context of record:** `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` (read before planning).
+**Depends on**: Phase 1 (Docker + runner.go + auth middleware + migrations).
+**Requirements (reshaped mapping)**:
+  - **Landed in Phase 2:** SBX-01 (tini + tmux + ttyd in ap-base), SBX-03 (resource limits via runner.go options), SBX-05 (no docker socket, no privileged -- invariant), SBX-09 (deterministic naming `playground-<user>-<session>`), partial SBX-02 (cap-drop, no-new-privs, read-only rootfs, tmpfs via runner.go option fields -- custom seccomp JSON deferred to 7.5)
+  - **Pulled forward from Phase 5 as stub scope:** partial SES-01 (session create with state transitions, direct runner.go call, no Temporal), partial SES-04 (session stop), partial CHT-01 (synchronous HTTP `POST /messages` via FIFO bridge -- no WS yet)
+  - **Pulled forward from Phase 3 as dev-mode stub:** dev BYOK via `AP_DEV_BYOK_KEY` env + tmpfs `/run/secrets/*_key` injection mechanism (file-based injection is Phase 2; Phase 3 replaces the source with the encrypted vault)
+  - **Pulled forward from Phase 4 as hardcoded:** two thin recipes (picoclaw Go CLI, Hermes Python TUI) as Go structs in `internal/recipes/` -- Phase 4 replaces with YAML schema + loader
+  - **Deferred to Phase 7.5:** SBX-02 custom seccomp JSON, SBX-04 `ap-net` egress allowlist, SBX-06 gVisor runsc install, SBX-07 Falco/Tetragon, SBX-08 escape-test CI (SBX-07 UFW portion already active from Phase 1)
+
 **Success Criteria** (what must be TRUE):
-  1. Launching `docker run` of `ap-base` produces a container whose PID 1 is `tini`, supervising `tmux` (two windows: `chat` + `shell`) and `ttyd`, with read-only rootfs, `tmpfs /tmp`, all caps dropped, `no-new-privileges`, and the custom seccomp profile blocking `mount/unshare/setns/keyctl/bpf/ptrace`, verified by an escape-attempt test in CI.
-  2. The same container is attached to the `ap-net` bridge with an egress allowlist proven by integration test: `curl https://api.anthropic.com` succeeds, `curl https://evil.example.com` fails, and the host Docker socket is not visible inside the container under any code path.
-  3. A `--runtime=runsc` variant of the same container starts, passes the same escape test, and is selectable by a recipe's `runtime: runsc` field (mandatory for Phase 8), validated on the production Hetzner kernel.
-  4. `ufw status` on the host shows only the public HTTPS port open; Postgres, Redis, Temporal, and LiteLLM (when landed) all bind to 127.0.0.1; Falco or Tetragon is running and alerts on a staged `mount`-from-container event in a test harness.
-  5. A container spawned for user `u1` + session `s1` is named exactly `playground-u1-s1`, can be re-derived from the DB row alone, and is visible to a reconciliation probe -- the idempotent naming scheme required by Phase 5 is already live.
+  1. `ap-base` image builds, starts with `tini` as PID 1 supervising `tmux` (two windows: `chat` + `shell`) and `ttyd` on loopback, has read-only rootfs + tmpfs `/tmp` + tmpfs `/run` + all caps dropped + `no-new-privileges`, drops to an unprivileged user via gosu entrypoint shim ported from MSV's `infra/picoclaw/`, and is reachable via `docker exec` for FIFO-based chat.
+  2. `pkg/docker/runner.go` `RunOptions` has fields for `SeccompProfile`, `ReadOnlyRootfs`, `Tmpfs`, `CapDrop`, `CapAdd`, `NoNewPrivs`, `PidsLimit`, `Memory`, `CPUs`, `Runtime`, `NetworkMode`, all wired through to Docker Engine SDK `HostConfig`, all unit-tested. Defaults applied at call sites, not inside runner.go.
+  3. A container spawned for user `u1` + session `s1` is named exactly `playground-u1-s1` via a validator/helper in runner.go. Name can be re-derived from DB row alone (SBX-09 satisfied for Phase 5 reconciliation).
+  4. Two recipe images pre-built via `make build-recipes`: `ap-picoclaw` (Go binary pinned to commit SHA from `/Users/fcavalcanti/dev/picoclaw`, `stdin_fifo` chat path) and `ap-hermes` (Python 3.11 from `github.com/NousResearch/hermes-agent` pinned to commit SHA, with pre-populated `~/.hermes/cli-config.yaml` disabling built-in channel daemons and forcing `backend: local`).
+  5. **Hypothesis proof via end-to-end curl smoke test**: `POST /api/sessions` (with `recipe`, `model_provider`, `model_id`) spawns the container via direct runner.go call (no Temporal in Phase 2, HTTP contract compatible with Phase 5's Temporal upgrade). `POST /api/sessions/:id/message {text}` exchanges a real message with a real Anthropic model via BYOK env injection, returns the response. `DELETE /api/sessions/:id` tears down cleanly. Test passes for **both picoclaw and Hermes** with no dangling `playground-*` containers afterwards. "API-driven agent start without Telegram" is demonstrated from curl.
 **Plans**: TBD
+**UI hint**: no (API-only; Phase 5 adds the browser UX)
+**Reshape rationale**: See `02-CONTEXT.md` `<domain>` section. Hardening deferred = zero work lost (runner.go hooks are plumbed; Phase 7.5 fills them in against a substrate known to work).
 
 ### Phase 3: Auth, Secrets & BYOK Key Handling
 **Goal**: A user can log in with Google or GitHub, manage BYOK keys safely, and the whole secret-handling pipeline (storage, injection, log scrubbing, audit) is hardened before the first BYOK-using session is ever spawned.
@@ -112,6 +123,27 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 
+### Phase 7.5: Sandbox Hardening Spine
+**Inserted 2026-04-13** as part of the Phase 2 reshape. Holds the host-hardening work originally in Phase 2 that no longer blocks the hypothesis proof.
+
+**Goal**: Against a known-working substrate (Phase 2's `ap-base` + runner.go sandbox knobs + pre-built recipes), fill in the full host hardening posture required before Phase 8 introduces the first untrusted-code path. Populate every sandbox knob Phase 2 plumbed.
+**Depends on**: Phase 2 (runner.go fields to fill in, ap-base to harden), Phase 4 (curated recipes to test against), Phase 7 (OSS hardening + audit log share ops surface).
+**Requirements (moved from Phase 2)**:
+  - **SBX-02** (custom seccomp JSON blocking `mount/unshare/setns/keyctl/bpf/ptrace`)
+  - **SBX-04** (`ap-net` bridge + egress allowlist: model providers + package registries + user git remote only)
+  - **SBX-06** (gVisor `runsc` install + selectable per-recipe via `runtime: runsc` -- mandatory for Phase 8)
+  - **SBX-07** (Falco or Tetragon, confirmed -- the UFW + loopback-bind portion of SBX-07 is already done in Phase 1)
+  - **SBX-08** (host-side syscall anomaly detector alerting on staged escape events)
+
+**Success Criteria** (what must be TRUE):
+  1. A custom seccomp profile JSON is committed and applied by default to every recipe container via `RunOptions.SeccompProfile`; an escape-attempt test harness in CI stages `mount`, `unshare`, `setns`, `keyctl`, `bpf`, `ptrace` calls from inside each recipe image and asserts they fail with `EPERM`/`EACCES`.
+  2. `ap-net` Docker bridge is created with an iptables DOCKER-USER allowlist (model provider CIDRs + npm/pypi/cargo + user's git remote host); integration test proves `curl https://api.anthropic.com` succeeds and `curl https://evil.example.com` fails from inside a recipe container.
+  3. gVisor `runsc` is installed on the Hetzner host (Spike 4 cleared), registered as a Docker runtime, and selectable via `RunOptions.Runtime = "runsc"`. A recipe flagged `runtime: runsc` starts, passes the same escape-attempt test, and the bootstrap path scheduled for Phase 8 can use it.
+  4. Falco or Tetragon runs as a systemd unit on the host with a published rule set in `docs/ops/`; a staged `mount`-from-container test fires an alert to the configured sink within 5s.
+  5. Host Docker socket is never visible inside any recipe container under any code path (existing Phase 2 invariant re-verified as part of the hardening audit); `--privileged` does not appear anywhere in the codebase (grep gate in CI).
+**Plans**: TBD
+**UI hint**: no
+
 ### Phase 8: Generic Claude-Code Bootstrap
 **Goal**: The headline differentiator. A user pastes any GitHub / GitLab / Codeberg / Bitbucket URL and gets a working dockerized session 30 seconds later via Claude Code driving the install -- running under gVisor with a content-addressed recipe cache and a human-review promotion flow.
 **Depends on**: Phase 2 (the gVisor runtime it requires), Phase 4 (the recipe schema it emits into), Phase 6 (scoped billing for Claude Code), Phase 5 (session lifecycle).
@@ -129,13 +161,14 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundations, Spikes & Temporal | 0/6 | Planned | - |
-| 2. Container Sandbox Spine | 0/? | Not started | - |
+| 1. Foundations, Spikes & Temporal | 6/6 | Complete | 2026-04-14 |
+| 2. Agent-in-a-Box + Minimal Substrate | 0/? | Context gathered | - |
 | 3. Auth, Secrets & BYOK Key Handling | 0/? | Not started | - |
 | 4. Recipe System & Curated Catalog | 0/? | Not started | - |
 | 5. Demoable MVP -- Session Lifecycle, Chat & Terminal | 0/? | Not started | - |
 | 6. Metering, Billing & Credits | 0/? | Not started | - |
 | 7. Persistent Tier & OSS Hardening | 0/? | Not started | - |
+| 7.5. Sandbox Hardening Spine | 0/? | Not started | - |
 | 8. Generic Claude-Code Bootstrap | 0/? | Not started | - |
 
 ## Coverage
@@ -149,13 +182,15 @@ Plans:
 
 | Pitfall | Phase | Rationale |
 |---------|-------|-----------|
-| CRIT-1 (bootstrap sandbox escape) | Phase 2 | Sandbox spine lands with SBX-* so gVisor + caps + seccomp + egress allowlist exist before any untrusted code path |
-| CRIT-2 (BYOK env leak) | Phase 3 | Secrets pipeline (SEC-*) lands with BYOK settings UI; no BYOK surface exposed before safe injection proven |
+| CRIT-1 (bootstrap sandbox escape) | Phase 7.5 + Phase 8 | gVisor + custom seccomp + egress allowlist land in 7.5 against a known-working substrate; Phase 8 is the first phase that actually introduces untrusted code, so 7.5 lands immediately before it |
+| CRIT-2 (BYOK env leak) | Phase 3 | Secrets pipeline (SEC-*) lands with BYOK settings UI; no BYOK surface exposed before safe injection proven. **File-based injection mechanism** (`/run/secrets/*_key` tmpfs) is plumbed in Phase 2 via dev env var; Phase 3 populates it from the encrypted vault -- same mechanism, different source. |
 | CRIT-3 (runaway loop) | Phase 6 | Circuit breakers (MET-08, MET-09) ship with the metering layer -- never "later" |
-| CRIT-4 (cross-tenant kernel escape) | Phase 2 | Runtime choice + seccomp + userns-remap + Falco all land with SBX-* |
+| CRIT-4 (cross-tenant kernel escape) | Phase 1 (userns-remap active) + Phase 2 (cap-drop/read-only/no-new-privs defaults) + Phase 7.5 (custom seccomp + Falco) | Layered: the cheap defense-in-depth lands as Phase 2 runner.go defaults; the custom seccomp profile + anomaly detection land in 7.5 |
 | CRIT-5 (Stripe webhook race) | Phase 6 | Idempotent ledger + BIL-02/03/04 land with the first Stripe call |
-| CRIT-6 (dangling containers) | Phase 5 | Reconciliation loop (SES-05) + Temporal workflow (SES-07) + heartbeat (SES-08) land with the lifecycle manager |
+| CRIT-6 (dangling containers) | Phase 5 | Reconciliation loop (SES-05) + Temporal workflow (SES-07) + heartbeat (SES-08) land with the lifecycle manager. Phase 2's stub session API is explicitly non-durable -- Phase 5 upgrades it. |
 
 ---
 *Roadmap created: 2026-04-11*
 *Phase 1 planned: 2026-04-13*
+*Phase 1 complete: 2026-04-14*
+*Phase 2 reshaped + Phase 7.5 inserted: 2026-04-14 (see `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` `<domain>` for rationale)*

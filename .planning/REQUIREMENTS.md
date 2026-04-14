@@ -241,13 +241,13 @@ Explicitly excluded. Documented to prevent scope creep.
 | FND-09 | Phase 1 | Pending |
 | FND-10 | Phase 1 | Pending |
 | SBX-01 | Phase 2 | Pending |
-| SBX-02 | Phase 2 | Pending |
+| SBX-02 | Phase 2 (partial: cap-drop/no-new-privs/read-only/tmpfs via runner.go options) + Phase 7.5 (custom seccomp JSON) | Pending |
 | SBX-03 | Phase 2 | Pending |
-| SBX-04 | Phase 2 | Pending |
-| SBX-05 | Phase 2 | Pending |
-| SBX-06 | Phase 2 | Pending |
-| SBX-07 | Phase 2 | Pending |
-| SBX-08 | Phase 2 | Pending |
+| SBX-04 | Phase 7.5 (moved 2026-04-14) | Pending |
+| SBX-05 | Phase 2 (invariant) | Pending |
+| SBX-06 | Phase 7.5 (moved 2026-04-14) | Pending |
+| SBX-07 | Phase 1 (UFW + loopback binds already active) + Phase 7.5 (Falco/Tetragon) | Partial |
+| SBX-08 | Phase 7.5 (moved 2026-04-14) | Pending |
 | SBX-09 | Phase 2 | Pending |
 | AUTH-01 | Phase 3 | Pending |
 | AUTH-02 | Phase 3 | Pending |
