@@ -133,12 +133,13 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Shutdown gracefully stops the HTTP listener within 10s.
+// Shutdown gracefully stops the HTTP listener. The caller is responsible for
+// supplying a context with an appropriate deadline (main.go uses 15s). Keeping
+// the policy in the caller avoids the misleading double-timeout that occurred
+// when this function created its own 10s child context.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.Logger.Info().Msg("shutting down server")
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	return s.Echo.Shutdown(shutdownCtx)
+	return s.Echo.Shutdown(ctx)
 }
 
 // zerologRequestLogger emits one structured log line per HTTP request. Mirrors
