@@ -33,6 +33,12 @@ func DefaultSandbox() docker.RunOptions {
 		Tmpfs: map[string]string{
 			"/tmp": "rw,noexec,nosuid,size=128m",
 			"/run": "rw,noexec,nosuid,size=16m",
+			// Agent scratch: per-session writable area for agent state
+			// (e.g. picoclaw's session-<n>.tmp journal files). Lives
+			// INSIDE $HOME so the agent's relative-path writes resolve,
+			// but is ephemeral per session. Phase 3 swaps for a named
+			// volume mount so workspace state persists across restarts.
+			"/home/agent/.picoclaw/workspace/sessions": "rw,noexec,nosuid,size=32m,uid=10000,gid=10000",
 		},
 		CapDrop: []string{"ALL"},
 		// Init-time caps needed ONLY for the root→agent drop in ap-base entrypoint:

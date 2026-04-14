@@ -36,6 +36,22 @@ USER agent
 WORKDIR /home/agent
 RUN /usr/local/bin/picoclaw onboard
 
+# Fix picoclaw's baked model catalog: it lists the Claude model as
+# `claude-sonnet-4.6` (dot notation) but Anthropic's canonical API name
+# uses hyphens (`claude-sonnet-4-6`). Without this rewrite, every
+# request to api.anthropic.com/v1 returns 404 "model not found".
+# We also keep the dot-notation model_name as the picoclaw-facing
+# identifier so recipe/smoke-test configs don't need to change — only
+# the wire-level `model:` field gets the corrected Anthropic ID.
+RUN jq '(.model_list[] | select(.model_name == "claude-sonnet-4.6") | .model) = "anthropic/claude-sonnet-4-6"' \
+    /home/agent/.picoclaw/config.json > /tmp/pc.json && \
+    mv /tmp/pc.json /home/agent/.picoclaw/config.json
+
+# Pre-create the session-state dir as an empty mountpoint. The session
+# handler mounts a tmpfs here at run time so picoclaw's session journal
+# writes succeed under the read-only rootfs posture.
+RUN mkdir -p /home/agent/.picoclaw/workspace/sessions
+
 # Restore root for the runtime entrypoint (ap-base entrypoint drops via gosu)
 USER root
 WORKDIR /home/agent
