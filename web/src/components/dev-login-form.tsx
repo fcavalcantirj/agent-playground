@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { apiPost, ApiError } from "@/lib/api";
@@ -12,8 +11,8 @@ import { cn } from "@/lib/utils";
  *
  * POSTs to /api/dev/login (no body) — the Go API is responsible for
  * setting the ap_session cookie when AP_DEV_MODE=true. On success we
- * call router.refresh() so the root server component re-fetches
- * `/api/me` and the authenticated shell renders in place.
+ * invoke `onLoginSuccess` so the parent client component re-checks
+ * `/api/me` and swaps into the authenticated shell.
  *
  * Per UI-SPEC the button is:
  *  - full-width on mobile
@@ -22,20 +21,23 @@ import { cn } from "@/lib/utils";
  *  - shows Loader2 spinner while pending
  *  - error copy exactly matches the UI-SPEC copywriting contract
  */
-export function DevLoginForm({ className }: { className?: string }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+export function DevLoginForm({
+  className,
+  onLoginSuccess,
+}: {
+  className?: string;
+  onLoginSuccess: () => void | Promise<void>;
+}) {
+  const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleLogin() {
     setError(null);
+    setIsPending(true);
     try {
       await apiPost("/api/dev/login");
-      // Refresh the server tree so the root page re-reads /api/me and
-      // switches to the authenticated shell.
-      startTransition(() => {
-        router.refresh();
-      });
+      // Tell the parent to re-check auth state and swap screens.
+      await onLoginSuccess();
     } catch (err) {
       // Network errors (TypeError) vs HTTP errors (ApiError).
       if (err instanceof ApiError) {
@@ -43,6 +45,8 @@ export function DevLoginForm({ className }: { className?: string }) {
       } else {
         setError("Could not reach the server. Check your connection.");
       }
+    } finally {
+      setIsPending(false);
     }
   }
 

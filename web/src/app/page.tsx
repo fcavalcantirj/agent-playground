@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bot, Terminal } from "lucide-react";
 
 import { apiGet, ApiError, type SessionUser } from "@/lib/api";
@@ -39,6 +39,17 @@ type AuthState =
  */
 export default function Page() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  // Bumping authVersion re-runs the auth-check effect. Children call
+  // refreshAuth() after login/logout to swap screens. Why this pattern
+  // instead of router.refresh(): this page is a client component, and
+  // router.refresh() only re-runs server components — it does not
+  // re-trigger client useEffects, so the auth state would never re-check.
+  const [authVersion, setAuthVersion] = useState(0);
+
+  const refreshAuth = useCallback(() => {
+    setAuth({ status: "loading" });
+    setAuthVersion((v) => v + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,11 +72,11 @@ export default function Page() {
       }
     }
 
-    check();
+    void check();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authVersion]);
 
   if (auth.status === "loading") {
     return (
@@ -81,7 +92,7 @@ export default function Page() {
   if (auth.status === "authenticated") {
     return (
       <main className="flex min-h-screen flex-col bg-background">
-        <TopBar user={auth.user} />
+        <TopBar user={auth.user} onSignOut={refreshAuth} />
         <div className="flex flex-1 items-center justify-center px-4 py-16">
           <EmptyState
             icon={Bot}
@@ -111,7 +122,7 @@ export default function Page() {
         </p>
 
         <div className="mt-8 w-full">
-          <DevLoginForm />
+          <DevLoginForm onLoginSuccess={refreshAuth} />
         </div>
 
         <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">

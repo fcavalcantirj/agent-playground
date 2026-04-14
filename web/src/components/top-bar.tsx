@@ -1,7 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { LogOut } from "lucide-react";
 
 import { apiPost } from "@/lib/api";
@@ -19,23 +18,32 @@ import type { SessionUser } from "@/lib/api";
  *  - Right: user display name (md+ only), UserAvatar (32px),
  *    sign-out icon button (LogOut, 44px touch target, aria-label="Sign out")
  *  - Sign-out: icon-only on mobile, "Sign out" text + icon on desktop
- *  - Sign-out action: POST /api/dev/logout then router.refresh()
+ *  - Sign-out action: POST /api/dev/logout then call onSignOut so the
+ *    parent client component re-checks /api/me and swaps screens.
  */
-export function TopBar({ user }: { user: SessionUser }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+export function TopBar({
+  user,
+  onSignOut,
+}: {
+  user: SessionUser;
+  onSignOut: () => void | Promise<void>;
+}) {
+  const [isPending, setIsPending] = useState(false);
 
   async function handleSignOut() {
+    setIsPending(true);
     try {
       await apiPost("/api/dev/logout");
     } catch {
-      // Swallow: even if the server rejects, refreshing re-checks /api/me
-      // and the user will see the unauthenticated state if the session was
-      // in fact cleared on the server side.
+      // Swallow: even if the server rejects, the parent's auth re-check
+      // is the source of truth — the user will see the unauthenticated
+      // state if the session was in fact cleared on the server side.
     }
-    startTransition(() => {
-      router.refresh();
-    });
+    try {
+      await onSignOut();
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
