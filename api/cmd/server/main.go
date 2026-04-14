@@ -61,10 +61,15 @@ func main() {
 		logger.Fatal().Err(err).Msg("migrate run failed")
 	}
 
-	// Server -- Task 1 calls server.New with zero options. Task 2 adds
-	// WithDevAuth(...) here.
+	// Server -- functional options pattern. Task 1 booted with zero options;
+	// Task 2 wires the dev cookie auth via WithDevAuth(...). Plan 01-05 will
+	// add WithWorkers(...) for Temporal without touching this call.
 	checker := handler.NewInfraChecker(db, rdb)
-	srv := server.New(cfg, logger, checker)
+	sessionStore := handler.NewDevSessionStore(db.Pool)
+	devAuth := handler.NewDevAuthHandler(db.Pool, sessionStore, []byte(cfg.SessionSecret), cfg.DevMode)
+	srv := server.New(cfg, logger, checker,
+		server.WithDevAuth(devAuth, sessionStore),
+	)
 
 	// Run Echo in a goroutine so we can listen for shutdown signals.
 	go func() {

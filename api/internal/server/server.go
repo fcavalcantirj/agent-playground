@@ -17,6 +17,7 @@ import (
 
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
+	"github.com/agentplayground/api/internal/middleware"
 )
 
 // Workers is the minimal interface that Plan 01-05 (Temporal worker) and any
@@ -39,12 +40,32 @@ type Server struct {
 	Config  *config.Config
 	Logger  zerolog.Logger
 	Workers Workers // nil until Plan 01-05 wires Temporal via WithWorkers
+
+	// devAuth is set by WithDevAuth and consumed during route registration.
+	// nil means no dev auth routes are mounted (e.g. tests that only exercise
+	// /healthz).
+	devAuth         *handler.DevAuthHandler
+	sessionProvider middleware.SessionProvider
 }
 
 // WithWorkers attaches a background worker subsystem to the Server. Plan 01-05
 // will pass a Temporal worker bundle here. Plan 01-01 callers ignore it.
 func WithWorkers(w Workers) Option {
 	return func(s *Server) { s.Workers = w }
+}
+
+// WithDevAuth mounts the dev cookie auth routes (/api/dev/login,
+// /api/dev/logout, /api/me) and applies AuthMiddleware to the protected /api
+// group. The provider is what AuthMiddleware uses to validate session cookies;
+// the handler is what serves the routes. Plan 01-01 Task 2 wires this option.
+//
+// Phase 3 will replace the option with WithGoth(...) backed by the same
+// SessionProvider interface -- callers stay unchanged.
+func WithDevAuth(h *handler.DevAuthHandler, provider middleware.SessionProvider) Option {
+	return func(s *Server) {
+		s.devAuth = h
+		s.sessionProvider = provider
+	}
 }
 
 // New constructs the Server. Required arguments cover what every Phase 1
@@ -73,10 +94,6 @@ func New(
 	healthHandler := handler.NewHealthHandler(checker)
 	e.GET("/healthz", healthHandler.Health)
 
-	// /api group hosts JSON endpoints. Task 2 mounts dev auth routes here via
-	// the WithDevAuth option; Plan 01-01 Task 1 leaves the group empty.
-	e.Group("/api")
-
 	s := &Server{
 		Echo:   e,
 		Config: cfg,
@@ -85,6 +102,21 @@ func New(
 	for _, opt := range opts {
 		opt(s)
 	}
+
+	// /api group hosts JSON endpoints. Dev auth routes mount unprotected;
+	// /api/me sits behind AuthMiddleware. Both are gated on WithDevAuth being
+	// supplied -- Task 1 callers (zero options) skip this entire block.
+	api := e.Group("/api")
+	if s.devAuth != nil && s.sessionProvider != nil {
+		api.POST("/dev/login", s.devAuth.Login)
+		api.POST("/dev/logout", s.devAuth.Logout)
+
+		authed := api.Group("",
+			middleware.AuthMiddleware(s.sessionProvider, []byte(cfg.SessionSecret)),
+		)
+		authed.GET("/me", s.devAuth.Me)
+	}
+
 	return s
 }
 
