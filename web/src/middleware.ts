@@ -14,9 +14,9 @@ import type { NextRequest } from "next/server";
  * can render in both authenticated and unauthenticated states; it serves
  * as a scaffold future phases will build on without re-architecting.
  *
- * Note: Next.js 16 renamed the `middleware` file convention to `proxy`,
- * but the `middleware.ts` file is still supported (deprecated). Phase 3
- * (auth) will migrate this to `proxy.ts` alongside the goth OAuth swap.
+ * Note: The middleware file convention remains `middleware.ts` in Next.js 16.
+ * There is no `proxy.ts` rename — that claim was incorrect. This file stays
+ * as `middleware.ts` in Phase 3 and beyond.
  */
 export function middleware(request: NextRequest) {
   // Read the ap_session cookie set by the Go API on successful login.
