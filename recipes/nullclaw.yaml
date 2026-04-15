@@ -1,0 +1,166 @@
+apiVersion: ap.recipe/v0
+name: nullclaw
+display_name: NullClaw
+description: |
+  "Null overhead. Null compromise. 100% Zig. 100% Agnostic." A static
+  Zig binary — 678 KB, ~1 MB RAM, <2 ms boot — that runs the full
+  self-improving agent stack (50+ providers, 19 channels, 35+ tools,
+  10 memory engines). This recipe targets `nullclaw agent -m` with a
+  sh-chained `nullclaw onboard` to inject the OpenRouter API key
+  before the one-shot turn.
+
+source:
+  repo: https://github.com/nullclaw/nullclaw
+  ref: main
+  ref_note: |
+    NullClaw ships a static binary (no runtime, no VM). v0 of this
+    recipe tracks main. `build.zig.zon` reports version 2026.4.9;
+    this may drift ahead as upstream releases.
+  upstream_version: 2026.4.9+
+
+build:
+  mode: upstream_dockerfile
+  dockerfile: Dockerfile
+  context: .
+  notes: |
+    Upstream multi-stage Dockerfile cross-compiles Zig (ReleaseSmall)
+    for linux/amd64 or linux/arm64 depending on the host. Base runtime
+    is alpine:3.23 with ca-certificates/curl/tzdata. Non-root user
+    (uid/gid 65534) by default — `release-root` target exists for
+    autonomous mode (not used here).
+
+    ENV set in Dockerfile:
+      NULLCLAW_WORKSPACE=/nullclaw-data/workspace
+      NULLCLAW_HOME=/nullclaw-data
+      HOME=/nullclaw-data
+      NULLCLAW_GATEWAY_PORT=3000
+
+    ENTRYPOINT is ["nullclaw"], CMD is ["gateway","--port","3000","--host","::"].
+    We override CMD by passing our own argv (via sh entrypoint chain).
+
+    **Unique property in our recipe set:** the Dockerfile config stage
+    pre-templates `/nullclaw-data/config.json` with
+    `agents.defaults.model.primary = "openrouter/anthropic/claude-sonnet-4"`
+    and an empty `models.providers.openrouter` entry. OpenRouter is
+    first-class in the shipping config; we only need to inject the API
+    key at run time via `nullclaw onboard --api-key ... --provider openrouter`.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null
+    model: null
+  volumes:
+    - name: nullclaw_data
+      host: per_session_tmpdir
+      container: /nullclaw-data
+      mode: rw
+      ephemeral: true
+      owner_uid: 65534
+      notes: |
+        NULLCLAW_HOME. The upstream Dockerfile chowns this to 65534:65534
+        and pre-populates config.json + workspace/. We bind a per-session
+        tmpdir so state is ephemeral. The sh bootstrap writes via
+        `nullclaw onboard`, which mutates config.json in place.
+  warnings:
+    - id: two_step_onboard_then_agent
+      rule: "`nullclaw onboard` must run before `nullclaw agent -m` to inject the OpenRouter API key"
+      reason: |
+        The baked config.json declares the openrouter provider but ships
+        with no API key (empty `{}`). A fresh container has no credential
+        material until onboard writes it. `nullclaw onboard
+        --api-key ... --provider openrouter` is the documented
+        non-interactive setup path (per docs/en/commands.md:43).
+    - id: sh_entrypoint_override
+      rule: Override --entrypoint to sh so we can chain onboard+agent in one container
+      reason: |
+        Default ENTRYPOINT is `nullclaw`, so a single docker run only
+        executes one nullclaw subcommand. To run onboard THEN agent
+        inside the same container lifetime (no persisted state between
+        runs), we override the entrypoint to sh and chain both commands
+        in a single -c script. Alpine ships busybox sh.
+    - id: nonroot_volume_ownership
+      rule: Container runs as UID 65534 (nobody); host bind mount must be writable for that UID
+      reason: |
+        `release` target in the upstream Dockerfile sets `USER 65534:65534`
+        and chowns /nullclaw-data accordingly. On Docker Desktop for Mac
+        the bind-mount shim handles this; on Linux hosts the mounted
+        tmpdir needs to be 0777 or chowned to 65534 before mounting.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        nullclaw onboard --api-key "${OPENROUTER_API_KEY}" --provider openrouter --model "openrouter/$MODEL" >/dev/null 2>&1
+        nullclaw agent -m "$PROMPT" --model "openrouter/$MODEL"
+    argv_note: |
+      Two-step sh chain inside a single container:
+        1. `nullclaw onboard --api-key $OPENROUTER_API_KEY --provider openrouter --model openrouter/<model>`
+           Writes the key + provider selection + default model to config.json
+           (stdout discarded — it prints an interactive-ish banner even
+           with flags). Per docs/en/commands.md:43 this is a valid
+           non-interactive invocation.
+        2. `nullclaw agent -m "<prompt>" --model "openrouter/<model>"`
+           Runs the one-shot agent turn. `--model` pins the session
+           model and bypasses any auto-routing.
+
+      Substitution order: the runner replaces $PROMPT and $MODEL BEFORE
+      docker run. sh interpolates ${OPENROUTER_API_KEY} at container
+      runtime from the process env.
+    stdout_filter:
+      engine: awk
+      program: "{print}"  # v0 pass-through; refine after first run
+    session_id_capture:
+      engine: none
+
+smoke:
+  # NOTE: unlike hermes/openclaw/picoclaw, nullclaw's default agent persona
+  # is a DELIBERATE blank slate — ask "who are you?" and it answers that it
+  # has no name yet and asks the user to give it one. So the standard
+  # response_contains_name probe falls back on a prompt that *forces* the
+  # agent name into the reply by asking a question that can't be answered
+  # without it.
+  prompt: "What is NullClaw? Reply in one short sentence starting with 'NullClaw is'."
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 90
+  verified_cells:
+    - model: anthropic/claude-haiku-4-5
+      verdict: PASS
+      wall_time_s: 2.5
+      notes: |
+        Reply: "NullClaw is an AI agent framework that gives you a
+        persistent, autonomous assistant with memory, multi-channel
+        access, and deep integration into your workspace and tools."
+        Tied with picoclaw for fastest end-to-end (2.5s) despite the
+        two-step onboard+agent chain, because the Zig binary is ~678 KB
+        and boots in <8 ms. Model adopted a direct factual tone (not
+        the blank-slate persona) because the prompt asked "what is X"
+        rather than "who are you".
+  known_weak_probes:
+    - prompt: "who are you?"
+      problem: |
+        NullClaw's default system prompt is a blank slate — the agent
+        explicitly has no name and asks the user to name it. The reply
+        to "who are you?" does not contain the string "nullclaw" and
+        response_contains_name fails. Plumbing is correct; the probe
+        is wrong for this agent.
+
+metadata:
+  recon_date: 2026-04-15
+  recon_by: main-conversation (direct source read; no Solvr helper available)
+  source_citations:
+    - "README.md - 678 KB binary, <2 ms startup, Zig, 50+ providers"
+    - "Dockerfile - multi-stage Zig cross-compile, alpine:3.23 runtime, USER 65534"
+    - "Dockerfile config stage - bakes openrouter as default provider in /nullclaw-data/config.json"
+    - "Dockerfile - ENTRYPOINT [nullclaw], CMD [gateway --port 3000 --host ::]"
+    - "docs/en/commands.md:32-46 - setup flow: onboard → agent -m"
+    - "docs/en/commands.md:43 - `nullclaw onboard --api-key sk-... --provider openrouter` is documented non-interactive setup"
+    - "docs/en/usage.md:236-246 - First-Run Flow verbatim: onboard then agent -m"
+    - "build.zig.zon - version 2026.4.9, minimum_zig_version 0.15.2"

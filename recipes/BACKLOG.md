@@ -23,10 +23,13 @@ Agent Playground's flagship value prop is hosting agents that **improve over tim
 
 - [x] **OpenClaw** — https://github.com/openclaw/openclaw — TypeScript/Node 24, 358k stars, 2026.4.15-beta.1 — `recipes/openclaw.yaml` — validated 2026-04-15 with `anthropic/claude-haiku-4-5` via OpenRouter, wall 72.5s. Recon: direct source read + Solvr follow-up to `clawdbot-hermes-helper`. **Required format innovation:** bash-chained `openclaw config set agents.defaults.model openrouter/<model>` before `infer model run --local --json` — the `--model` flag on `infer model run` is decorative; the embedded agent runtime reads its lane model from the config file, not the CLI flag. **Self-improving:** skills, workspace continuity, multi-channel gateway, agent lanes with memory/context. **Known model incompatibility:** `openai/gpt-4o-mini` via OpenRouter returns `attempts: []` and "⚠️ Agent couldn't generate a response" — not a recipe bug, a model-side contract mismatch with openclaw's embedded agent turn dispatch. Claude models work fine.
 
-- [x] **PicoClaw** — https://github.com/sipeed/picoclaw — Go 1.25, 28k stars, v0.2.4+ — `recipes/picoclaw.yaml` — validated 2026-04-15 with `openai/gpt-4o-mini` via OpenRouter, wall **2.6s** (fastest agent so far). Recon: direct source + built-image empirical check + Solvr correction (MSV's `infra/picoclaw/` is OpenClaw-wrapped, not sipeed/picoclaw — name collision). **Required format innovation:** `invoke.spec.entrypoint` override (`sh`) to bypass upstream `docker/entrypoint.sh`'s two-stage `onboard → exit` flow, plus sh-heredoc-templated `config.json` written before the invoke so `picoclaw agent -m` finds an openrouter-routed model. Runner extended to honor `entrypoint` field. **Self-improving:** workspace state, skills, persistent session store, multi-channel gateway. **Ultra-lightweight**: ~200 MB image (vs ~5 GB for hermes/openclaw), single Go binary, Alpine base.
+- [x] **PicoClaw** — https://github.com/sipeed/picoclaw — Go 1.25, 28k stars, v0.2.4+ — `recipes/picoclaw.yaml` — validated 2026-04-15 with `openai/gpt-4o-mini` via OpenRouter, wall **2.6s**. Recon: direct source + built-image empirical check + Solvr correction (MSV's `infra/picoclaw/` is OpenClaw-wrapped, not sipeed/picoclaw — name collision). **Required format innovation:** `invoke.spec.entrypoint` override (`sh`) to bypass upstream `docker/entrypoint.sh`'s two-stage `onboard → exit` flow, plus sh-heredoc-templated `config.json` written before the invoke so `picoclaw agent -m` finds an openrouter-routed model. Runner extended to honor `entrypoint` field. **Self-improving:** workspace state, skills, persistent session store, multi-channel gateway. **Ultra-lightweight**: ~200 MB image (vs ~5 GB for hermes/openclaw), single Go binary, Alpine base.
+
+- [x] **NullClaw** — https://github.com/nullclaw/nullclaw — **Zig** 0.15.2+, 7.2k stars, 2026.4.9+ — `recipes/nullclaw.yaml` — validated 2026-04-15 with `anthropic/claude-haiku-4-5` via OpenRouter, wall **2.5s** (tied with picoclaw for fastest). Recon: direct source read (no Solvr helper). **Required format innovation:** sh-chained two-step `nullclaw onboard --api-key ... --provider openrouter` → `nullclaw agent -m "..." --model "openrouter/..."` inside a single container. Upstream Dockerfile *already bakes* `openrouter/anthropic/claude-sonnet-4` as the default model — we only inject the API key via onboard. **Self-improving:** 10 memory engines, 35+ tools, MCP, subagents, 50+ providers, 19 channels. **Ultra-ultra-lightweight**: **678 KB static binary**, ~1 MB RAM, <8 ms startup. **Smoke finding:** the default `who are you?` prompt returns a blank-slate persona ("I don't have a name yet..."), so the recipe uses `"What is NullClaw? Reply in one short sentence starting with 'NullClaw is'."` to force the keyword into the response. Documented in recipe under `smoke.known_weak_probes`.
 
 ### Recon targets — self-improving
-- [~] **NullClaw** — https://github.com/nullclaw/nullclaw — **Zig**, 7.2k stars, "Fastest, smallest, and fully autonomous AI assistant infrastructure written in Zig". Maximum architectural diversity from what we have. **Next pick.**
+
+_(none queued — TrustClaw removed as copycat, NanoClaw BLOCKED, nullclaw done)_
 
 ### Blocked / deferred
 - **NanoClaw** — https://github.com/qwibitai/nanoclaw — TypeScript, 27k stars, "Lightweight alternative to OpenClaw... runs directly on Anthropic's Agents SDK". **BLOCKED(format)** 2026-04-15. Reasons (in order of hardness):
@@ -40,14 +43,6 @@ Agent Playground's flagship value prop is hosting agents that **improve over tim
 ### Recon targets — architectural diversity (maybe self-improving, need to verify)
 
 - [ ] **OpenHands** (ex-OpenDevin) — https://github.com/All-Hands-AI/OpenHands — Docker-first, runs its own orchestrator + browser + web UI. Likely has memory/persistent state; verify whether it's a learning loop or a session-bound task runner. Heavy, architecturally very different from the claw family.
-
-### Recon targets — architectural diversity (maybe self-improving, need to verify)
-
-- [ ] **OpenHands** (ex-OpenDevin) — https://github.com/All-Hands-AI/OpenHands — Docker-first, runs its own orchestrator + browser + web UI. Likely has memory/persistent state; verify whether it's a learning loop or a session-bound task runner. Heavy, architecturally very different from the claw family.
-
-### Removed
-
-- **TrustClaw** — see "Blocked / deferred" section above. Not a distinct agent.
 
 ---
 
