@@ -56,6 +56,29 @@ build-recipes: build-ap-base build-picoclaw build-hermes
 clean-recipes:
 	-docker rmi $(PICOCLAW_TAG) $(HERMES_TAG) $(AP_BASE_TAG)
 
+# --- Phase 02.5 runtime base images (D-18..D-23) ---
+# 2 of the 5 planned language families; go/rust/zig deferred to Phase 4
+# along with their consuming recipes. Each runtime base is a thin overlay
+# on ap-base that adds ONLY the language toolchain — tini, tmux, ttyd,
+# gosu, and the entrypoint shim are all inherited unchanged.
+AP_RUNTIME_PYTHON_TAG := ap-runtime-python:v0.1.0-3.13
+AP_RUNTIME_NODE_TAG   := ap-runtime-node:v0.1.0-22
+
+.PHONY: build-runtime-python build-runtime-node build-runtimes clean-runtimes
+
+build-runtime-python: build-ap-base
+	docker build -t $(AP_RUNTIME_PYTHON_TAG) deploy/ap-runtime-python/
+
+build-runtime-node: build-ap-base
+	docker build -t $(AP_RUNTIME_NODE_TAG) deploy/ap-runtime-node/
+
+build-runtimes: build-runtime-python build-runtime-node
+	@echo "Built runtimes: $(AP_RUNTIME_PYTHON_TAG) $(AP_RUNTIME_NODE_TAG)"
+	@docker images --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}' | grep -E 'ap-base|ap-runtime-'
+
+clean-runtimes:
+	-docker rmi $(AP_RUNTIME_PYTHON_TAG) $(AP_RUNTIME_NODE_TAG)
+
 smoke-test:
 	@if [ -z "$$AP_DEV_BYOK_KEY" ]; then \
 		echo "SKIPPED: AP_DEV_BYOK_KEY not set (set to a real Anthropic key to run the live smoke test)"; \
