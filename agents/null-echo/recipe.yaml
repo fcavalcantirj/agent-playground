@@ -1,0 +1,184 @@
+# agents/null-echo/recipe.yaml
+# Phase 02.5 Gate B synthetic drop-in per D-50d.
+#
+# Purpose: the architectural drop-in proof (Plan 11) — a hand-written,
+# pure-directory-add recipe the substrate has never seen. The "agent"
+# is a one-liner Python script that calls the Anthropic SDK directly
+# and echoes the reply to stdout. It proves that a fresh recipe lands
+# in the loader, the handler, the lifecycle runner, and the exec bridge
+# with zero substrate edits (D-50c).
+#
+# Why a synthetic agent?  A real third-party agent (openclaw, plandex,
+# hiclaw, ...) either (a) needs a chat_io mode we cut from v0.1
+# (openclaw = gateway-websocket) or (b) needs a new runtime family
+# Dockerfile under deploy/ (plandex = go). Both are valid Gate B
+# targets but both add scope beyond the architectural proof. The
+# synthetic null-echo isolates the hypothesis: can the substrate
+# absorb a brand-new recipe without any code change?
+#
+# Invariants (verified by Gate B):
+#   * pip install path, python runtime family (no new deploy/ dir)
+#   * exec_per_message chat_io with {text} + {model} placeholders
+#     (same bridge shape aider uses)
+#   * env_var auth with a secret: reference that MUST resolve through
+#     secrets_schema (Plan 04 semantic check)
+#   * anthropic provider only — OpenRouter is not declared so the
+#     smoke-matrix skips null-echo × openrouter as a legitimate SKIP,
+#     matching the picoclaw × openrouter pattern from Gate A
+#
+# Install strategy: the ap-runtime-python image has uv baked in with
+# UV_SYSTEM_PYTHON=1. Installing as the non-root `agent` user into
+# /usr/local/lib/python3.13/site-packages would EACCES; aider sidesteps
+# this by using `uv tool install` into /home/agent/.local. For a
+# library (not a CLI tool), the cleanest pattern is a dedicated venv
+# on tmpfs under /home/agent/.null-echo, created in postCreate.  The
+# per-message exec uses the venv's python binary directly.
+
+id: null-echo
+name: Null Echo
+description: Synthetic drop-in for Phase 02.5 Gate B architectural proof (D-50d).
+version: "0.1.0"
+license: Apache-2.0
+category: chat
+tier_badge: tier-1
+
+runtime:
+  family: python
+  version: "3.13"
+  image: ap-runtime-python:v0.1.0-3.13
+  resources:
+    # Small: no model weights, no vector db, just a venv + anthropic SDK
+    # + one http call per message. 512 MB is plenty.
+    memory_mib: 512
+    cpus: 0.5
+    pids_limit: 128
+
+install:
+  type: pip
+  package: anthropic
+  version: ">=0.39"
+
+lifecycle:
+  # Two-step install, expressed as a single `sh -c` hook because the
+  # v0.1 hook schema accepts argv form and `sh` is in ap-base. The
+  # steps are:
+  #   1. uv venv /home/agent/.null-echo     (creates python binary on tmpfs)
+  #   2. uv pip install --python <venv> anthropic
+  # The venv lives under /home/agent/.local via a tmpfs-mounted subpath
+  # declared in persistent_state below.
+  postCreateCommand:
+    - sh
+    - -c
+    - "set -e; uv venv /home/agent/.local/null-echo && uv pip install --python /home/agent/.local/null-echo/bin/python --no-cache anthropic"
+  postCreate_timeout_sec: 300
+  waitFor: postCreateCommand
+
+launch:
+  # exec_per_message containers still need a long-running PID 1 so the
+  # bridge can docker-exec into them per message. `sleep infinity` is
+  # the same keep-alive aider uses (see agents/aider/recipe.yaml).
+  cmd:
+    - sleep
+    - infinity
+  workdir: /home/agent
+
+chat_io:
+  mode: exec_per_message
+  # The anthropic call is short (haiku, max 256 tokens, no streaming).
+  # 60s is generous; retry backoff from the SDK fits within it.
+  response_timeout_sec: 60
+  exec_per_message:
+    # Placeholder substitution (Plan 04 ExecBridge + Plan 02.5 handler.buildRunOptions):
+    # `{text}` is replaced with the user message and `{model}` with the
+    # chosen model id. Both are shell-safe because the bridge passes
+    # them as argv elements, never through a shell.
+    #
+    # The one-liner:
+    #   1. imports os, sys, anthropic
+    #   2. instantiates the client (reads ANTHROPIC_API_KEY from env)
+    #   3. creates a single message with the {model} from argv[1] and
+    #      {text} from argv[2], max 256 tokens
+    #   4. prints response.content[0].text to stdout so the bridge
+    #      captures it as the reply
+    cmd_template:
+      - /home/agent/.local/null-echo/bin/python
+      - -c
+      - "import os,sys,anthropic; c=anthropic.Anthropic(); r=c.messages.create(model=sys.argv[1], max_tokens=256, messages=[{'role':'user','content':sys.argv[2]}]); print(r.content[0].text)"
+      - "{model}"
+      - "{text}"
+    docker_exec_user: agent
+
+auth:
+  mechanism: env_var
+  headless_safe: true
+  env:
+    ANTHROPIC_API_KEY: "secret:anthropic-api-key"
+  files: []
+  secrets_schema:
+    - name: anthropic-api-key
+      description: "Anthropic API key (BYOK) — read by the Anthropic SDK"
+      required: true
+
+providers:
+  - id: anthropic
+    api_base: https://api.anthropic.com/v1
+    api_key_env_var: ANTHROPIC_API_KEY
+    auth_style: x-api-key
+
+# Only one model declared: the matrix will run null-echo × anthropic
+# and SKIP null-echo × openrouter (no provider declared). That matches
+# the Gate A picoclaw × openrouter SKIP semantics.
+models:
+  - id: claude-haiku-4-5-20251001
+    provider: anthropic
+    max_input_tokens: 200000
+    max_output_tokens: 8192
+
+model_flag: --model
+
+isolation:
+  tier: strict
+  cap_drop:
+    - ALL
+  # Same cap set aider + picoclaw use — ap-base's gosu privilege drop
+  # at PID 1 needs these, nothing more.
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+    - SETPCAP
+  no_new_privs: true
+  read_only_rootfs: true
+
+persistent_state:
+  tmpfs:
+    - path: /tmp
+      size_mib: 128
+    - path: /run
+      size_mib: 16
+    # The venv + pip cache live under /home/agent/.local. The handler
+    # mounts /home/agent/* tmpfs with uid=10000,gid=10000,mode=0755,exec
+    # (per the Plan 07 exec fix) so the venv's python binary is
+    # executable. 512 MB holds python stdlib shim + anthropic SDK
+    # (~5 MB) + httpx, pydantic transitive deps (~30 MB).
+    - path: /home/agent/.local
+      size_mib: 512
+    - path: /home/agent/.cache
+      size_mib: 128
+
+frontend:
+  display_name: Null Echo
+  slug: null-echo
+  icon: terminal
+  category_badge: "Gate B drop-in"
+  tooltip: "Synthetic drop-in recipe for Phase 02.5 architectural proof"
+  tier_badge: tier-1
+
+metadata:
+  source_repo: https://github.com/anthropics/anthropic-sdk-python
+  # Pin to a real anthropic-sdk-python commit (HEAD at 2026-04-14). The
+  # schema's sha regex rejects anything other than 40-char hex, so a
+  # placeholder would fail schema validation at load time.
+  source_sha: 1056685678c8e52cb2492e43b75d695ab91a4b51
+  last_verified: "2026-04-14"
+  bootstrap_generated: false
