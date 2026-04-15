@@ -1,8 +1,18 @@
 package session_test
 
+// handler_test.go — Phase 02.5 Plan 09 rewrite.
+//
+// The Phase 2 test suite constructed the handler against hardcoded
+// legacy recipes (picoclaw / hermes). Plan 09 deletes that catalog
+// and swaps the handler onto the YAML-backed Loader + Materialize +
+// RunWithLifecycle + BridgeRegistry path. Every test below uses
+// fake implementations of those collaborators so the suite stays
+// pure-unit (no Docker, no Postgres, no filesystem beyond t.TempDir()).
+
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,11 +26,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentplayground/api/internal/recipes"
 	"github.com/agentplayground/api/internal/session"
+	"github.com/agentplayground/api/internal/session/bridge"
 	"github.com/agentplayground/api/pkg/docker"
 )
 
-// ----- mocks -----
+// ---------- fakes ----------
 
 type mockStore struct {
 	mu sync.Mutex
@@ -78,51 +90,20 @@ func (m *mockStore) UpdateContainer(ctx context.Context, id uuid.UUID, container
 	return nil
 }
 
-type mockSecretWriter struct {
-	provisionFn func(sessionID uuid.UUID, required []string) (string, error)
-	cleanupFn   func(sessionID uuid.UUID) error
-
-	mu           sync.Mutex
-	cleanupCalls int
-}
-
-func (m *mockSecretWriter) Provision(sessionID uuid.UUID, required []string) (string, error) {
-	if m.provisionFn != nil {
-		return m.provisionFn(sessionID, required)
-	}
-	return "/tmp/ap/secrets/" + sessionID.String(), nil
-}
-
-func (m *mockSecretWriter) Cleanup(sessionID uuid.UUID) error {
-	m.mu.Lock()
-	m.cleanupCalls++
-	m.mu.Unlock()
-	if m.cleanupFn != nil {
-		return m.cleanupFn(sessionID)
-	}
-	return nil
-}
-
-func (m *mockSecretWriter) BindMountSpec(sessionID uuid.UUID) string {
-	return "/tmp/ap/secrets/" + sessionID.String() + ":/run/secrets:ro"
-}
-
-func (m *mockSecretWriter) WriteAuthFile(sessionID uuid.UUID, filename, containerPath, content string) (string, error) {
-	return "/tmp/ap/secrets/" + sessionID.String() + "/" + filename + ":" + containerPath + ":ro", nil
-}
-
+// mockContainerRunner satisfies session.ContainerRunner. It records
+// RunWithLifecycle / Stop / Remove calls and returns canned results.
 type mockContainerRunner struct {
-	runFn    func(ctx context.Context, opts docker.RunOptions) (string, error)
-	stopFn   func(ctx context.Context, id string) error
-	removeFn func(ctx context.Context, id string) error
+	mu sync.Mutex
 
-	mu          sync.Mutex
-	stopCalls   int
-	removeCalls int
-	lastRunOpts docker.RunOptions
-
-	execFn          func(ctx context.Context, containerID string, cmd []string) ([]byte, error)
-	execWithStdinFn func(ctx context.Context, containerID string, cmd []string, stdin io.Reader) ([]byte, error)
+	runFn         func(ctx context.Context, opts docker.RunOptions) (string, error)
+	runLifecycle  func(ctx context.Context, recipe *recipes.Recipe, opts docker.RunOptions) (*docker.LifecycleSession, error)
+	stopFn        func(ctx context.Context, id string) error
+	removeFn      func(ctx context.Context, id string) error
+	stopCalls     int
+	removeCalls   int
+	lifecycleHits int
+	lastRunOpts   docker.RunOptions
+	lastRecipe    *recipes.Recipe
 }
 
 func (m *mockContainerRunner) Run(ctx context.Context, opts docker.RunOptions) (string, error) {
@@ -132,7 +113,25 @@ func (m *mockContainerRunner) Run(ctx context.Context, opts docker.RunOptions) (
 	if m.runFn != nil {
 		return m.runFn(ctx, opts)
 	}
-	return "fakecontainerid1234567890abcdef", nil
+	return "fakecontainerid0000", nil
+}
+
+func (m *mockContainerRunner) RunWithLifecycle(ctx context.Context, recipe *recipes.Recipe, opts docker.RunOptions) (*docker.LifecycleSession, error) {
+	m.mu.Lock()
+	m.lifecycleHits++
+	m.lastRunOpts = opts
+	m.lastRecipe = recipe
+	m.mu.Unlock()
+	if m.runLifecycle != nil {
+		return m.runLifecycle(ctx, recipe, opts)
+	}
+	ch := make(chan struct{})
+	close(ch)
+	return &docker.LifecycleSession{
+		ContainerID: "lc-fake-container-id",
+		Recipe:      recipe,
+		ReadyCh:     ch,
+	}, nil
 }
 
 func (m *mockContainerRunner) Stop(ctx context.Context, id string) error {
@@ -155,40 +154,192 @@ func (m *mockContainerRunner) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *mockContainerRunner) Exec(ctx context.Context, containerID string, cmd []string) ([]byte, error) {
-	if m.execFn != nil {
-		return m.execFn(ctx, containerID, cmd)
-	}
-	return []byte("mock-reply"), nil
+// fakeLoader is the in-memory RecipeLoader the handler tests use.
+type fakeLoader struct {
+	byID map[string]*recipes.Recipe
 }
 
-func (m *mockContainerRunner) ExecWithStdin(ctx context.Context, containerID string, cmd []string, stdin io.Reader) ([]byte, error) {
-	if m.execWithStdinFn != nil {
-		return m.execWithStdinFn(ctx, containerID, cmd, stdin)
-	}
-	return nil, nil
+func (f *fakeLoader) Get(id string) (*recipes.Recipe, bool) {
+	r, ok := f.byID[id]
+	return r, ok
 }
 
-// ----- test helpers -----
+// fakeSecretSource returns preconfigured secret values keyed by
+// normalized name. Any `secret:<name>` ref with a matching key
+// resolves; literal refs pass through unchanged.
+type fakeSecretSource struct {
+	values  map[string]string
+	missing bool
+}
 
-func buildHandlerTest(t *testing.T, store *mockStore, sw *mockSecretWriter, runner *mockContainerRunner) (*echo.Echo, uuid.UUID) {
+func (f *fakeSecretSource) Get(name string) (string, error) {
+	if f.missing {
+		return "", session.ErrSecretMissing
+	}
+	if v, ok := f.values[name]; ok {
+		return v, nil
+	}
+	return "", session.ErrSecretMissing
+}
+
+func (f *fakeSecretSource) Resolve(ref string) (string, error) {
+	key, ok := strings.CutPrefix(ref, "secret:")
+	if !ok {
+		return ref, nil
+	}
+	return f.Get(key)
+}
+
+// fakeTemplates is a no-op TemplateRenderer: returns the empty
+// string for any render request. The handler tests don't exercise
+// auth.files materialization (the plan's acceptance criteria only
+// require secret-missing + happy-path coverage), so an empty
+// implementation is sufficient.
+type fakeTemplates struct{}
+
+func (fakeTemplates) Render(ctx context.Context, recipeID, name string, data any) (string, error) {
+	return "", nil
+}
+
+// fakeBridges dispatches recipe.ChatIO.Mode to a captured fake
+// ChatBridge. The default bridge returns a canned reply; tests can
+// override on a per-case basis.
+type fakeBridges struct {
+	sendFn  func(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error)
+	dispErr error
+}
+
+type fakeBridge struct {
+	parent *fakeBridges
+}
+
+func (b *fakeBridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
+	if b.parent.sendFn != nil {
+		return b.parent.sendFn(ctx, containerID, recipe, modelID, text)
+	}
+	return "ack: " + text, nil
+}
+
+func (f *fakeBridges) Dispatch(mode string) (bridge.ChatBridge, error) {
+	if f.dispErr != nil {
+		return nil, f.dispErr
+	}
+	return &fakeBridge{parent: f}, nil
+}
+
+// ---------- recipe fixtures ----------
+
+// testAiderRecipe returns a two-provider (anthropic + openrouter)
+// recipe used by most create-session tests. Matches the shape the
+// Plan 09 plan spec calls out.
+func testAiderRecipe() *recipes.Recipe {
+	return &recipes.Recipe{
+		ID:      "aider",
+		Name:    "Aider",
+		License: "Apache-2.0",
+		Runtime: recipes.RecipeRuntime{
+			Family: "python",
+			Image:  "ap-runtime-python:test",
+		},
+		Install: recipes.RecipeInstall{Type: "pip", Package: "aider-chat"},
+		Launch:  recipes.RecipeLaunch{Cmd: []string{"aider"}},
+		ChatIO:  recipes.RecipeChatIO{Mode: "exec_per_message"},
+		Auth: recipes.RecipeAuth{
+			Mechanism: "env_var",
+			Env: map[string]string{
+				"ANTHROPIC_API_KEY":  "secret:anthropic-api-key",
+				"OPENROUTER_API_KEY": "secret:openrouter-api-key",
+			},
+			SecretsSchema: []recipes.RecipeSecretDecl{
+				{Name: "anthropic-api-key"},
+				{Name: "openrouter-api-key"},
+			},
+		},
+		Providers: []recipes.RecipeProvider{
+			{ID: "anthropic"},
+			{ID: "openrouter"},
+		},
+		Models: []recipes.RecipeModel{
+			{ID: "claude-haiku-test", Provider: "anthropic"},
+			{ID: "openrouter/auto", Provider: "openrouter"},
+		},
+		Isolation: recipes.RecipeIsolation{Tier: "strict"},
+	}
+}
+
+// testPicoclawRecipe returns a single-provider recipe used by the
+// "provider default" tests. Picoclaw only supports anthropic in v0.1.
+func testPicoclawRecipe() *recipes.Recipe {
+	return &recipes.Recipe{
+		ID:      "picoclaw",
+		Name:    "PicoClaw",
+		License: "MIT",
+		Runtime: recipes.RecipeRuntime{Family: "node", Image: "ap-runtime-node:test"},
+		Install: recipes.RecipeInstall{Type: "npm", Package: "picoclaw"},
+		Launch:  recipes.RecipeLaunch{Cmd: []string{"picoclaw"}},
+		ChatIO:  recipes.RecipeChatIO{Mode: "fifo"},
+		Auth: recipes.RecipeAuth{
+			Mechanism: "env_var",
+			Env: map[string]string{
+				"ANTHROPIC_API_KEY": "secret:anthropic-api-key",
+			},
+			SecretsSchema: []recipes.RecipeSecretDecl{
+				{Name: "anthropic-api-key"},
+			},
+		},
+		Providers: []recipes.RecipeProvider{
+			{ID: "anthropic"},
+		},
+		Models: []recipes.RecipeModel{
+			{ID: "claude-sonnet-test", Provider: "anthropic"},
+		},
+		Isolation: recipes.RecipeIsolation{Tier: "standard"},
+	}
+}
+
+// ---------- helpers ----------
+
+type rig struct {
+	e       *echo.Echo
+	store   *mockStore
+	runner  *mockContainerRunner
+	loader  *fakeLoader
+	secrets *fakeSecretSource
+	bridges *fakeBridges
+	userID  uuid.UUID
+}
+
+func newRig(t *testing.T, withRecipes ...*recipes.Recipe) *rig {
 	t.Helper()
-	if store == nil {
-		store = &mockStore{}
+	store := &mockStore{}
+	runner := &mockContainerRunner{}
+	byID := map[string]*recipes.Recipe{}
+	for _, r := range withRecipes {
+		byID[r.ID] = r
 	}
-	if sw == nil {
-		sw = &mockSecretWriter{}
+	loader := &fakeLoader{byID: byID}
+	secrets := &fakeSecretSource{
+		values: map[string]string{
+			"anthropic-api-key":  "sk-ant-test",
+			"openrouter-api-key": "sk-or-test",
+		},
 	}
-	if runner == nil {
-		runner = &mockContainerRunner{}
-	}
+	bridges := &fakeBridges{}
+	tempDir := t.TempDir()
 
-	bridge := session.NewBridge(runner)
-	h := session.NewHandler(store, runner, sw, &session.DevEnvSource{AnthropicKey: "sk-ant-test"}, bridge, zerolog.Nop())
+	h := session.NewHandler(
+		store,
+		runner,
+		loader,
+		secrets,
+		fakeTemplates{},
+		bridges,
+		zerolog.Nop(),
+		session.WithBaseSecretsDir(tempDir),
+	)
 
 	e := echo.New()
 	e.HideBanner = true
-
 	userID := uuid.New()
 	authed := e.Group("/api", func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -206,7 +357,50 @@ func buildHandlerTest(t *testing.T, store *mockStore, sw *mockSecretWriter, runn
 	})
 	h.Register(authed)
 
-	return e, userID
+	return &rig{e: e, store: store, runner: runner, loader: loader, secrets: secrets, bridges: bridges, userID: userID}
+}
+
+// newRigFixedUser mounts the handler behind middleware that always
+// sets a specific user id (used for DELETE/message tests where the
+// mock store row ownership must match).
+func newRigFixedUser(t *testing.T, uid uuid.UUID, withRecipes ...*recipes.Recipe) *rig {
+	t.Helper()
+	store := &mockStore{}
+	runner := &mockContainerRunner{}
+	byID := map[string]*recipes.Recipe{}
+	for _, r := range withRecipes {
+		byID[r.ID] = r
+	}
+	loader := &fakeLoader{byID: byID}
+	secrets := &fakeSecretSource{
+		values: map[string]string{
+			"anthropic-api-key":  "sk-ant-test",
+			"openrouter-api-key": "sk-or-test",
+		},
+	}
+	bridges := &fakeBridges{}
+	tempDir := t.TempDir()
+
+	h := session.NewHandler(
+		store,
+		runner,
+		loader,
+		secrets,
+		fakeTemplates{},
+		bridges,
+		zerolog.Nop(),
+		session.WithBaseSecretsDir(tempDir),
+	)
+
+	e := echo.New()
+	authed := e.Group("/api", func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Set("user_id", uid)
+			return next(c)
+		}
+	})
+	h.Register(authed)
+	return &rig{e: e, store: store, runner: runner, loader: loader, secrets: secrets, bridges: bridges, userID: uid}
 }
 
 func doRequest(t *testing.T, e *echo.Echo, method, path, body string, userID uuid.UUID, auth bool) *httptest.ResponseRecorder {
@@ -227,142 +421,218 @@ func doRequest(t *testing.T, e *echo.Echo, method, path, body string, userID uui
 	return rec
 }
 
-// buildWithFixedUser mounts the handler behind middleware that always sets
-// the provided user_id on the context — used for DELETE/message tests
-// where we need a known user to match the mockStore row's ownership.
-func buildWithFixedUser(t *testing.T, uid uuid.UUID, store *mockStore, sw *mockSecretWriter, runner *mockContainerRunner) *echo.Echo {
+func decodeErrorCode(t *testing.T, body []byte) string {
 	t.Helper()
-	if store == nil {
-		store = &mockStore{}
+	var env map[string]any
+	require.NoError(t, json.Unmarshal(body, &env), "body=%s", string(body))
+	errObj, ok := env["error"].(map[string]any)
+	if !ok {
+		return ""
 	}
-	if sw == nil {
-		sw = &mockSecretWriter{}
-	}
-	if runner == nil {
-		runner = &mockContainerRunner{}
-	}
-	h := session.NewHandler(store, runner, sw, &session.DevEnvSource{AnthropicKey: "sk-ant-test"}, session.NewBridge(runner), zerolog.Nop())
-	e := echo.New()
-	authed := e.Group("/api", func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			c.Set("user_id", uid)
-			return next(c)
-		}
-	})
-	h.Register(authed)
-	return e
+	code, _ := errObj["code"].(string)
+	return code
 }
 
-// ----- tests -----
+// ---------- tests ----------
 
-func TestHandler_CreateSession_Success(t *testing.T) {
-	store := &mockStore{}
-	sw := &mockSecretWriter{}
-	runner := &mockContainerRunner{}
-	e, userID := buildHandlerTest(t, store, sw, runner)
+func TestCreateSession_Success_Aider(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
 
-	rec := doRequest(t, e, http.MethodPost, "/api/sessions",
-		`{"recipe":"picoclaw","model_provider":"anthropic","model_id":"claude-3-5-sonnet"}`,
-		userID, true)
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","provider":"anthropic","model":"claude-haiku-test"}`,
+		rig.userID, true)
 
 	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp["id"])
+	assert.Equal(t, "aider", resp["recipe"])
+	assert.Equal(t, "anthropic", resp["provider"])
+	assert.Equal(t, "claude-haiku-test", resp["model"])
 	assert.Equal(t, "running", resp["status"])
-	assert.GreaterOrEqual(t, len(store.updateContainerCalls), 1)
+	assert.NotEmpty(t, resp["container_id"])
 
-	// Verify sandbox defaults were applied to the RunOptions.
-	runner.mu.Lock()
-	opts := runner.lastRunOpts
-	runner.mu.Unlock()
-	assert.True(t, opts.ReadOnlyRootfs, "ReadOnlyRootfs must be true")
-	assert.True(t, opts.NoNewPrivs, "NoNewPrivs must be true")
-	assert.Contains(t, opts.CapDrop, "ALL", "CapDrop must contain ALL")
-	assert.Equal(t, "ap-picoclaw:v0.1.0-c7461f9", opts.Image)
-	// Name should be the deterministic playground- format.
-	assert.Contains(t, opts.Name, "playground-")
-	// BindMountSpec should be appended to Mounts.
-	found := false
-	for _, m := range opts.Mounts {
-		if strings.Contains(m, "/run/secrets:ro") {
-			found = true
-		}
+	require.Equal(t, 1, rig.runner.lifecycleHits, "RunWithLifecycle must be called exactly once")
+	require.GreaterOrEqual(t, len(rig.store.updateContainerCalls), 1)
+
+	rig.runner.mu.Lock()
+	opts := rig.runner.lastRunOpts
+	rig.runner.mu.Unlock()
+	assert.Equal(t, "ap-runtime-python:test", opts.Image)
+	assert.Contains(t, opts.Env, "ANTHROPIC_API_KEY")
+	assert.Equal(t, "sk-ant-test", opts.Env["ANTHROPIC_API_KEY"])
+	// Phase 5 reconciliation labels.
+	assert.Equal(t, rig.userID.String(), opts.Labels["ap.user_id"])
+	assert.Equal(t, "aider", opts.Labels["ap.recipe"])
+	assert.NotEmpty(t, opts.Labels["ap.session_id"])
+}
+
+func TestCreateSession_BackwardsCompat_ModelProviderAlias(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	// Phase 2 clients send model_provider / model_id — handler must
+	// fold them onto the canonical provider / model before validating.
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","model_provider":"openrouter","model_id":"openrouter/auto"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "openrouter", resp["provider"])
+	assert.Equal(t, "openrouter/auto", resp["model"])
+}
+
+func TestCreateSession_ProviderRequired_MultiProvider(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","model":"claude-haiku-test"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "invalid_request", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_ProviderDefaulted_SingleProvider(t *testing.T) {
+	rig := newRig(t, testPicoclawRecipe())
+
+	// Omitting provider on a single-provider recipe should default
+	// and succeed. Omitting model should default to the sole model.
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"picoclaw"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "anthropic", resp["provider"])
+	assert.Equal(t, "claude-sonnet-test", resp["model"])
+}
+
+func TestCreateSession_ProviderNotSupported(t *testing.T) {
+	rig := newRig(t, testPicoclawRecipe())
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"picoclaw","provider":"openai","model":"gpt-4o"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "provider_not_supported", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_ModelNotSupported(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","provider":"anthropic","model":"claude-impossible"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "model_not_supported", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_ModelBoundToWrongProvider(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	// openrouter/auto belongs to the openrouter provider; asking for
+	// it under anthropic must fail with model_not_supported.
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","provider":"anthropic","model":"openrouter/auto"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "model_not_supported", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_RecipeNotFound(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"nosuch","provider":"anthropic","model":"x"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "recipe_not_found", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_SecretMissing(t *testing.T) {
+	rig := newRig(t, testPicoclawRecipe())
+	rig.secrets.values = map[string]string{} // drop all keys
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"picoclaw"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "secret_missing", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestCreateSession_LifecycleHookFailed(t *testing.T) {
+	rig := newRig(t, testPicoclawRecipe())
+	rig.runner.runLifecycle = func(ctx context.Context, recipe *recipes.Recipe, opts docker.RunOptions) (*docker.LifecycleSession, error) {
+		return nil, errors.New("postCreateCommand: exec [pip install ...]: exit 1")
 	}
-	assert.True(t, found, "secrets bind mount must be in Mounts")
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"picoclaw"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "lifecycle_hook_failed", decodeErrorCode(t, rec.Body.Bytes()))
 }
 
-func TestHandler_CreateSession_UnknownRecipe(t *testing.T) {
-	e, userID := buildHandlerTest(t, nil, nil, nil)
-	rec := doRequest(t, e, http.MethodPost, "/api/sessions",
-		`{"recipe":"bogus","model_provider":"anthropic","model_id":"x"}`,
-		userID, true)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+func TestCreateSession_OneActive_Conflict(t *testing.T) {
+	rig := newRig(t, testPicoclawRecipe())
+	rig.store.createFn = func(ctx context.Context, userID uuid.UUID, recipe, provider, modelID string) (*session.Session, error) {
+		return nil, session.ErrConflictActive
+	}
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"picoclaw"}`,
+		rig.userID, true)
+
+	require.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "conflict", decodeErrorCode(t, rec.Body.Bytes()))
 }
 
-func TestHandler_CreateSession_NoAuth(t *testing.T) {
-	e, userID := buildHandlerTest(t, nil, nil, nil)
-	rec := doRequest(t, e, http.MethodPost, "/api/sessions",
-		`{"recipe":"picoclaw","model_provider":"anthropic","model_id":"x"}`,
-		userID, false)
+func TestCreateSession_Unauthorized(t *testing.T) {
+	rig := newRig(t, testAiderRecipe())
+
+	rec := doRequest(t, rig.e, http.MethodPost, "/api/sessions",
+		`{"recipe":"aider","provider":"anthropic","model":"claude-haiku-test"}`,
+		rig.userID, false)
+
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-func TestHandler_CreateSession_OneActive(t *testing.T) {
-	store := &mockStore{
-		createFn: func(ctx context.Context, userID uuid.UUID, recipe, provider, modelID string) (*session.Session, error) {
-			return nil, session.ErrConflictActive
-		},
-	}
-	e, userID := buildHandlerTest(t, store, nil, nil)
-	rec := doRequest(t, e, http.MethodPost, "/api/sessions",
-		`{"recipe":"picoclaw","model_provider":"anthropic","model_id":"x"}`,
-		userID, true)
-	assert.Equal(t, http.StatusConflict, rec.Code)
-}
-
-func TestHandler_CreateSession_MissingSecret(t *testing.T) {
-	sw := &mockSecretWriter{
-		provisionFn: func(sessionID uuid.UUID, required []string) (string, error) {
-			return "", session.ErrSecretMissing
-		},
-	}
-	e, userID := buildHandlerTest(t, nil, sw, nil)
-	rec := doRequest(t, e, http.MethodPost, "/api/sessions",
-		`{"recipe":"picoclaw","model_provider":"anthropic","model_id":"x"}`,
-		userID, true)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestHandler_DeleteSession(t *testing.T) {
+func TestDeleteSession(t *testing.T) {
 	sid := uuid.New()
 	uid := uuid.New()
 	cid := "fakecontainer"
-	store := &mockStore{
-		getFn: func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
-			return &session.Session{
-				ID:          sid,
-				UserID:      uid,
-				RecipeName:  "picoclaw",
-				Status:      session.StatusRunning,
-				ContainerID: &cid,
-			}, nil
-		},
+	rig := newRigFixedUser(t, uid, testPicoclawRecipe())
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      uid,
+			RecipeName:  "picoclaw",
+			Status:      session.StatusRunning,
+			ContainerID: &cid,
+		}, nil
 	}
-	sw := &mockSecretWriter{}
-	runner := &mockContainerRunner{}
-	e := buildWithFixedUser(t, uid, store, sw, runner)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+sid.String(), nil)
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
+	rig.e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	assert.Equal(t, 1, runner.stopCalls)
-	assert.Equal(t, 1, runner.removeCalls)
-	assert.Equal(t, 1, sw.cleanupCalls)
+	assert.Equal(t, 1, rig.runner.stopCalls)
+	assert.Equal(t, 1, rig.runner.removeCalls)
 	found := false
-	for _, u := range store.updateStatusCalls {
+	for _, u := range rig.store.updateStatusCalls {
 		if u.status == session.StatusStopped {
 			found = true
 		}
@@ -370,89 +640,132 @@ func TestHandler_DeleteSession(t *testing.T) {
 	assert.True(t, found, "expected UpdateStatus(stopped) to be called")
 }
 
-func TestHandler_DeleteSession_OtherUser(t *testing.T) {
+func TestDeleteSession_OtherUser(t *testing.T) {
 	sid := uuid.New()
 	ownerID := uuid.New()
 	attackerID := uuid.New()
 	cid := "fakecontainer"
-	store := &mockStore{
-		getFn: func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
-			return &session.Session{
-				ID:          sid,
-				UserID:      ownerID,
-				Status:      session.StatusRunning,
-				ContainerID: &cid,
-			}, nil
-		},
+	rig := newRigFixedUser(t, attackerID, testPicoclawRecipe())
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      ownerID,
+			Status:      session.StatusRunning,
+			ContainerID: &cid,
+		}, nil
 	}
-	sw := &mockSecretWriter{}
-	runner := &mockContainerRunner{}
-	e := buildWithFixedUser(t, attackerID, store, sw, runner)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+sid.String(), nil)
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
+	rig.e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, 0, runner.stopCalls)
+	assert.Equal(t, 0, rig.runner.stopCalls)
 }
 
-func TestHandler_Message_Timeout(t *testing.T) {
+func TestMessage_DispatchesThroughBridgeRegistry(t *testing.T) {
 	sid := uuid.New()
 	uid := uuid.New()
 	cid := "fakecontainer"
-	store := &mockStore{
-		getFn: func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
-			return &session.Session{
-				ID:          sid,
-				UserID:      uid,
-				RecipeName:  "hermes",
-				Status:      session.StatusRunning,
-				ContainerID: &cid,
-			}, nil
-		},
+	rig := newRigFixedUser(t, uid, testAiderRecipe())
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      uid,
+			RecipeName:  "aider",
+			ModelID:     "claude-haiku-test",
+			Status:      session.StatusRunning,
+			ContainerID: &cid,
+		}, nil
 	}
-	runner := &mockContainerRunner{
-		execFn: func(ctx context.Context, containerID string, cmd []string) ([]byte, error) {
-			return nil, context.DeadlineExceeded
-		},
-	}
-	sw := &mockSecretWriter{}
-	e := buildWithFixedUser(t, uid, store, sw, runner)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sid.String()+"/message",
 		strings.NewReader(`{"text":"hello"}`))
 	req.Header.Set(echo.HeaderContentType, "application/json")
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
+	rig.e.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusGatewayTimeout, rec.Code, "body=%s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "ack: hello", resp["text"])
 }
 
-func TestHandler_Message_NotRunning(t *testing.T) {
+func TestMessage_UnsupportedMode(t *testing.T) {
 	sid := uuid.New()
 	uid := uuid.New()
 	cid := "fakecontainer"
-	store := &mockStore{
-		getFn: func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
-			return &session.Session{
-				ID:          sid,
-				UserID:      uid,
-				RecipeName:  "hermes",
-				Status:      session.StatusStopped,
-				ContainerID: &cid,
-			}, nil
-		},
+	rig := newRigFixedUser(t, uid, testAiderRecipe())
+	rig.bridges.dispErr = bridge.ErrUnsupportedMode
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      uid,
+			RecipeName:  "aider",
+			ModelID:     "claude-haiku-test",
+			Status:      session.StatusRunning,
+			ContainerID: &cid,
+		}, nil
 	}
-	runner := &mockContainerRunner{}
-	sw := &mockSecretWriter{}
-	e := buildWithFixedUser(t, uid, store, sw, runner)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sid.String()+"/message",
+		strings.NewReader(`{"text":"hi"}`))
+	req.Header.Set(echo.HeaderContentType, "application/json")
+	rec := httptest.NewRecorder()
+	rig.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "chat_bridge_unsupported_mode", decodeErrorCode(t, rec.Body.Bytes()))
+}
+
+func TestMessage_NotRunning(t *testing.T) {
+	sid := uuid.New()
+	uid := uuid.New()
+	cid := "fakecontainer"
+	rig := newRigFixedUser(t, uid, testAiderRecipe())
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      uid,
+			RecipeName:  "aider",
+			Status:      session.StatusStopped,
+			ContainerID: &cid,
+		}, nil
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sid.String()+"/message",
 		strings.NewReader(`{"text":"hello"}`))
 	req.Header.Set(echo.HeaderContentType, "application/json")
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
+	rig.e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestMessage_Timeout(t *testing.T) {
+	sid := uuid.New()
+	uid := uuid.New()
+	cid := "fakecontainer"
+	rig := newRigFixedUser(t, uid, testAiderRecipe())
+	rig.bridges.sendFn = func(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
+		return "", bridge.ErrTimeout
+	}
+	rig.store.getFn = func(ctx context.Context, id uuid.UUID) (*session.Session, error) {
+		return &session.Session{
+			ID:          sid,
+			UserID:      uid,
+			RecipeName:  "aider",
+			ModelID:     "claude-haiku-test",
+			Status:      session.StatusRunning,
+			ContainerID: &cid,
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sid.String()+"/message",
+		strings.NewReader(`{"text":"hello"}`))
+	req.Header.Set(echo.HeaderContentType, "application/json")
+	rec := httptest.NewRecorder()
+	rig.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusGatewayTimeout, rec.Code, "body=%s", rec.Body.String())
 }

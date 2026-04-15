@@ -189,6 +189,12 @@ func New(
 		)
 		authed.GET("/me", s.devAuth.Me)
 
+		// Phase 02.5 Plan 09: public recipe catalog endpoints behind
+		// the authed group. RegisterRecipesRoutes short-circuits if
+		// s.recipeLoader is nil, so callers that omit WithRecipeLoader
+		// (Phase 1 integration tests) are unaffected.
+		handler.RegisterRecipesRoutes(authed, s.recipeLoader)
+
 		// Plan 02-05: session routes behind the same authed group.
 		// Skipped if WithSessionHandler was not passed.
 		if s.sessionHandler != nil {

@@ -34,6 +34,7 @@ import (
 	"github.com/agentplayground/api/internal/recipes"
 	"github.com/agentplayground/api/internal/server"
 	"github.com/agentplayground/api/internal/session"
+	"github.com/agentplayground/api/internal/session/bridge"
 	apitemporal "github.com/agentplayground/api/internal/temporal"
 	"github.com/agentplayground/api/pkg/database"
 	"github.com/agentplayground/api/pkg/docker"
@@ -137,9 +138,11 @@ func main() {
 		logger.Warn().Err(lErr).Msg("recipe LoadAll failed; continuing with empty catalog")
 	}
 	recipes.StartSIGHUPWatcher(ctx, recipeLoader, logger)
+	templateRegistry := recipes.NewTemplateRegistry("agents/")
 	secretSource := session.NewDevEnvSecretSource()
 	opts = append(opts,
 		server.WithRecipeLoader(recipeLoader),
+		server.WithTemplateRegistry(templateRegistry),
 		server.WithSecretSource(secretSource),
 	)
 
@@ -152,10 +155,20 @@ func main() {
 	if runnerErr != nil {
 		logger.Warn().Err(runnerErr).Msg("docker runner unavailable, session routes disabled")
 	} else {
-		secretWriter := session.NewSecretWriter(secretSource)
 		sessStore := session.NewStore(db.Pool)
-		bridge := session.NewBridge(runner)
-		sessHandler := session.NewHandler(sessStore, runner, secretWriter, secretSource, bridge, logger)
+		// Phase 02.5 Plan 09: BridgeRegistry replaces the legacy
+		// session.Bridge shim. The session handler dispatches on
+		// recipe.ChatIO.Mode through this registry directly.
+		bridgeReg := bridge.NewBridgeRegistry(runner, logger)
+		sessHandler := session.NewHandler(
+			sessStore,
+			runner,
+			recipeLoader,
+			secretSource,
+			templateRegistry,
+			bridgeReg,
+			logger,
+		)
 		opts = append(opts, server.WithSessionHandler(sessHandler))
 	}
 
