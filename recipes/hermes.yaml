@@ -1,0 +1,159 @@
+apiVersion: ap.recipe/v0
+name: hermes
+display_name: Hermes Agent
+description: |
+  Self-improving AI agent by Nous Research. Full TUI with slash-commands,
+  skills system, multi-provider model support, messaging gateways.
+  This recipe covers the non-interactive one-shot path for Agent Playground —
+  a single prompt in, a single reply out, via a throwaway container.
+
+source:
+  repo: https://github.com/NousResearch/hermes-agent
+  ref: 19142810edfd2d3dbe947692732b868d57b9a18e
+  ref_note: main branch head at recon date, pinned for reproducibility
+  upstream_version: v0.9.0 / 2026.4.13
+
+build:
+  mode: upstream_dockerfile
+  dockerfile: Dockerfile
+  context: .
+  observed:
+    image_size_gb: 5.19
+    wall_time_s: 451
+    host_os: darwin 25.3.0 arm64
+  notes: |
+    Upstream multi-stage Dockerfile (uv + gosu + debian:13.4). Installs
+    .[all] Python extra + Playwright chromium + WhatsApp bridge Node deps.
+    Heavier than a typical agent — budget ~5.5 GB per image when planning disk.
+    No build flags needed. No .dockerignore traps observed.
+    Cold-build time is the long pole; warm apt/layer cache can halve it.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: OPENAI_API_KEY  # runtime_provider.py:463
+    base_url: null                    # hermes defaults to https://openrouter.ai/api/v1
+    model: null                       # set per-call via --model / -m flag
+  volumes:
+    - name: hermes_home
+      host: per_session_tmpdir
+      container: /opt/data
+      mode: rw
+      ephemeral: true
+      owner_uid: 10000
+      notes: |
+        HERMES_HOME. Entrypoint chowns this to UID 10000 on startup
+        ("Dropping root privileges" pattern). First run copies config
+        templates (.env.example → .env, cli-config.yaml.example → config.yaml)
+        and runs skills_sync.py (~79 bundled skills, ~1-2s on cold mount).
+        Set ephemeral=true for per-session isolation; persist across
+        restarts if you want to skip the skill-sync cost on warm starts.
+  warnings:
+    - id: no_touch_env_file
+      rule: Do NOT write to /opt/data/.env
+      reason: |
+        hermes_cli/env_loader.py:86-88 loads $HERMES_HOME/.env with
+        override=True. Any key written there (even an empty value)
+        silently clobbers the same key in process env. Pass credentials
+        exclusively via `docker run -e`. Let the entrypoint bootstrap
+        .env from .env.example (which ships with all keys commented out,
+        so process env wins).
+    - id: no_override_playwright_path
+      rule: Do NOT override PLAYWRIGHT_BROWSERS_PATH at runtime
+      reason: |
+        Baked to /opt/hermes/.playwright at build time so the install
+        survives the /opt/data volume overlay. Overriding at runtime
+        loses the cached chromium and breaks any skill that uses
+        browser tools.
+    - id: chatty_preamble
+      rule: Expect ~83 lines of skill-sync stdout noise per cold start
+      reason: |
+        Even with `-Q` (quiet), the entrypoint prints "Dropping root
+        privileges" + the full 79-skill bundle sync + "Done: N new, 0
+        updated, 0 unchanged" BEFORE the hermes process gets the query.
+        This is pre-hermes entrypoint output, not a -Q bug. Strip it in
+        the stdout_filter (see invoke.spec below).
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    # Upstream entrypoint ends with `exec hermes "$@"`, so `docker run`
+    # trailing args become `hermes <subcommand> <flags>` directly.
+    argv:
+      - chat
+      - -q
+      - $PROMPT
+      - -Q
+      - --provider
+      - openrouter
+      - -m
+      - $MODEL
+      - --yolo
+      - --max-turns
+      - "30"
+      - --source
+      - tool
+    argv_note: |
+      --yolo: skip interactive approval prompts. Safe because the container
+              is the approval boundary in Agent Playground's isolation model.
+      --max-turns 30: bound the tool-calling loop. Default is 90 which is
+              fine for real sessions but wasteful for smoke tests.
+      --source tool: tag the session so it doesn't pollute the user's
+              session list in the TUI.
+    stdout_filter:
+      engine: awk
+      program: |
+        BEGIN{p=0}
+        /^Done: [0-9]+ new/{p=1; next}
+        p && /^session_id:/{exit}
+        p && /^[╭│╰]/{next}
+        p {print}
+      notes: |
+        Cuts at the "Done: <N> new" skill-sync terminator to skip the
+        83-line preamble, then captures until "session_id:", stripping
+        Rich panel box-drawing chars (╭│╰) inside the window.
+        Known quirk: some models (e.g. claude-haiku-4-5) emit the reply
+        TWICE — once inside a Rich panel with 4-space indent, once as
+        plain text immediately after. This filter preserves both; the
+        consumer should dedupe if a single copy is required. Shorter
+        replies (gpt-4o-mini, gemini) emit once.
+    session_id_capture:
+      engine: awk
+      program: "/^session_id:/ {print $2}"
+      notes: Session ID can be passed to `-r SESSION_ID` to resume.
+
+smoke:
+  prompt: "who are you?"
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 60
+  verified_cells:
+    - model: anthropic/claude-haiku-4-5
+      verdict: PASS
+      wall_time_s: 18.1
+      notes: Adopts persona cleanly. Response duplicated in stdout (Rich + plain).
+    - model: openai/gpt-4o-mini
+      verdict: PASS
+      wall_time_s: 10.4
+      notes: Adopts persona cleanly. Single-copy output.
+    - model: google/gemini-2.5-flash
+      verdict: FAIL
+      wall_time_s: 10.9
+      notes: |
+        Model did NOT adopt Hermes persona. Answered literally
+        "I am a large language model, trained by Google." Recipe
+        plumbing is correct (container ran clean, exit 0, reached
+        OpenRouter, received a completion). This is a model-
+        compatibility finding, not a recipe failure. Flag cell as
+        weak in any agent × model matrix.
+
+metadata:
+  recon_date: 2026-04-15
+  recon_by: agent-playground-recon (subagent) + clawdbot-hermes-helper (Solvr)
+  source_citations:
+    - hermes_cli/auth.py:371-374 - _resolve_api_key_provider_secret reads process env
+    - hermes_cli/runtime_provider.py:463-469 - OpenRouter api_key candidate list
+    - hermes_cli/runtime_provider.py:221 - HERMES_INFERENCE_PROVIDER env read
+    - hermes_cli/env_loader.py:86-88 - $HERMES_HOME/.env load with override=True
+    - docker/entrypoint.sh - gosu UID remap + template bootstrap + exec hermes
