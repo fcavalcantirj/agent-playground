@@ -5,63 +5,162 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 )
 
-// ErrSecretMissing is returned by SecretSource.Get when the requested
-// secret name is not known to the source. Callers should translate this
-// to a 400/422 at the HTTP layer — the user picked a recipe whose
-// RequiredSecrets list cannot be satisfied in the current deploy.
+// ErrSecretMissing is returned by SecretSource.Get / Resolve when the
+// requested secret name is not known to the source. Callers should
+// translate this to a 400/422 at the HTTP layer — the user picked a
+// recipe whose RequiredSecrets list cannot be satisfied in the current
+// deploy.
 var ErrSecretMissing = errors.New("secret missing")
 
-// SecretSource is the Phase 2 abstraction over "where does a secret
-// value come from". Phase 2 ships exactly one implementation
-// (DevEnvSource); Phase 3+ will add a KMS-backed production source
-// keyed by per-user KEKs.
-type SecretSource interface {
-	// Get returns the raw secret value for a known name, or
-	// ErrSecretMissing if the source doesn't know about it.
-	Get(name string) (string, error)
-}
-
-// DevEnvSource reads the dev BYOK key from the process environment. It
-// is intentionally restricted to "anthropic_key" — Phase 2 only drives
-// Anthropic-backed recipes, and adding more providers belongs to Phase 4.
+// SecretSource is the abstraction over "where does a secret value come
+// from". Phase 2 shipped the `Get(name)` path; Phase 02.5 extends the
+// interface with `Resolve(ref)` so recipe manifests can mix literal
+// values and `secret:<name>` references without every call-site needing
+// to know the split.
 //
-// THREAT NOTE (T-02-01): AnthropicKey is held only in this struct and
-// the resulting on-disk file; it is NEVER logged and NEVER placed in
-// the container PID 1's environment (ap-base's entrypoint reads the
-// file and populates a per-agent env slice — see Plan 02-01 SUMMARY).
-type DevEnvSource struct {
-	AnthropicKey string
+// Implementations MUST honor both methods:
+//   - Get returns the raw secret value for a known name or
+//     ErrSecretMissing.
+//   - Resolve returns the ref unchanged if it has no `secret:` prefix
+//     (literal passthrough); otherwise it strips the prefix and
+//     delegates to Get.
+//
+// Phase 3+ will add a KMS-backed production source keyed by per-user
+// KEKs; the interface is unchanged.
+type SecretSource interface {
+	Get(name string) (string, error)
+	Resolve(ref string) (string, error)
 }
 
-// NewDevEnvSource reads AP_DEV_BYOK_KEY from the process environment
-// at call time and returns a source populated with whatever was set.
-// An empty value is permitted — Get will then return ErrSecretMissing
-// for every name, which the handler layer should surface as a 422.
+// DevEnvSecretSource reads dev BYOK keys from the process environment.
+// It recognises the well-known Anthropic and OpenRouter env vars used
+// by the catalog recipes plus a generic `AP_DEV_<UPPER>_KEY` scan so
+// operators can inject custom keys without a Go recompile.
+//
+// THREAT NOTE (T-02-01, T-02.5-02): values are held only in this struct
+// and the resulting per-session tmpfs files materialized by Plan 05;
+// they are NEVER logged and NEVER placed directly in the container's
+// PID 1 env. The zerolog writer pipeline wraps stdout with
+// logging.InstallRedactionHook as defence in depth.
+type DevEnvSecretSource struct {
+	AnthropicKey  string
+	OpenRouterKey string
+	// extras holds any AP_DEV_<NAME>_KEY env vars other than the two
+	// well-known ones. Keys are hyphen-normalized lower case
+	// ("AP_DEV_MY_CUSTOM_KEY" → "my-custom").
+	extras map[string]string
+}
+
+// DevEnvSource is the Phase 2 type name kept as an alias so existing
+// callers (main.go wiring, handler tests, etc.) keep compiling without
+// touching a line. Every Phase 2 call site that declared
+// `&session.DevEnvSource{AnthropicKey: ...}` still works because
+// DevEnvSecretSource's first field is AnthropicKey.
+type DevEnvSource = DevEnvSecretSource
+
+// NewDevEnvSource is the Phase 2 constructor retained for backwards
+// compatibility. It forwards to NewDevEnvSecretSource.
 func NewDevEnvSource() *DevEnvSource {
-	return &DevEnvSource{
-		AnthropicKey: os.Getenv("AP_DEV_BYOK_KEY"),
-	}
+	return NewDevEnvSecretSource()
 }
 
-// Get returns the secret value or ErrSecretMissing.
-func (s *DevEnvSource) Get(name string) (string, error) {
+// NewDevEnvSecretSource reads AP_DEV_BYOK_KEY (Anthropic),
+// AP_DEV_OPENROUTER_KEY (OpenRouter), and any other AP_DEV_<NAME>_KEY
+// env vars into the returned source. Empty values are permitted — the
+// corresponding Resolve / Get call returns ErrSecretMissing.
+func NewDevEnvSecretSource() *DevEnvSecretSource {
+	s := &DevEnvSecretSource{
+		AnthropicKey:  os.Getenv("AP_DEV_BYOK_KEY"),
+		OpenRouterKey: os.Getenv("AP_DEV_OPENROUTER_KEY"),
+		extras:        map[string]string{},
+	}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "AP_DEV_") {
+			continue
+		}
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			continue
+		}
+		name := kv[:eq]
+		value := kv[eq+1:]
+		if !strings.HasSuffix(name, "_KEY") {
+			continue
+		}
+		if name == "AP_DEV_BYOK_KEY" || name == "AP_DEV_OPENROUTER_KEY" {
+			continue
+		}
+		mid := strings.TrimSuffix(strings.TrimPrefix(name, "AP_DEV_"), "_KEY")
+		if mid == "" {
+			continue
+		}
+		normalized := strings.ToLower(strings.ReplaceAll(mid, "_", "-"))
+		s.extras[normalized] = value
+	}
+	return s
+}
+
+// Get returns the raw secret value for a canonical name or
+// ErrSecretMissing. The Phase 2 contract (Get("anthropic_key") returns
+// AnthropicKey) is preserved exactly.
+func (s *DevEnvSecretSource) Get(name string) (string, error) {
 	if s == nil {
 		return "", ErrSecretMissing
 	}
-	switch name {
-	case "anthropic_key":
+	switch normalizeSecretName(name) {
+	case "anthropic-api-key":
 		if s.AnthropicKey == "" {
 			return "", ErrSecretMissing
 		}
 		return s.AnthropicKey, nil
+	case "openrouter-api-key":
+		if s.OpenRouterKey == "" {
+			return "", ErrSecretMissing
+		}
+		return s.OpenRouterKey, nil
 	default:
-		// Dev source only knows about anthropic_key in Phase 2.
+		if v, ok := s.extras[normalizeSecretName(name)]; ok {
+			return v, nil
+		}
 		return "", ErrSecretMissing
 	}
+}
+
+// Resolve implements the Phase 02.5 secret-indirection API. Values
+// without the `secret:` prefix pass through unchanged (literals);
+// `secret:<name>` strips the prefix and delegates to Get.
+func (s *DevEnvSecretSource) Resolve(ref string) (string, error) {
+	key, ok := strings.CutPrefix(ref, "secret:")
+	if !ok {
+		return ref, nil
+	}
+	return s.Get(key)
+}
+
+// normalizeSecretName canonicalizes the secret name variants the dev
+// source understands. Hyphen vs underscore, short vs long form, all
+// collapse to the hyphenated canonical form used by the catalog
+// recipes.
+//
+//	anthropic_key / anthropic-key / anthropic_api_key → anthropic-api-key
+//	openrouter_key / openrouter-key / openrouter_api_key → openrouter-api-key
+//
+// Unknown names are lower-cased + hyphenated and looked up in the
+// extras map verbatim.
+func normalizeSecretName(name string) string {
+	lower := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
+	switch lower {
+	case "anthropic-key", "anthropic-api-key":
+		return "anthropic-api-key"
+	case "openrouter-key", "openrouter-api-key":
+		return "openrouter-api-key"
+	}
+	return lower
 }
 
 // DefaultSecretBaseDir is the host-side base directory where

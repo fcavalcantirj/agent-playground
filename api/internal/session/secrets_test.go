@@ -90,3 +90,60 @@ func TestNewDevEnvSource_ReadsEnv(t *testing.T) {
 	require.NotNil(t, src)
 	assert.Equal(t, "sk-ant-from-env", src.AnthropicKey)
 }
+
+// --- Phase 02.5 Plan 05: Resolve + OpenRouter + extras ---
+
+func TestResolve_LiteralPassthrough(t *testing.T) {
+	src := &session.DevEnvSecretSource{}
+	v, err := src.Resolve("vim")
+	require.NoError(t, err)
+	assert.Equal(t, "vim", v)
+}
+
+func TestResolve_SecretPrefix_Anthropic(t *testing.T) {
+	t.Setenv("AP_DEV_BYOK_KEY", "sk-ant-plan05")
+	t.Setenv("AP_DEV_OPENROUTER_KEY", "")
+	src := session.NewDevEnvSecretSource()
+	v, err := src.Resolve("secret:anthropic-api-key")
+	require.NoError(t, err)
+	assert.Equal(t, "sk-ant-plan05", v)
+}
+
+func TestResolve_SecretPrefix_OpenRouter(t *testing.T) {
+	t.Setenv("AP_DEV_BYOK_KEY", "")
+	t.Setenv("AP_DEV_OPENROUTER_KEY", "sk-or-v1-plan05")
+	src := session.NewDevEnvSecretSource()
+	v, err := src.Resolve("secret:openrouter-api-key")
+	require.NoError(t, err)
+	assert.Equal(t, "sk-or-v1-plan05", v)
+}
+
+func TestResolve_ExtrasKey(t *testing.T) {
+	t.Setenv("AP_DEV_FOO_KEY", "bar")
+	t.Setenv("AP_DEV_MY_CUSTOM_KEY", "baz")
+	src := session.NewDevEnvSecretSource()
+	v, err := src.Resolve("secret:foo")
+	require.NoError(t, err)
+	assert.Equal(t, "bar", v)
+	v, err = src.Resolve("secret:my-custom")
+	require.NoError(t, err)
+	assert.Equal(t, "baz", v)
+}
+
+func TestResolve_Missing(t *testing.T) {
+	t.Setenv("AP_DEV_BYOK_KEY", "")
+	t.Setenv("AP_DEV_OPENROUTER_KEY", "")
+	src := session.NewDevEnvSecretSource()
+	_, err := src.Resolve("secret:nosuch")
+	assert.True(t, errors.Is(err, session.ErrSecretMissing))
+}
+
+func TestResolve_GetParity(t *testing.T) {
+	t.Setenv("AP_DEV_BYOK_KEY", "sk-ant-parity")
+	src := session.NewDevEnvSecretSource()
+	getV, err := src.Get("anthropic_key")
+	require.NoError(t, err)
+	resolveV, err := src.Resolve("secret:anthropic-api-key")
+	require.NoError(t, err)
+	assert.Equal(t, getV, resolveV)
+}
