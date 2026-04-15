@@ -26,13 +26,28 @@ Agent Playground's flagship value prop is hosting agents that **improve over tim
 - [x] **PicoClaw** — https://github.com/sipeed/picoclaw — Go 1.25, 28k stars, v0.2.4+ — `recipes/picoclaw.yaml` — validated 2026-04-15 with `openai/gpt-4o-mini` via OpenRouter, wall **2.6s** (fastest agent so far). Recon: direct source + built-image empirical check + Solvr correction (MSV's `infra/picoclaw/` is OpenClaw-wrapped, not sipeed/picoclaw — name collision). **Required format innovation:** `invoke.spec.entrypoint` override (`sh`) to bypass upstream `docker/entrypoint.sh`'s two-stage `onboard → exit` flow, plus sh-heredoc-templated `config.json` written before the invoke so `picoclaw agent -m` finds an openrouter-routed model. Runner extended to honor `entrypoint` field. **Self-improving:** workspace state, skills, persistent session store, multi-channel gateway. **Ultra-lightweight**: ~200 MB image (vs ~5 GB for hermes/openclaw), single Go binary, Alpine base.
 
 ### Recon targets — self-improving
-- [ ] **NanoClaw** — https://github.com/qwibitai/nanoclaw — smallest of the clawclones family. **Verify scope** before shipping in v0 — if it's a pure wrapper, defer to v1.
-- [ ] **NullClaw** — verify source URL and scope. Claw family, learning loop unknown.
-- [ ] **TrustClaw** — https://trustclaw.ai — verify source URL and scope.
+- [~] **NullClaw** — https://github.com/nullclaw/nullclaw — **Zig**, 7.2k stars, "Fastest, smallest, and fully autonomous AI assistant infrastructure written in Zig". Maximum architectural diversity from what we have. **Next pick.**
+
+### Blocked / deferred
+- **NanoClaw** — https://github.com/qwibitai/nanoclaw — TypeScript, 27k stars, "Lightweight alternative to OpenClaw... runs directly on Anthropic's Agents SDK". **BLOCKED(format)** 2026-04-15. Reasons (in order of hardness):
+  1. **OneCLI Agent Vault is mandatory** — `src/container-runner.ts:218` imports `OneCLI` from `@onecli-sh/sdk` and creates a client with `ONECLI_URL`+`ONECLI_API_KEY`. The agent container NEVER holds raw API keys; credentials are injected at request time by a separate OneCLI host service. Without OneCLI running on the host, no API calls happen. This is an external-service dependency the v0 recipe format does not support.
+  2. **Claude Agent SDK only** — `container/Dockerfile:35` installs `@anthropic-ai/claude-code` as the execution engine. OpenRouter routing would require `ANTHROPIC_BASE_URL` override inside the sandboxed agent container AND bypassing OneCLI's credential injection. Fragile and upstream-unsupported.
+  3. **AI-native install flow** — README prescribes `gh repo fork → claude → /setup` (inside a Claude Code session), not a programmatic setup. Recipes consume programmatic install paths.
+  4. Orchestrator vs agent split: `src/index.ts` is a long-running polling loop; only the spawned agent container (`container/Dockerfile`) accepts stdin JSON (`{prompt, groupFolder, chatJid, isMain}` per `container/build.sh:96`). Fitting only the inner container would still need OneCLI and Claude SDK.
+  **What v0 format is missing to unblock**: `runtime.external_services[]` (declaring required sidecar services like OneCLI), `setup.interactive: true` escape hatch, and an `invoke.provider_proxy` field for SDK-native agents. Deferred until v1 when we have more agents demanding the same fields.
+- **TrustClaw** — https://github.com/trustclaw/trustclaw — 2 stars, TypeScript, description is word-for-word copy of OpenClaw ("Your own personal AI assistant. Any OS. Any Platform. The lobster way. 🦞"). **SKIPPED** — indistinguishable from a fork/clone of openclaw; no recon value.
 
 ### Recon targets — architectural diversity (maybe self-improving, need to verify)
 
 - [ ] **OpenHands** (ex-OpenDevin) — https://github.com/All-Hands-AI/OpenHands — Docker-first, runs its own orchestrator + browser + web UI. Likely has memory/persistent state; verify whether it's a learning loop or a session-bound task runner. Heavy, architecturally very different from the claw family.
+
+### Recon targets — architectural diversity (maybe self-improving, need to verify)
+
+- [ ] **OpenHands** (ex-OpenDevin) — https://github.com/All-Hands-AI/OpenHands — Docker-first, runs its own orchestrator + browser + web UI. Likely has memory/persistent state; verify whether it's a learning loop or a session-bound task runner. Heavy, architecturally very different from the claw family.
+
+### Removed
+
+- **TrustClaw** — see "Blocked / deferred" section above. Not a distinct agent.
 
 ---
 
