@@ -35,7 +35,10 @@ RUN ln -sf /usr/local/bin/python3.12 /usr/local/bin/python3 && \
     mkdir -p /home/agent/.cache /home/agent/.local/bin && \
     chown -R agent:agent /home/agent/.cache /home/agent/.local
 
-USER agent
+# NOTE: do NOT set `USER agent` — container PID 1 must start as root
+# so ap-base's entrypoint.sh Phase 1 can create /run/ap + /run/secrets
+# before gosu-dropping to agent. Runner.Exec explicitly passes
+# User: "agent" for hooks + chat exec, so agent semantics hold.
 WORKDIR /home/agent
 
 ENV PYTHON_VERSION=3.12 \

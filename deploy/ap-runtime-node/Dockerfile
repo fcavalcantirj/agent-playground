@@ -25,7 +25,10 @@ RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && 
     mkdir -p /home/agent/.npm && \
     chown -R agent:agent /home/agent/.npm
 
-USER agent
+# NOTE: do NOT set `USER agent` — container PID 1 must start as root
+# so ap-base's entrypoint.sh Phase 1 can create /run/ap + /run/secrets
+# before gosu-dropping to agent. Runner.Exec explicitly passes
+# User: "agent" for hooks + chat exec, so agent semantics hold.
 WORKDIR /home/agent
 
 ENV NODE_VERSION=22 \
