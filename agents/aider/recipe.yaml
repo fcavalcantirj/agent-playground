@@ -1,0 +1,145 @@
+# agents/aider/recipe.yaml
+# Phase 02.5 reference recipe #1 of 2 (aider = simplest path).
+# Purpose: exercise python runtime + pip install + exec_per_message bridge +
+# env_var auth + anthropic + openrouter providers end-to-end.
+# Design notes: no template files, no long-running process, no config file.
+
+id: aider
+name: Aider
+description: AI pair programmer in your terminal
+version: "0.1.0"
+license: Apache-2.0
+category: pair_programmer
+tier_badge: tier-1
+
+runtime:
+  # Fallback to Python 3.12 per Plan 07 fallback instructions.
+  # Assumption A3 (Python 3.13 supports aider-chat) was FALSIFIED at L2 verify:
+  # aider-chat 0.86.2 declares `requires_python: <3.13,>=3.10` AND hard-pins
+  # numpy==1.26.4 which has no cp313 wheel (sdist build fails without gcc
+  # inside the sandbox). See .planning/phases/02.5-recipe-manifest-reshape/
+  # 02.5-07-SUMMARY.md §"A3 Resolution" for evidence and the PyPI metadata
+  # snapshot. ap-runtime-python:v0.1.0-3.13 remains the primary base image
+  # for future recipes; the 3.12 variant is added as a fallback tier.
+  family: python
+  version: "3.12"
+  image: ap-runtime-python:v0.1.0-3.12
+  resources:
+    memory_mib: 1024
+    cpus: 1.0
+    pids_limit: 256
+
+install:
+  type: pip
+  package: aider-chat
+  version: ">=0.60"
+
+lifecycle:
+  # Dispatch uses `uv tool install` (not `uv pip install --system`) because
+  # the Plan 03 lifecycle runner exec-s hooks as user `agent`, and
+  # /usr/local/lib/python3.12/site-packages is root-owned — a plain
+  # `uv pip install --system` fails with EACCES. `uv tool install` installs
+  # aider into /home/agent/.local/share/uv/tools/aider-chat/ and symlinks
+  # the entrypoint into /home/agent/.local/bin/aider, which is already on
+  # PATH for the agent user (see deploy/ap-runtime-python/Dockerfile).
+  # install.type remains `pip` to reflect the package source (PyPI) —
+  # `uv tool install` is uv's isolated-tool flavor of a pip install.
+  postCreateCommand:
+    - uv
+    - tool
+    - install
+    - --no-cache
+    - aider-chat
+  postCreate_timeout_sec: 600
+  waitFor: postCreateCommand
+
+launch:
+  # exec_per_message recipes don't have a long-running launch.
+  # This is a sanity-check command that runs once at startup to verify
+  # the binary is installed and importable.
+  cmd:
+    - aider
+    - --help
+  workdir: /home/agent
+
+chat_io:
+  mode: exec_per_message
+  response_timeout_sec: 120
+  exec_per_message:
+    cmd_template:
+      - aider
+      - --no-auto-commits
+      - --no-dirty-commits
+      - --no-stream
+      - --yes-always
+      - --message
+      - "{text}"
+    docker_exec_user: agent
+
+auth:
+  mechanism: env_var
+  headless_safe: true
+  env:
+    ANTHROPIC_API_KEY: "secret:anthropic-api-key"
+    OPENROUTER_API_KEY: "secret:openrouter-api-key"
+  files: []
+  secrets_schema:
+    - name: anthropic-api-key
+      description: "Anthropic API key (BYOK)"
+      required: false
+    - name: openrouter-api-key
+      description: "OpenRouter API key (BYOK)"
+      required: false
+
+providers:
+  - id: anthropic
+    api_base: https://api.anthropic.com/v1
+    api_key_env_var: ANTHROPIC_API_KEY
+    auth_style: x-api-key
+  - id: openrouter
+    api_base: https://openrouter.ai/api/v1
+    api_key_env_var: OPENROUTER_API_KEY
+    auth_style: bearer
+
+models:
+  # Cost-ascending per D-48. Matrix picks models[0] matching the provider.
+  - id: claude-haiku-4-5-20251001
+    provider: anthropic
+    max_input_tokens: 200000
+    max_output_tokens: 8192
+  - id: openrouter/auto
+    provider: openrouter
+    max_input_tokens: 200000
+    max_output_tokens: 8192
+
+model_flag: --model
+
+isolation:
+  tier: strict
+  cap_drop: [ALL]
+  cap_add: []
+  no_new_privs: true
+  read_only_rootfs: true
+
+persistent_state:
+  tmpfs:
+    - path: /tmp
+      size_mib: 128
+    - path: /run
+      size_mib: 16
+    - path: /home/agent/.aider
+      size_mib: 64
+
+frontend:
+  display_name: Aider
+  slug: aider
+  icon: code
+  category_badge: "AI pair programmer"
+  tooltip: "Aider — AI pair programming in your terminal"
+  tier_badge: tier-1
+
+metadata:
+  source_repo: https://github.com/Aider-AI/aider
+  source_sha: f09d70659ae90a0d068c80c288cbb55f2d3c3755
+  last_verified: "2026-04-14"
+  bootstrap_generated: false
