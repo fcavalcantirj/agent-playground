@@ -83,6 +83,41 @@ build-runtimes: build-runtime-python build-runtime-python-3.12 build-runtime-nod
 clean-runtimes:
 	-docker rmi $(AP_RUNTIME_PYTHON_TAG) $(AP_RUNTIME_PYTHON_312_TAG) $(AP_RUNTIME_NODE_TAG)
 
+# --- Phase 02.5 Gate A smoke-test matrix (D-46, D-47) ---
+# Runs the 2x2 matrix ({aider,picoclaw} x {anthropic,openrouter}) against a
+# live API server. The server must already be running — this target does
+# NOT start it (concurrency complexity; deferred to Plan 11 if useful).
+#
+# Operator workflow (two terminals):
+#
+#   # Terminal 1: start the API
+#   cd api && \
+#     AP_DEV_MODE=true \
+#     AP_SESSION_SECRET=test-secret-that-is-at-least-32-characters-long \
+#     AP_DEV_BYOK_KEY=sk-ant-... \
+#     AP_DEV_OPENROUTER_KEY=sk-or-v1-... \
+#     DATABASE_URL=postgres://temporal:temporal@localhost:5432/agent_playground?sslmode=disable \
+#     REDIS_URL=redis://localhost:6379 \
+#     API_PORT=8080 \
+#     go run ./cmd/server/
+#
+#   # Terminal 2: run the matrix
+#   make smoke-test-matrix
+API_URL ?= http://127.0.0.1:8080
+
+.PHONY: smoke-test-matrix
+
+smoke-test-matrix:
+	@echo "Gate A: smoke-test matrix"
+	@echo "Prereqs:"
+	@echo "  - API server running at $(API_URL) (cd api && AP_DEV_MODE=true go run ./cmd/server/)"
+	@echo "  - AP_DEV_BYOK_KEY set (Anthropic)"
+	@echo "  - AP_DEV_OPENROUTER_KEY set (OpenRouter)"
+	@echo "  - ap-runtime-python + ap-runtime-node images built (make build-runtimes)"
+	@echo "  - ap-aider + ap-picoclaw images built (agents/*/Dockerfile)"
+	@echo
+	@API_URL=$(API_URL) bash test/smoke-matrix.sh
+
 smoke-test:
 	@if [ -z "$$AP_DEV_BYOK_KEY" ]; then \
 		echo "SKIPPED: AP_DEV_BYOK_KEY not set (set to a real Anthropic key to run the live smoke test)"; \
