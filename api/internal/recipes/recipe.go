@@ -5,10 +5,10 @@ package recipes
 // any mis-tagged field would silently become zero (see Pitfall 1 in
 // 02.5-RESEARCH.md). Keep every sub-struct pure JSON.
 //
-// Phase 02.5 Plan 01 introduces this type alongside the Phase 2 hardcoded
-// catalog (renamed to the unexported legacyRecipe + exported LegacyRecipe
-// alias). Plan 09 of Phase 02.5 removes the legacy path once handlers are
-// swapped over to the YAML loader.
+// Phase 02.5 Plan 01 introduced this type; Plan 09 deleted the Phase 2
+// hardcoded legacy catalog, so Recipe is now the single authoritative
+// shape consumed by the session handler, the public /api/recipes
+// projection, the Materialize step, and the RunWithLifecycle sequencer.
 type Recipe struct {
 	ID              string           `json:"id"`
 	Name            string           `json:"name"`
