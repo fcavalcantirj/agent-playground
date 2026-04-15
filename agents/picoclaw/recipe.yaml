@@ -1,0 +1,160 @@
+# agents/picoclaw/recipe.yaml
+# Phase 02.5 reference recipe #2 of 2 (picoclaw = hardest path).
+# Purpose: exercise node runtime + git_build install + fifo chat bridge +
+# secret_file_mount auth via filesystem template + full lifecycle
+# (postCreate sanity, postStart daemon liveness, postAttach FIFO verify).
+#
+# STANDALONE in 02.5 — NOT a flavor of openclaw (D-40b).
+# Phase 4 re-expresses as a flavor once openclaw ships in the catalog.
+#
+# A7 resolution (see agents/picoclaw/README.md + 02.5-08-scratch-a7.md):
+# picoclaw HAS first-class OpenRouter support via pkg/providers/factory_provider.go
+# + pkg/providers/openai_compat. Declared in providers[] below. However, picoclaw
+# reads all keys from ~/.picoclaw/.security.yml (NOT env vars), so the current
+# templates/security.yml.tmpl only renders the Anthropic key — OpenRouter coverage
+# for Gate A is carried by aider (Plan 07) per D-47.
+
+id: picoclaw
+name: PicoClaw
+description: Compact AI coding agent (sipeed/picoclaw) — Go binary, FIFO chat bridge, .security.yml BYOK
+version: "0.1.0"
+license: MIT
+category: claw
+tier_badge: tier-1
+
+runtime:
+  family: node
+  version: "22"
+  image: ap-picoclaw:v0.2.0-773a94c
+  resources:
+    memory_mib: 1024
+    cpus: 1.0
+    pids_limit: 256
+
+install:
+  # picoclaw is built from source in agents/picoclaw/Dockerfile using a
+  # golang:1.25-alpine multi-stage build. The install block here is
+  # informational — the schema forces git_build to pin a 40-char SHA,
+  # which is the substantive guarantee we want (REC-07).
+  type: git_build
+  git:
+    repo: https://github.com/sipeed/picoclaw
+    rev: 773a94c41437d21c7cb1fcc429cee1ac605dd509
+    build_cmd:
+      - make
+      - build
+
+lifecycle:
+  # Belt-and-suspenders: make sure /run/ap exists before the daemon
+  # starts. The ap-base entrypoint shim already creates it at PID 1,
+  # but an idempotent mkdir is cheap and documents intent.
+  # Pitfall 4 rule: do NOT reopen or consume FIFOs anywhere in the lifecycle.
+  postCreateCommand:
+    - mkdir
+    - -p
+    - /run/ap
+  # Verify the picoclaw daemon is alive. The ap-base entrypoint shim
+  # launches AP_AGENT_CMD (= "picoclaw agent --session cli:default")
+  # inside the tmux `chat` window at container start — this hook is a
+  # liveness probe, NOT a starter.
+  postStartCommand:
+    - pgrep
+    - -f
+    - picoclaw
+  # Verify FIFOs exist. test -p is read-only and does NOT consume bytes
+  # (Pitfall 4 enforcement). We check chat.in only; chat.out is created
+  # and held by the same ap-base entrypoint code path.
+  postAttachCommand:
+    - test
+    - -p
+    - /run/ap/chat.in
+  waitFor: postAttachCommand
+
+launch:
+  cmd:
+    - picoclaw
+    - agent
+    - --session
+    - cli:default
+  workdir: /home/agent
+
+chat_io:
+  mode: fifo
+  response_timeout_sec: 60
+  fifo:
+    fifo_in: /run/ap/chat.in
+    fifo_out: /run/ap/chat.out
+    strip_ansi: true
+
+auth:
+  mechanism: secret_file_mount
+  headless_safe: true
+  env:
+    EDITOR: "vim"
+  files:
+    - secret: anthropic-api-key
+      target: /home/agent/.picoclaw/.security.yml
+      mode: "0600"
+      template: security-yml
+  secrets_schema:
+    - name: anthropic-api-key
+      description: "Anthropic API key (BYOK) — rendered into .security.yml at container start"
+      required: true
+    - name: openrouter-api-key
+      description: "OpenRouter API key (BYOK) — declared for A7=green, not yet wired into the template (see Plan 07 aider for Gate A OpenRouter proof)"
+      required: false
+
+providers:
+  - id: anthropic
+    api_base: https://api.anthropic.com/v1
+    api_key_env_var: ANTHROPIC_API_KEY
+    auth_style: x-api-key
+  - id: openrouter
+    api_base: https://openrouter.ai/api/v1
+    api_key_env_var: OPENROUTER_API_KEY
+    auth_style: bearer
+
+models:
+  - id: claude-haiku-4-5-20251001
+    provider: anthropic
+    max_input_tokens: 200000
+    max_output_tokens: 8192
+
+model_flag: --model
+
+isolation:
+  tier: strict
+  cap_drop:
+    - ALL
+  # ap-base's gosu-based privilege drop (root → uid 10000 agent) at
+  # entrypoint PID 1 requires these caps. Same set Phase 2 picoclaw used.
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+    - SETPCAP
+  no_new_privs: true
+  read_only_rootfs: true
+
+persistent_state:
+  tmpfs:
+    - path: /tmp
+      size_mib: 128
+    - path: /run
+      size_mib: 16
+    - path: /home/agent/.picoclaw/workspace/sessions
+      size_mib: 32
+
+frontend:
+  display_name: PicoClaw
+  slug: picoclaw
+  icon: lobster
+  category_badge: "Compact coder"
+  tooltip: "PicoClaw — compact AI coding agent"
+  tier_badge: tier-1
+
+metadata:
+  source_repo: https://github.com/sipeed/picoclaw
+  source_sha: 773a94c41437d21c7cb1fcc429cee1ac605dd509
+  last_verified: "2026-04-14"
+  bootstrap_generated: false

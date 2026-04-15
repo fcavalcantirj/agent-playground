@@ -1,15 +1,28 @@
-# ap-picoclaw — Phase 2 recipe overlay
-# Layered on top of ap-base:v0.1.0. Adds the picoclaw Go binary pinned to
-# upstream commit SHA c7461f9 (2026-03-31), runs `picoclaw onboard` at build
-# time to seed ~/.picoclaw config, then leaves the agent process to be launched
-# by ap-base's entrypoint shim via AP_AGENT_CMD.
+# ap-picoclaw — Phase 02.5 recipe overlay (rebuilt from Phase 2)
+#
+# Inheritance chain (D-22):
+#   ap-base:v0.1.0 ← ap-runtime-node:v0.1.0-22 ← this image
+#
+# Phase 02.5 change: the FINAL stage now layers on top of ap-runtime-node
+# instead of ap-base directly. Recipes must never inherit ap-base directly —
+# they must target an ap-runtime-<family> base, so the family→base mapping
+# stays a single source of truth. For picoclaw (a Go binary) the runtime base is
+# `node` because Pattern 11 (D-40b) declares runtime.family=node; node
+# itself is unused by the picoclaw binary but the runtime plumbing is
+# consistent with the manifest's declared family.
+#
+# The Go toolchain stage is UNCHANGED from Phase 2 — picoclaw is a Go
+# binary built via `make build`, producing a statically linkable artifact.
+#
+# Pinned SHA (D-42): 773a94c41437d21c7cb1fcc429cee1ac605dd509 — see
+# agents/picoclaw/recipe.yaml metadata.source_sha and
+# .planning/phases/02.5-recipe-manifest-reshape/02.5-08-scratch-a7.md.
 #
 # Chat path: ChatIOFIFO (long-lived `picoclaw agent --session cli:default`
 # in tmux chat window, stdin from /run/ap/chat.in, stdout to /run/ap/chat.out).
-# Plan 04 may switch to ChatIOExec (`picoclaw agent -m`) if FIFO bridging
-# proves brittle — both code paths are validated upstream.
+# See recipe.yaml chat_io.mode=fifo for the declarative equivalent.
 
-ARG PICOCLAW_SHA=c7461f9e963496c4471336642ac6a8d91a456978
+ARG PICOCLAW_SHA=773a94c41437d21c7cb1fcc429cee1ac605dd509
 
 # --- Stage 1: build picoclaw from pinned SHA ---
 FROM golang:1.25-alpine AS builder
@@ -24,8 +37,8 @@ RUN git clone https://github.com/sipeed/picoclaw . && \
     go mod download && \
     make build
 
-# --- Stage 2: layer the binary onto ap-base ---
-FROM ap-base:v0.1.0
+# --- Stage 2: layer the binary onto ap-runtime-node (Phase 02.5 D-22) ---
+FROM ap-runtime-node:v0.1.0-22
 
 USER root
 COPY --from=builder /src/build/picoclaw /usr/local/bin/picoclaw
@@ -36,20 +49,23 @@ USER agent
 WORKDIR /home/agent
 RUN /usr/local/bin/picoclaw onboard
 
-# Fix picoclaw's baked model catalog: it lists the Claude model as
-# `claude-sonnet-4.6` (dot notation) but Anthropic's canonical API name
-# uses hyphens (`claude-sonnet-4-6`). Without this rewrite, every
-# request to api.anthropic.com/v1 returns 404 "model not found".
-# We also keep the dot-notation model_name as the picoclaw-facing
-# identifier so recipe/smoke-test configs don't need to change — only
-# the wire-level `model:` field gets the corrected Anthropic ID.
-RUN jq '(.model_list[] | select(.model_name == "claude-sonnet-4.6") | .model) = "anthropic/claude-sonnet-4-6"' \
-    /home/agent/.picoclaw/config.json > /tmp/pc.json && \
-    mv /tmp/pc.json /home/agent/.picoclaw/config.json
+# Fix picoclaw's baked model catalog: historically it shipped with
+# `claude-sonnet-4.6` (dot notation) in the `model:` field, while
+# Anthropic's canonical wire name is `claude-sonnet-4-6` (hyphenated).
+# Without this rewrite, every request to api.anthropic.com/v1 returned
+# 404 "model not found". The rewrite is IDEMPOTENT — if the upstream
+# catalog has already been corrected at the pinned SHA, jq leaves the
+# field untouched. We keep the step defensively so the image works
+# regardless of which side of the upstream fix we're on.
+RUN if [ -f /home/agent/.picoclaw/config.json ]; then \
+      jq '(.model_list[]? | select(.model_name == "claude-sonnet-4.6") | .model) = "anthropic/claude-sonnet-4-6"' \
+        /home/agent/.picoclaw/config.json > /tmp/pc.json && \
+      mv /tmp/pc.json /home/agent/.picoclaw/config.json; \
+    fi
 
 # Pre-create the session-state dir as an empty mountpoint. The session
 # handler mounts a tmpfs here at run time so picoclaw's session journal
-# writes succeed under the read-only rootfs posture.
+# writes succeed under the read-only rootfs posture. (Mirrors Phase 2.)
 RUN mkdir -p /home/agent/.picoclaw/workspace/sessions
 
 # Restore root for the runtime entrypoint (ap-base entrypoint drops via gosu)
@@ -58,6 +74,5 @@ WORKDIR /home/agent
 
 # AP_AGENT_CMD launches picoclaw in interactive mode in the tmux chat window.
 # The ap-base entrypoint shim wraps stdin from /run/ap/chat.in and stdout to
-# /run/ap/chat.out (verified: cmd/picoclaw/internal/agent/command.go lines 1-30
-# — interactive mode is the default when -m is not passed).
+# /run/ap/chat.out (ChatIOFIFO path). Kept verbatim from Phase 2.
 ENV AP_AGENT_CMD="picoclaw agent --session cli:default"
