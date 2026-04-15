@@ -1,0 +1,146 @@
+apiVersion: ap.recipe/v0
+name: openclaw
+display_name: OpenClaw
+description: |
+  Personal AI assistant (TypeScript, Node.js 24) — multi-channel gateway
+  with messaging integrations + headless `openclaw infer` CLI. This
+  recipe targets the `infer model run` local-execution path which
+  bypasses the gateway entirely for stateless inference tasks.
+
+source:
+  repo: https://github.com/openclaw/openclaw
+  ref: main
+  ref_note: |
+    OpenClaw is 2026.4.15-beta.1 at the time of recon. v0 does not pin
+    to a SHA — upstream Dockerfile is stable and base images are
+    SHA-pinned internally.
+  upstream_version: 2026.4.15-beta.1
+
+build:
+  mode: upstream_dockerfile
+  dockerfile: Dockerfile
+  context: .
+  notes: |
+    Upstream multi-stage Dockerfile. Node 24 + Bun + pnpm + Matrix
+    native crypto binding + bundled plugin workspace. Cold build is
+    the long pole — expect 10–15 min minimum, can stretch on slow
+    networks (Bun installer fetches from bun.sh, pnpm store is large).
+    SHA-pinned base images for reproducibility. No ENTRYPOINT set;
+    default CMD starts the gateway. We override by passing our own
+    argv to `docker run`, which becomes the full command.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: OPENAI_API_KEY
+    base_url: null
+    model: null
+  volumes:
+    - name: openclaw_state
+      host: per_session_tmpdir
+      container: /home/node/.openclaw
+      mode: rw
+      ephemeral: true
+      owner_uid: 1000
+      notes: |
+        HOME=/home/node, state dir is /home/node/.openclaw. First run
+        may create default config files. Ephemeral for smoke tests;
+        persist for long-lived sessions (skills, memory, channels).
+  warnings:
+    - id: infer_is_local_path
+      rule: openclaw infer model run runs LOCALLY by default and does NOT require the gateway to be running
+      reason: |
+        Per docs/cli/infer.md: "Stateless execution commands default to
+        local. The normal local path does not require the gateway to
+        be running." This is the load-bearing property that makes
+        openclaw fit the v0 recipe format (which assumes single-container
+        one-shot invocation). If that property ever flips, this recipe
+        becomes invalid.
+    - id: two_service_deployment_is_different
+      rule: |
+        This recipe is for HEADLESS INFER only. Full openclaw deployment
+        is gateway + CLI + sandbox containers per docker-compose.yml,
+        with messaging channels (WhatsApp, Telegram, Discord, etc.).
+      reason: |
+        Agent Playground's v0 recipe format is single-container one-shot.
+        Multi-container lifecycle and long-running service model are
+        out of scope until we hit the pattern on a second agent.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    # The Dockerfile sets no ENTRYPOINT (default CMD starts the gateway).
+    # `openclaw` is symlinked into /usr/local/bin at build time. We use
+    # bash -c to chain TWO commands inside a single `docker run`:
+    #   1. `openclaw config set agents.defaults.model openrouter/<model>` —
+    #      required because --model on `infer model run` only populates
+    #      the capability envelope; the embedded agent runtime still
+    #      resolves `agents.defaults.model` from config for its lane
+    #      dispatch. Setting this key is the only way to actually route.
+    #   2. `openclaw infer model run --prompt ... --local --json` —
+    #      the actual inference call. --local forces bypass of the
+    #      gateway. --json emits structured output.
+    argv:
+      - bash
+      - -c
+      - 'openclaw config set agents.defaults.model "openrouter/$MODEL" >/dev/null && openclaw infer model run --prompt "$PROMPT" --local --json'
+    argv_note: |
+      WHY bash -c chain: `infer model run --model <x>` is empirically a
+      decorative field in the capability envelope. The embedded agent
+      runtime reads its lane model from `agents.defaults.model` in the
+      config, NOT from the CLI flag. Without `config set` first, the
+      agent loop tries to use the baked-in default (openai/gpt-5.4),
+      fails to resolve auth, and returns
+        { attempts: [], outputs: ["⚠️ Agent couldn't generate a response"] }
+      with `stopReason=stop payloads=0` in stderr. `config set` writes
+      to /home/node/.openclaw/openclaw.json which is on the ephemeral
+      volume, so the state is thrown away at container teardown.
+
+      Runner substitution note: $PROMPT and $MODEL are replaced by the
+      runner BEFORE docker run, so bash sees literal values inside the
+      double quotes. Prompts containing double quotes would need
+      escaping — v0 smoke is "who are you?" which is safe.
+    stdout_filter:
+      engine: awk
+      program: "{print}"  # v0 pass-through; --json is already structured
+    session_id_capture:
+      engine: none
+
+smoke:
+  prompt: "who are you?"
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 180
+  verified_cells:
+    - model: anthropic/claude-haiku-4-5
+      verdict: PASS
+      notes: |
+        Agent loop completes, emits real response content that mentions
+        "OpenClaw" explicitly. response_contains_name passes on the
+        agent's own self-identification in the reply text.
+  known_incompatible_cells:
+    - model: openai/gpt-4o-mini
+      verdict: FAIL
+      notes: |
+        Agent loop exits with `attempts: []` and "⚠️ Agent couldn't
+        generate a response". Config is correct, auth is correct,
+        provider routes to openrouter, but the embedded agent runtime's
+        turn dispatch stops without emitting any payload. Likely
+        model-specific incompatibility with openclaw's tool-use
+        contract or system-prompt shape. Not a recipe bug. Claude
+        models via openrouter work fine.
+
+metadata:
+  recon_date: 2026-04-15
+  recon_by: main-conversation (direct source read; Solvr rooms for openclaw probed — none available)
+  source_citations:
+    - docs/cli/infer.md:14 - "openclaw infer is the canonical headless surface"
+    - docs/cli/infer.md:131 - "The normal local path does not require the gateway to be running"
+    - docs/cli/infer.md:138 - verbatim example "openclaw infer model run --prompt ... --json"
+    - Dockerfile (tail) - CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"] (no ENTRYPOINT)
+    - Dockerfile (tail) - ln -sf /app/openclaw.mjs /usr/local/bin/openclaw (openclaw in PATH)
+    - Dockerfile - USER node (uid 1000)
+    - "package.json - bin.openclaw points to openclaw.mjs, version 2026.4.15-beta.1"
+    - .env.example - OPENROUTER_API_KEY listed under "Model provider API keys"
+    - docker-compose.yml - confirms two-service deployment (gateway + cli) for full runtime
