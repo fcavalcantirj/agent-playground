@@ -118,6 +118,39 @@ smoke-test-matrix:
 	@echo
 	@API_URL=$(API_URL) bash test/smoke-matrix.sh
 
+# --- Phase 02.5 Gate B architectural drop-in test (D-01b, D-50a..d) ---
+# Runs test/drop-in.sh against a target recipe the operator has hand-written
+# under agents/<TARGET>/ (pure directory add, zero substrate edits).
+#
+# Usage:
+#   make test-architectural-drop-in                # default: null-echo (D-50d synthetic fallback)
+#   make test-architectural-drop-in TARGET=openclaw
+#
+# Protocol (D-50b):
+#   1. Operator hand-writes agents/$(TARGET)/recipe.yaml + optional templates/*.tmpl
+#      + optional Dockerfile using only the locked v0.1 schema
+#   2. Operator must NOT edit api/, agents/schemas/, Makefile (D-50c)
+#   3. OPTIONAL escape hatch: new deploy/ap-runtime-<family>/Dockerfile if the
+#      target needs a language family no runtime base exists for yet
+#   4. This target invokes test/drop-in.sh which enforces D-50c via git diff,
+#      SIGHUPs the running API server, then re-runs the Gate A matrix with
+#      the new recipe appended. Gate B passes when all non-SKIP cells pass
+#      and zero substrate edits occurred.
+TARGET ?= null-echo
+
+.PHONY: test-architectural-drop-in
+
+test-architectural-drop-in:
+	@echo "Gate B: architectural drop-in test (D-01b / D-50a..d)"
+	@echo "Target:        $(TARGET)"
+	@echo "Protocol (D-50b):"
+	@echo "  1. agents/$(TARGET)/recipe.yaml must already exist (hand-written by operator)"
+	@echo "  2. DO NOT edit api/, agents/schemas/, Makefile (D-50c); the script enforces this"
+	@echo "  3. OPTIONAL: new deploy/ap-runtime-<family>/Dockerfile is the ONLY allowed escape hatch"
+	@echo "  4. API server must be running at $(API_URL); this target SIGHUPs it to reload"
+	@echo
+	@API_URL=$(API_URL) bash test/drop-in.sh $(TARGET)
+
 smoke-test:
 	@if [ -z "$$AP_DEV_BYOK_KEY" ]; then \
 		echo "SKIPPED: AP_DEV_BYOK_KEY not set (set to a real Anthropic key to run the live smoke test)"; \

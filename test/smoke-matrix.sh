@@ -23,7 +23,15 @@
 
 set -uo pipefail
 
-RECIPES=(aider picoclaw)
+# Plan 11 Gate B extends the matrix via RECIPES_OVERRIDE: a space-separated
+# list of recipe ids the drop-in runner wants to exercise alongside the
+# reference pair. When unset, the script runs the Plan 10 defaults unchanged.
+if [ -n "${RECIPES_OVERRIDE:-}" ]; then
+    # shellcheck disable=SC2206
+    RECIPES=( $RECIPES_OVERRIDE )
+else
+    RECIPES=(aider picoclaw)
+fi
 PROVIDERS=(anthropic openrouter)
 API_URL="${API_URL:-http://127.0.0.1:8080}"
 PROBE="whoareyou"
