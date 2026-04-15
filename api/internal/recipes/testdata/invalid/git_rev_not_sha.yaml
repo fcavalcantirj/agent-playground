@@ -1,0 +1,18 @@
+id: badrev
+name: Git Rev Not SHA
+runtime:
+  family: python
+install:
+  type: git_build
+  git:
+    repo: https://github.com/example/thing
+    rev: main
+    build_cmd: ["make", "install"]
+launch:
+  cmd: ["thing", "--help"]
+chat_io:
+  mode: exec_per_message
+  exec_per_message:
+    cmd_template: ["thing", "chat"]
+isolation:
+  tier: strict

@@ -1,0 +1,13 @@
+id: child
+name: Child Flavor
+config_flavor_of: base
+runtime:
+  family: python
+launch:
+  cmd: ["pkg", "--chat"]
+chat_io:
+  mode: exec_per_message
+  exec_per_message:
+    cmd_template: ["pkg", "chat"]
+isolation:
+  tier: strict

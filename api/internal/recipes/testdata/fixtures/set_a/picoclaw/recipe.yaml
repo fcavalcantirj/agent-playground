@@ -1,0 +1,37 @@
+id: picoclaw
+name: PicoClaw
+description: Minimal valid picoclaw recipe for loader smoke tests
+runtime:
+  family: node
+  version: "20"
+install:
+  type: git_build
+  git:
+    repo: https://github.com/sipeed/picoclaw
+    rev: c7461f9e963496c4471336642ac6a8d91a456978
+    build_cmd: ["npm", "install"]
+lifecycle:
+  postAttachCommand:
+    - ["sh", "-c", "test -p /run/ap/chat.out"]
+launch:
+  cmd: ["picoclaw", "agent"]
+chat_io:
+  mode: fifo
+  response_timeout_sec: 60
+  fifo:
+    fifo_in: /run/ap/chat.in
+    fifo_out: /run/ap/chat.out
+    strip_ansi: true
+auth:
+  mechanism: secret_file_mount
+  files:
+    - secret: anthropic-api-key
+      target: /home/agent/.picoclaw/.security.yml
+      mode: "0400"
+      template: picoclaw-security
+  secrets_schema:
+    - name: anthropic-api-key
+      description: BYOK Anthropic API key
+      required: true
+isolation:
+  tier: strict

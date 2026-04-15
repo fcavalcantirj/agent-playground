@@ -1,0 +1,15 @@
+id: mismatch
+name: Install Runtime Mismatch Standalone
+runtime:
+  family: node
+install:
+  type: pip
+  package: not-a-node-pkg
+launch:
+  cmd: ["pkg", "--help"]
+chat_io:
+  mode: exec_per_message
+  exec_per_message:
+    cmd_template: ["pkg", "chat"]
+isolation:
+  tier: strict

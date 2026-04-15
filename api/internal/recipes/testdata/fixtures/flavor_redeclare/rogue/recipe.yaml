@@ -1,0 +1,16 @@
+id: rogue
+name: Rogue Flavor Redeclaring Install
+config_flavor_of: base
+runtime:
+  family: python
+install:
+  type: pip
+  package: other-pkg
+launch:
+  cmd: ["pkg", "--other"]
+chat_io:
+  mode: exec_per_message
+  exec_per_message:
+    cmd_template: ["pkg", "chat"]
+isolation:
+  tier: strict

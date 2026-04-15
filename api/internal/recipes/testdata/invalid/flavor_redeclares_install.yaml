@@ -1,0 +1,16 @@
+id: naughty
+name: Naughty Flavor
+config_flavor_of: base
+runtime:
+  family: python
+install:
+  type: pip
+  package: pkg
+launch:
+  cmd: ["pkg", "--help"]
+chat_io:
+  mode: exec_per_message
+  exec_per_message:
+    cmd_template: ["pkg", "chat"]
+isolation:
+  tier: strict

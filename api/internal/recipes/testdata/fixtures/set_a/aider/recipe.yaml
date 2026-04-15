@@ -1,0 +1,29 @@
+id: aider
+name: Aider
+description: Minimal valid aider recipe for loader smoke tests
+runtime:
+  family: python
+  version: "3.11"
+install:
+  type: pip
+  package: aider-chat
+  version: "0.50.0"
+launch:
+  cmd: ["aider", "--help"]
+chat_io:
+  mode: exec_per_message
+  response_timeout_sec: 60
+  exec_per_message:
+    cmd_template: ["aider", "--message"]
+auth:
+  mechanism: env_var
+  headless_safe: true
+  env:
+    ANTHROPIC_API_KEY: "secret:anthropic-api-key"
+  secrets_schema:
+    - name: anthropic-api-key
+      description: BYOK Anthropic API key
+      required: true
+isolation:
+  tier: strict
+  no_new_privs: true

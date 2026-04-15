@@ -3,7 +3,7 @@
   "$id": "https://agents.playground.dev/schemas/recipe.schema.json",
   "title": "ap.recipe/v1",
   "type": "object",
-  "required": ["id", "name", "runtime", "install", "launch", "chat_io", "isolation"],
+  "required": ["id", "name", "runtime", "launch", "chat_io", "isolation"],
   "additionalProperties": false,
   "properties": {
     "id":              {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
