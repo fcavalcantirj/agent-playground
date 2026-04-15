@@ -266,13 +266,13 @@ Explicitly excluded. Documented to prevent scope creep.
 | SEC-09 | Phase 3 | Pending |
 | SEC-10 | Phase 3 | Pending |
 | SEC-11 | Phase 3 | Pending |
-| REC-01 | Phase 4 | Pending |
-| REC-02 | Phase 4 | Pending |
+| REC-01 | Phase 02.5 | Pending |
+| REC-02 | Phase 02.5 | Pending |
 | REC-03 | Phase 4 | Pending |
 | REC-04 | Phase 4 | Pending |
 | REC-05 | Phase 4 | Pending |
-| REC-06 | Phase 4 | Pending |
-| REC-07 | Phase 4 | Pending |
+| REC-06 | Phase 02.5 | Pending |
+| REC-07 | Phase 02.5 (substrate for every recipe including Phase 4 backfills) | Pending |
 | REC-08 | Phase 4 | Pending |
 | REC-09 | Phase 4 | Pending |
 | REC-10 | Phase 4 | Pending |

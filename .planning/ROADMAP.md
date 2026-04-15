@@ -68,13 +68,38 @@ Plans:
 
 ### Phase 02.5: Recipe Manifest Reshape (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
-**Depends on:** Phase 2
-**Plans:** 0 plans
+**Reshaped on 2026-04-14** — this is an ARCHITECTURE phase, not a catalog phase. Its deliverable is the recipe manifest pattern (schema + loader + template registry + lifecycle runner + chat-bridge abstraction), not the recipes themselves. Phase 4 backfills the 8 deferred recipes against the locked pattern.
 
+**Goal**: Lock the YAML-backed recipe substrate (`ap.recipe/v1` schema, loader, filesystem template registry, 6-hook lifecycle runner, ChatBridge interface, runtime base image build system, Praktor-shape secret vault resolver) and prove the architectural hypothesis that recipe N+1 is configuration, not code. Ship 2 reference recipes (aider + picoclaw) that exercise every component of the new substrate end-to-end. Pass both gates: Gate A (`make smoke-test-matrix` — plumbing proof, 4 cells max {aider, picoclaw} × {anthropic, openrouter}) and Gate B (`make test-architectural-drop-in` — acceptance gate where a third recipe is added to the running system as a pure directory drop with zero Go code changes). Gate B passing closes Phase 02.5.
+**Depends on**: Phase 2 (substrate: `ap-base`, `pkg/docker/runner.go`, session handler stubs, Phase 2 bridge.go FIFO + exec modes that this phase lifts behind the `ChatBridge` interface)
+**Context of record:** `.planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md` (54 locked decisions D-01..D-54)
+**Requirements**: REC-01, REC-02, REC-06, REC-07
+**Success Criteria** (what must be TRUE):
+  1. `agents/schemas/recipe.schema.json` exists as JSON Schema Draft 2019-09, enforces closed enums on every field (runtime.family / install.type / chat_io.mode / auth.mechanism / isolation.tier / policy_flags), rejects Dev Containers object-syntax parallel groups, rejects secret: refs inside onCreate/updateContent hooks, and requires 40-char hex SHA for install.git.rev.
+  2. Go recipe loader at `api/internal/recipes/` walks `agents/`, validates + unmarshals + semantic-checks + flavor-resolves every recipe at API startup, refuses to start on any invalid recipe, supports SIGHUP atomic reload, and every Phase 2 hardcoded recipe struct (`recipes.Picoclaw`, `recipes.Hermes`, `recipes.AllRecipes`, `recipes.Render`, `recipes.AgentAuthFiles`) is REMOVED.
+  3. Filesystem template registry at `agents/<id>/templates/*.tmpl` renders under a closed FuncMap ({default, quote, lower, upper, trim}) with path allowlist regex `^[a-z0-9][a-z0-9_-]*\.tmpl$`, symlink rejection, 5s timeout, 64 KiB output cap, and `missingkey=error` option. Zero Go recompile to add a new agent.
+  4. `Runner.RunWithLifecycle` executes all 6 Dev Containers hooks in strict order (initializeCommand → onCreateCommand → updateContentCommand → postCreateCommand → postStartCommand → postAttachCommand) with `waitFor` gating (default postCreateCommand), array-of-arrays parallel groups via `errgroup.WithContext`, per-hook timeout (default 10 min), and teardown on any non-zero exit. No stubs, no TODOs.
+  5. `ChatBridge` interface in `api/internal/session/bridge/` with `FIFOBridge` and `ExecBridge` implementations lifted verbatim from Phase 2 code (no rewrites). `BridgeRegistry.Dispatch` keys on closed `chat_io.mode` enum {fifo, exec_per_message}.
+  6. 2 runtime base images built via `make build-runtimes`: `ap-runtime-python:v0.1.0-3.13` (Python 3.13 + uv 0.11.6 FROM ap-base) and `ap-runtime-node:v0.1.0-22` (Node 22 LTS Debian-slim FROM ap-base — NOT Alpine per D-20). 3 other families (go/rust/zig) deferred to Phase 4.
+  7. 2 reference recipes pass L2 eager verification: `agents/aider/recipe.yaml` (python / pip / exec_per_message / env_var / anthropic+openrouter / standalone) and `agents/picoclaw/recipe.yaml` (node / git_build / fifo / secret_file_mount via template / anthropic / standalone — NOT config_flavor_of per D-40b). Both pin 40-char upstream SHAs per D-42.
+  8. `GET /api/recipes` + `GET /api/recipes/:id` serve public-metadata views only (no lifecycle/install/auth/isolation leaks), support filter params (?family=, ?tier=, ?license=, ?provider=). `POST /api/sessions` accepts the new `provider` field and rejects invalid combinations with specific error codes (`recipe_not_found`, `provider_not_supported`, `model_not_supported`, `secret_missing`, `template_render_failed`, `lifecycle_hook_failed`, `chat_bridge_unsupported_mode`).
+  9. **Gate A passes** (prerequisite): `make smoke-test-matrix` runs up to 4 cells {aider, picoclaw} × {anthropic, openrouter}, each sends literal `whoareyou` and asserts HTTP 200 + non-empty reply + no dangling `playground-*` container + no top-level error envelope. D-47 criteria: each recipe passes on ≥1 provider; ≥1 recipe passes on BOTH providers (OpenRouter wire proven); zero non-SKIP failures.
+  10. **Gate B passes** (acceptance gate per D-01b): `make test-architectural-drop-in` — operator writes a third agent recipe (openclaw/plandex/synthetic null-echo fallback per D-50d) as a pure `agents/<target>/` directory drop, restarts the API server (SIGHUP reload), and the new cells pass the same `whoareyou` assertion as Gate A. `git diff api/ deploy/ Makefile agents/schemas/` is empty throughout the exercise per D-50c (only allowed substrate addition: a new `deploy/ap-runtime-<family>/Dockerfile` for an unbuilt runtime family). Passing Gate B closes Phase 02.5.
+**Plans:** 11 plans
 Plans:
-- [ ] TBD (run /gsd-plan-phase 02.5 to break down)
+- [ ] 02.5-01-PLAN.md — Recipe YAML schema v0.1.0 + JSON Schema Draft 2019-09 + loader + validator + SIGHUP reload [Wave 1]
+- [ ] 02.5-02-PLAN.md — Filesystem template registry + renderer + security hardening (closed FuncMap, path allowlist, symlink rejection, timeout, size cap) [Wave 2]
+- [ ] 02.5-03-PLAN.md — `Runner.RunWithLifecycle` + all 6 Dev Containers hooks + `waitFor` gating + errgroup parallel groups + per-hook timeouts [Wave 2]
+- [ ] 02.5-04-PLAN.md — `ChatBridge` interface + `FIFOBridge` + `ExecBridge` (lifted verbatim from Phase 2) + `BridgeRegistry` [Wave 2]
+- [ ] 02.5-05-PLAN.md — `SecretSource` extended with `Resolve` + `DevEnvSecretSource` (Anthropic + OpenRouter + extras) + `Materialize` pipeline + log redaction + server options wiring [Wave 2]
+- [ ] 02.5-06-PLAN.md — Runtime base images `ap-runtime-python` (Python 3.13 + uv) + `ap-runtime-node` (Node 22 Debian-slim) + Makefile `build-runtimes` target [Wave 2]
+- [ ] 02.5-07-PLAN.md — `aider` reference recipe (python / pip / exec_per_message / env_var / anthropic+openrouter) with L2 eager verification resolving Assumption A3 [Wave 3]
+- [ ] 02.5-08-PLAN.md — `picoclaw` reference recipe (node / git_build / fifo / secret_file_mount) + `templates/security.yml.tmpl` + rebuilt `Dockerfile` FROM `ap-runtime-node` + L2 verification resolving Assumption A7 [Wave 3]
+- [ ] 02.5-09-PLAN.md — `GET /api/recipes` + `GET /api/recipes/:id` + `POST /api/sessions` provider-field extension + new error codes + legacy recipe struct removal + migration `0003_sessions_provider.sql` [Wave 3]
+- [ ] 02.5-10-PLAN.md — **Gate A**: `make smoke-test-matrix` (4 cells, `whoareyou` probe, D-47 enforcement) [Wave 4]
+- [ ] 02.5-11-PLAN.md — **Gate B**: `make test-architectural-drop-in` (architectural acceptance gate per D-01b; operator-driven drop-in of a third recipe with zero substrate edits; passing closes Phase 02.5) [Wave 5]
+**UI hint**: no (API-only; Phase 5 consumes `GET /api/recipes` from the browser)
+**Reshape note**: REC-01/02/06/07 moved from Phase 4 to Phase 02.5 as substrate. REC-03/04/05/08 (full)/09/10/11/12 remain in Phase 4. See `.planning/REQUIREMENTS.md` updated traceability.
 
 ### Phase 3: Auth, Secrets & BYOK Key Handling
 **Goal**: A user can log in with Google or GitHub, manage BYOK keys safely, and the whole secret-handling pipeline (storage, injection, log scrubbing, audit) is hardened before the first BYOK-using session is ever spawned.
