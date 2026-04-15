@@ -60,7 +60,7 @@ func NewBridge(r RunnerExec) *Bridge {
 // The context is wrapped with recipe.ChatIO.ResponseTimeout so callers
 // that pass a longer-lived context still honor the per-recipe cap.
 // Timeouts surface as ErrTimeout (HTTP 504 at the handler layer).
-func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
+func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, modelID, text string) (string, error) {
 	if recipe == nil {
 		return "", fmt.Errorf("session bridge: nil recipe")
 	}
@@ -89,7 +89,7 @@ func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *re
 // between Go and the container's exec layer. The user text therefore
 // cannot be interpreted as shell metacharacters even if it contains
 // `;`, `$()`, or backticks.
-func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recipes.Recipe, modelID, text string) (string, error) {
+func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, modelID, text string) (string, error) {
 	cmd := slices.Clone(recipe.ChatIO.ExecCmd)
 	if recipe.ModelFlag != "" && modelID != "" {
 		cmd = append(cmd, recipe.ModelFlag, modelID)
@@ -113,7 +113,7 @@ func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recip
 // THREAT NOTE (T-02-04): the user text NEVER becomes shell arguments.
 // Bytes on stdin are not interpreted by `sh` — they are handed verbatim
 // to `cat` which copies them to the FIFO.
-func (b *Bridge) fifoMode(ctx context.Context, containerID string, recipe *recipes.Recipe, text string) (string, error) {
+func (b *Bridge) fifoMode(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, text string) (string, error) {
 	payload := bytes.NewReader([]byte(text + "\n"))
 	if _, err := b.runner.ExecWithStdin(
 		ctx, containerID,

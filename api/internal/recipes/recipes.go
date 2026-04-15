@@ -1,10 +1,16 @@
-// Package recipes is the Phase 2 hardcoded recipe catalog. Phase 4 replaces
-// this with a DB/file-backed registry; Phase 2 ships exactly two entries so
-// the session spawn path has concrete targets to point at.
+// Package recipes hosts two catalogs that COEXIST during Phase 02.5:
 //
-// Cross-phase contract: the Image tags below MUST match the outputs of Plan
-// 02-03 (ap-picoclaw / ap-hermes) exactly. Any drift will cause session
-// spawns to fail at the docker-pull step.
+//  1. The Phase 2 hardcoded LegacyRecipe catalog (this file) — two
+//     entries (picoclaw, hermes) that the Phase 2 session handler + bridge
+//     still consume. Plan 09 of Phase 02.5 removes it once every caller
+//     is swapped over to the YAML-backed Recipe type.
+//  2. The Phase 02.5 YAML-backed Recipe + SchemaValidator + Loader
+//     (recipe.go / schema.go / loader.go / cache.go) — the new substrate.
+//     Plan 01 of Phase 02.5 introduced it without wiring any consumer.
+//
+// Cross-phase contract for legacy data: the Image tags below MUST match
+// the outputs of Plan 02-03 (ap-picoclaw / ap-hermes) exactly. Any drift
+// will cause session spawns to fail at the docker-pull step.
 package recipes
 
 import (
@@ -13,17 +19,21 @@ import (
 	"time"
 )
 
-// AuthFile describes a recipe-specific auth artifact the session bridge
-// must template with a BYOK key and bind-mount into a running container.
-// Used when the agent binary inside the recipe image does NOT honor
-// /run/secrets/<key> or env vars directly and instead reads auth from
-// its own config file under $HOME.
+// LegacyAuthFile describes a recipe-specific auth artifact the session
+// bridge must template with a BYOK key and bind-mount into a running
+// container. Used when the agent binary inside the recipe image does NOT
+// honor /run/secrets/<key> or env vars directly and instead reads auth
+// from its own config file under $HOME.
 //
 // Example: picoclaw reads api_keys from ~/.picoclaw/.security.yml, NOT
 // from ANTHROPIC_API_KEY env or /run/secrets/anthropic_key. The recipe
 // declares an AuthFile so the handler can render a per-session
 // .security.yml into the secrets dir and mount it at the expected path.
-type AuthFile struct {
+//
+// Deprecated: Phase 02.5 Plan 09 will remove the hardcoded Phase 2
+// catalog and drive auth-file rendering from RecipeAuth.Files in the
+// YAML-backed Recipe type.
+type LegacyAuthFile struct {
 	// HostFilename is the leaf name the handler will write into the
 	// per-session secrets directory (e.g. ".security.yml"). It is NOT a
 	// full path; the handler prepends /tmp/ap/secrets/<session-id>/.
@@ -42,6 +52,10 @@ type AuthFile struct {
 // agent binary. FIFO = long-lived agent process whose stdin/stdout we tee
 // through /run/ap/chat.{in,out}; Exec = the agent binary is invoked fresh
 // per user message via `docker exec` and its stdout is returned verbatim.
+//
+// Note: these are Phase 2 Go constants, NOT the YAML-level chat_io.mode
+// values (which are "fifo" / "exec_per_message" per D-10). The Phase 2
+// catalog predates the schema and uses "stdin_fifo" as the FIFO value.
 type ChatIOMode string
 
 const (
@@ -60,6 +74,9 @@ const (
 // ChatIO describes how messages flow to/from the agent binary inside the
 // container. Only one of LaunchCmd (FIFO) or ExecCmd (Exec) is meaningful
 // per recipe; the other is left empty.
+//
+// Phase 2 legacy type: the YAML-backed equivalent is RecipeChatIO in
+// recipe.go. Both exist until Plan 02.5-09 cuts the legacy path.
 type ChatIO struct {
 	// Mode selects the bridge strategy.
 	Mode ChatIOMode
@@ -92,9 +109,14 @@ type ResourceOverrides struct {
 	PidsLimit int64
 }
 
-// Recipe is a single catalog entry. Phase 2 has two of these hardcoded.
-type Recipe struct {
-	// Name is the short key used in AllRecipes and the HTTP API payload.
+// LegacyRecipe is the Phase 2 hardcoded catalog entry shape. Phase 2
+// ships two instances; Phase 02.5 Plan 01 introduced the YAML-backed
+// Recipe type alongside this one, and Plan 02.5-09 removes the legacy
+// path entirely once handlers are swapped over to the Loader.
+//
+// Deprecated: use the YAML-backed Recipe struct once Plan 02.5-09 lands.
+type LegacyRecipe struct {
+	// Name is the short key used in LegacyAllRecipes and the HTTP API payload.
 	Name string
 
 	// Image is the fully qualified tag produced by Plan 02-03's Dockerfile
@@ -139,15 +161,18 @@ type Recipe struct {
 	// file (e.g. picoclaw's ~/.picoclaw/.security.yml) instead of env
 	// vars or /run/secrets/. Empty for recipes whose agent honors
 	// ANTHROPIC_API_KEY / OPENAI_API_KEY / etc. directly.
-	AgentAuthFiles []AuthFile
+	AgentAuthFiles []LegacyAuthFile
 
 	// ResourceOverrides optionally tightens DefaultSandbox resource caps.
 	ResourceOverrides ResourceOverrides
 }
 
-// AllRecipes is the Phase 2 hardcoded catalog. Keys are the short names
-// the API accepts in POST /api/sessions {"recipe": "picoclaw"}.
-var AllRecipes = map[string]*Recipe{
+// LegacyAllRecipes is the Phase 2 hardcoded catalog. Keys are the short
+// names the API accepts in POST /api/sessions {"recipe": "picoclaw"}.
+//
+// Deprecated: consumers should migrate to the Loader catalog once
+// Plan 02.5-09 swaps the session handler.
+var LegacyAllRecipes = map[string]*LegacyRecipe{
 	"picoclaw": {
 		Name:  "picoclaw",
 		Image: "ap-picoclaw:v0.1.0-c7461f9",
@@ -164,7 +189,7 @@ var AllRecipes = map[string]*Recipe{
 		// by <model_name>:<index>. It does NOT honor ANTHROPIC_API_KEY or
 		// /run/secrets/anthropic_key. Confirmed against sipeed/picoclaw
 		// commit c7461f9 — pkg/config/config_struct.go#SecureModelList.
-		AgentAuthFiles: []AuthFile{
+		AgentAuthFiles: []LegacyAuthFile{
 			{
 				HostFilename:  "picoclaw-security.yml",
 				ContainerPath: "/home/agent/.picoclaw/.security.yml",
@@ -193,10 +218,13 @@ var AllRecipes = map[string]*Recipe{
 	},
 }
 
-// Get returns the recipe for a given name, or nil if no such recipe exists.
-// Callers should treat a nil return as a 404 at the API layer.
-func Get(name string) *Recipe {
-	return AllRecipes[name]
+// GetLegacy returns the Phase 2 legacy recipe for a given name, or nil
+// if no such recipe exists. Callers should treat a nil return as a 404
+// at the API layer.
+//
+// Deprecated: use Loader.Get once Plan 02.5-09 swaps the session handler.
+func GetLegacy(name string) *LegacyRecipe {
+	return LegacyAllRecipes[name]
 }
 
 // renderPicoclawSecurityYAML emits the .security.yml picoclaw reads at

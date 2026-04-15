@@ -1,0 +1,13 @@
+id: unknown-mode
+name: Unknown Chat Mode
+runtime:
+  family: python
+install:
+  type: pip
+  package: pkg
+launch:
+  cmd: ["pkg", "--help"]
+chat_io:
+  mode: http_gateway
+isolation:
+  tier: strict

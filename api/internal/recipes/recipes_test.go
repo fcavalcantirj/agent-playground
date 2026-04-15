@@ -9,8 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// These tests exercise the Phase 2 legacy hardcoded catalog. The types
+// were renamed to Legacy* in Phase 02.5 Plan 01 to make room for the
+// YAML-backed Recipe. Plan 02.5-09 will delete this whole file.
+
 func TestRecipes_HasPicoclaw(t *testing.T) {
-	r := recipes.AllRecipes["picoclaw"]
+	r := recipes.LegacyAllRecipes["picoclaw"]
 	require.NotNil(t, r, "picoclaw recipe must exist")
 	assert.Equal(t, "ap-picoclaw:v0.1.0-c7461f9", r.Image)
 	assert.Equal(t, recipes.ChatIOFIFO, r.ChatIO.Mode)
@@ -24,7 +28,7 @@ func TestRecipes_HasPicoclaw(t *testing.T) {
 }
 
 func TestRecipes_HasHermes(t *testing.T) {
-	r := recipes.AllRecipes["hermes"]
+	r := recipes.LegacyAllRecipes["hermes"]
 	require.NotNil(t, r, "hermes recipe must exist")
 	assert.Equal(t, "ap-hermes:v0.1.0-5621fc4", r.Image)
 	assert.Equal(t, recipes.ChatIOExec, r.ChatIO.Mode)
@@ -39,15 +43,15 @@ func TestRecipes_HasHermes(t *testing.T) {
 }
 
 func TestRecipes_AllRequireAnthropicKey(t *testing.T) {
-	require.NotEmpty(t, recipes.AllRecipes)
-	for name, r := range recipes.AllRecipes {
+	require.NotEmpty(t, recipes.LegacyAllRecipes)
+	for name, r := range recipes.LegacyAllRecipes {
 		assert.Contains(t, r.RequiredSecrets, "anthropic_key",
 			"recipe %q must require anthropic_key in Phase 2", name)
 	}
 }
 
 func TestRecipes_Get_Lookup(t *testing.T) {
-	assert.NotNil(t, recipes.Get("picoclaw"))
-	assert.NotNil(t, recipes.Get("hermes"))
-	assert.Nil(t, recipes.Get("nope"))
+	assert.NotNil(t, recipes.GetLegacy("picoclaw"))
+	assert.NotNil(t, recipes.GetLegacy("hermes"))
+	assert.Nil(t, recipes.GetLegacy("nope"))
 }

@@ -123,7 +123,8 @@ type messageResponse struct {
 
 // create handles POST /api/sessions. Flow:
 //  1. Auth: read user from ctx (middleware.GetUserID).
-//  2. Validate recipe + provider via recipes.Get.
+//  2. Validate recipe + provider via recipes.GetLegacy (Phase 2 catalog
+//     lookup; Phase 02.5 Plan 09 swaps this for the Loader).
 //  3. Store.Create — returns 409 on ErrConflictActive.
 //  4. Provision secrets — returns 503 on ErrSecretMissing.
 //  5. Compose RunOptions: DefaultSandbox + recipe overrides + bind-mount
@@ -144,7 +145,7 @@ func (h *Handler) create(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errorBody("recipe, model_provider, and model_id are required"))
 	}
 
-	recipe := recipes.Get(req.Recipe)
+	recipe := recipes.GetLegacy(req.Recipe)
 	if recipe == nil {
 		return c.JSON(http.StatusBadRequest, errorBody(fmt.Sprintf("unknown recipe: %s", req.Recipe)))
 	}
@@ -308,7 +309,7 @@ func (h *Handler) message(c echo.Context) error {
 		return c.JSON(http.StatusConflict, errorBody("session has no container"))
 	}
 
-	recipe := recipes.Get(sess.RecipeName)
+	recipe := recipes.GetLegacy(sess.RecipeName)
 	if recipe == nil {
 		return c.JSON(http.StatusInternalServerError, errorBody("session recipe no longer available"))
 	}

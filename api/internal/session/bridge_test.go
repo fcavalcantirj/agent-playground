@@ -80,7 +80,7 @@ func TestBridge_FIFOMode(t *testing.T) {
 	}
 	b := session.NewBridge(m)
 
-	rec := &recipes.Recipe{
+	rec := &recipes.LegacyRecipe{
 		Name: "picoclaw",
 		ChatIO: recipes.ChatIO{
 			Mode:            recipes.ChatIOFIFO,
@@ -118,7 +118,7 @@ func TestBridge_ExecMode(t *testing.T) {
 	}
 	b := session.NewBridge(m)
 
-	rec := &recipes.Recipe{
+	rec := &recipes.LegacyRecipe{
 		Name: "hermes",
 		ChatIO: recipes.ChatIO{
 			Mode:            recipes.ChatIOExec,
@@ -150,7 +150,7 @@ func TestBridge_Timeout(t *testing.T) {
 	}
 	b := session.NewBridge(m)
 
-	rec := &recipes.Recipe{
+	rec := &recipes.LegacyRecipe{
 		Name: "picoclaw",
 		ChatIO: recipes.ChatIO{
 			Mode:            recipes.ChatIOFIFO,
@@ -169,7 +169,7 @@ func TestBridge_TextWithShellMetacharacters(t *testing.T) {
 	}
 	b := session.NewBridge(m)
 
-	rec := &recipes.Recipe{
+	rec := &recipes.LegacyRecipe{
 		Name: "hermes",
 		ChatIO: recipes.ChatIO{
 			Mode:            recipes.ChatIOExec,
@@ -196,7 +196,7 @@ func TestBridge_StripsANSI(t *testing.T) {
 	}
 	b := session.NewBridge(m)
 
-	rec := &recipes.Recipe{
+	rec := &recipes.LegacyRecipe{
 		Name: "hermes",
 		ChatIO: recipes.ChatIO{
 			Mode:            recipes.ChatIOExec,

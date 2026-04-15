@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "$id": "https://agents.playground.dev/schemas/recipe.schema.json",
+  "title": "ap.recipe/v1",
+  "type": "object",
+  "required": ["id", "name", "runtime", "install", "launch", "chat_io", "isolation"],
+  "additionalProperties": false,
+  "properties": {
+    "id":              {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "name":            {"type": "string", "minLength": 1},
+    "description":     {"type": "string"},
+    "version":         {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "license":         {"type": "string"},
+    "category":        {"enum": ["chat", "claw", "pair_programmer", "orchestrator", "inspector"]},
+    "config_flavor_of":{"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "runtime":         {"$ref": "#/$defs/runtime"},
+    "install":         {"$ref": "#/$defs/install"},
+    "lifecycle":       {"$ref": "#/$defs/lifecycle"},
+    "launch":          {"$ref": "#/$defs/launch"},
+    "chat_io":         {"$ref": "#/$defs/chat_io"},
+    "auth":            {"$ref": "#/$defs/auth"},
+    "providers":       {"type": "array", "items": {"$ref": "#/$defs/provider"}},
+    "models":          {"type": "array", "items": {"$ref": "#/$defs/model"}},
+    "model_flag":      {"type": "string"},
+    "isolation":       {"$ref": "#/$defs/isolation"},
+    "persistent_state":{"$ref": "#/$defs/persistent_state"},
+    "frontend":        {"$ref": "#/$defs/frontend"},
+    "policy_flags":    {"type": "array", "items": {"enum": ["non_oss", "oauth_required_suppressed"]}},
+    "tier_badge":      {"type": "string"},
+    "metadata":        {"$ref": "#/$defs/metadata"}
+  },
+  "$defs": {
+    "hook": {
+      "$comment": "v0.1 parallel semantics = array-of-arrays. Object syntax (Dev Containers label form) is rejected — deliberate divergence from https://containers.dev/implementors/json_reference/.",
+      "oneOf": [
+        {"type": "string"},
+        {"type": "array", "items": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "array", "items": {"type": "string"}}
+            ]
+        }}
+      ],
+      "not": {"type": "object"}
+    },
+    "hook-no-secrets": {
+      "$comment": "Same as hook but rejects any string containing 'secret:' prefix — used for onCreateCommand and updateContentCommand per D-29.",
+      "allOf": [
+        {"$ref": "#/$defs/hook"},
+        {"not": {
+          "anyOf": [
+            {"type": "string", "pattern": "^secret:"},
+            {"type": "array", "contains": {"oneOf": [
+              {"type": "string", "pattern": "secret:"},
+              {"type": "array", "contains": {"type": "string", "pattern": "secret:"}}
+            ]}}
+          ]
+        }}
+      ]
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["family"],
+      "additionalProperties": false,
+      "properties": {
+        "family":  {"enum": ["python", "node", "go", "rust", "zig"]},
+        "version": {"type": "string"},
+        "image":   {"type": "string"},
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory_mib": {"type": "integer", "minimum": 64},
+            "cpus":       {"type": "number", "minimum": 0.1},
+            "pids_limit": {"type": "integer", "minimum": 16}
+          }
+        },
+        "volumes": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "install": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type":    {"enum": ["pip", "npm", "cargo", "go_build", "git_build", "binary"]},
+        "package": {"type": "string"},
+        "version": {"type": "string"},
+        "git": {
+          "type": "object",
+          "required": ["repo", "rev"],
+          "additionalProperties": false,
+          "properties": {
+            "repo":      {"type": "string", "pattern": "^https://"},
+            "rev":       {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+            "build_cmd": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "initializeCommand":     {"$ref": "#/$defs/hook"},
+        "onCreateCommand":       {"$ref": "#/$defs/hook-no-secrets"},
+        "updateContentCommand":  {"$ref": "#/$defs/hook-no-secrets"},
+        "postCreateCommand":     {"$ref": "#/$defs/hook"},
+        "postStartCommand":      {"$ref": "#/$defs/hook"},
+        "postAttachCommand":     {"$ref": "#/$defs/hook"},
+        "waitFor":               {"enum": ["initializeCommand","onCreateCommand","updateContentCommand","postCreateCommand","postStartCommand","postAttachCommand"]},
+        "initialize_timeout_sec":   {"type": "integer", "minimum": 1},
+        "onCreate_timeout_sec":     {"type": "integer", "minimum": 1},
+        "updateContent_timeout_sec":{"type": "integer", "minimum": 1},
+        "postCreate_timeout_sec":   {"type": "integer", "minimum": 1},
+        "postStart_timeout_sec":    {"type": "integer", "minimum": 1},
+        "postAttach_timeout_sec":   {"type": "integer", "minimum": 1}
+      }
+    },
+    "launch": {
+      "type": "object",
+      "required": ["cmd"],
+      "additionalProperties": false,
+      "properties": {
+        "cmd":     {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "workdir": {"type": "string"},
+        "env":     {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "chat_io": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode":                 {"enum": ["fifo", "exec_per_message"]},
+        "response_timeout_sec": {"type": "integer", "minimum": 1},
+        "fifo": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fifo_in":  {"type": "string"},
+            "fifo_out": {"type": "string"},
+            "strip_ansi": {"type": "boolean"}
+          }
+        },
+        "exec_per_message": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cmd_template":    {"type": "array", "items": {"type": "string"}},
+            "docker_exec_user":{"type": "string"}
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mechanism":     {"enum": ["env_var", "secret_file_mount"]},
+        "headless_safe": {"type": "boolean"},
+        "env":           {"type": "object", "additionalProperties": {"type": "string"}},
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["secret", "target", "template"],
+            "additionalProperties": false,
+            "properties": {
+              "secret":   {"type": "string"},
+              "target":   {"type": "string", "pattern": "^/"},
+              "mode":     {"type": "string", "pattern": "^0[0-7]{3}$"},
+              "template": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"}
+            }
+          }
+        },
+        "secrets_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name":        {"type": "string"},
+              "description": {"type": "string"},
+              "required":    {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id":              {"enum": ["anthropic", "openai", "openrouter"]},
+        "api_base":        {"type": "string", "pattern": "^https://"},
+        "api_key_env_var": {"type": "string"},
+        "auth_style":      {"enum": ["bearer", "x-api-key"]}
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["id", "provider"],
+      "additionalProperties": false,
+      "properties": {
+        "id":                {"type": "string"},
+        "provider":          {"enum": ["anthropic", "openai", "openrouter"]},
+        "max_input_tokens":  {"type": "integer"},
+        "max_output_tokens": {"type": "integer"}
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "required": ["tier"],
+      "additionalProperties": false,
+      "properties": {
+        "tier":             {"enum": ["strict", "standard", "sysbox"]},
+        "cap_drop":         {"type": "array", "items": {"type": "string"}},
+        "cap_add":          {"type": "array", "items": {"type": "string"}},
+        "no_new_privs":     {"type": "boolean"},
+        "read_only_rootfs": {"type": "boolean"}
+      }
+    },
+    "persistent_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tmpfs":   {"type": "array", "items": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "size_mib": {"type": "integer"}}}},
+        "volumes": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "display_name":   {"type": "string"},
+        "slug":           {"type": "string"},
+        "icon":           {"type": "string"},
+        "category_badge": {"type": "string"},
+        "tooltip":        {"type": "string"},
+        "tier_badge":     {"type": "string"}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_repo":        {"type": "string"},
+        "source_sha":         {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "last_verified":      {"type": "string"},
+        "bootstrap_generated":{"type": "boolean"}
+      }
+    }
+  }
+}

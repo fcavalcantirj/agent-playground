@@ -22,7 +22,18 @@ PICOCLAW_SHA := c7461f9e963496c4471336642ac6a8d91a456978
 HERMES_SHA := 5621fc449a7c00f11168328c87e024a0203792c3
 
 .PHONY: build-ap-base build-picoclaw build-hermes build-recipes clean-recipes smoke-test \
-	dev-frontend build-frontend lint-frontend install-frontend
+	dev-frontend build-frontend lint-frontend install-frontend copy-schema
+
+# copy-schema keeps the canonical Draft 2019-09 recipe schema in
+# agents/schemas/ byte-identical to the embedded copy under
+# api/internal/recipes/schema/. The Go loader uses //go:embed on the
+# api/ copy because //go:embed cannot cross the api/ module boundary.
+# Run this target after editing agents/schemas/recipe.schema.json, and
+# CI should fail if the two files drift.
+copy-schema:
+	@mkdir -p api/internal/recipes/schema
+	@cp agents/schemas/recipe.schema.json api/internal/recipes/schema/recipe.schema.json
+	@diff -q agents/schemas/recipe.schema.json api/internal/recipes/schema/recipe.schema.json
 
 build-ap-base:
 	docker build -t $(AP_BASE_TAG) deploy/ap-base/
