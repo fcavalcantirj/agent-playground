@@ -380,11 +380,14 @@ func (h *Handler) create(c echo.Context) error {
 		// Plan 03's RunWithLifecycle wraps hook errors with the hook
 		// name ("initializeCommand: ...", "postCreate: ...", etc.).
 		msg := err.Error()
+		// Always log the underlying error so operators can see what hook
+		// actually failed. The client response still carries the generic
+		// lifecycle_hook_failed code so we don't leak internals.
+		h.logger.Error().Err(err).Str("session_id", sess.ID.String()).Str("recipe", recipe.ID).Msg("session create: RunWithLifecycle failed")
 		if isLifecycleHookErr(msg) {
 			return writeErr(c, http.StatusInternalServerError, errCodeLifecycleHookFailed,
 				fmt.Sprintf("lifecycle hook failed for recipe %q", recipe.ID))
 		}
-		h.logger.Error().Err(err).Str("session_id", sess.ID.String()).Msg("session create: RunWithLifecycle failed")
 		return writeErr(c, http.StatusInternalServerError, errCodeInternal, "failed to start container")
 	}
 
@@ -487,7 +490,26 @@ func (h *Handler) buildRunOptions(
 		if size <= 0 {
 			size = 32
 		}
-		opts.Tmpfs[t.Path] = fmt.Sprintf("rw,noexec,nosuid,size=%dm", size)
+		// Paths under /home/agent are persistent-state tmpfs mounts for
+		// per-session user files (e.g. uv tool install targets, aider
+		// config, pip cache). These need to be:
+		//   1. owned by uid 10000 (agent) from the moment of mount, or
+		//      any postCreate exec as `agent` fails with EACCES/EROFS
+		//      because root-owned tmpfs + /home/agent 0700 blocks
+		//      traversal and there is no DAC_OVERRIDE cap in the
+		//      sandbox posture
+		//   2. writable without `noexec` — aider's launcher script and
+		//      uv-installed tools live under /home/agent/.local/bin
+		//      and must be executable
+		// /tmp and /run stay noexec,nosuid — that's the hardened default.
+		if strings.HasPrefix(t.Path, "/home/agent") {
+			// `exec` must be explicit — Docker's tmpfs default is
+			// noexec,nosuid,nodev. Without `exec` here aider's
+			// ~/.local/bin/aider launcher returns EACCES on invoke.
+			opts.Tmpfs[t.Path] = fmt.Sprintf("rw,exec,nosuid,size=%dm,uid=10000,gid=10000,mode=0755", size)
+		} else {
+			opts.Tmpfs[t.Path] = fmt.Sprintf("rw,noexec,nosuid,size=%dm", size)
+		}
 	}
 
 	// Materialized env overlays.
@@ -532,8 +554,26 @@ func (h *Handler) buildRunOptions(
 		// host path in the spec must be the production-visible path
 		// even if baseSecretsDir was overridden for tests (tests don't
 		// exercise the bind mount against a real Docker daemon).
+		// Kept for backwards compat with Phase 2 BYOK env var recipes
+		// (hermes, etc) that read /run/secrets/<name>_key directly.
 		opts.Mounts = append(opts.Mounts,
 			fmt.Sprintf("%s:/run/secrets:ro", sessDir))
+
+		// Per-file bind mounts at each declared target path. This is
+		// what secret_file_mount recipes (picoclaw .security.yml)
+		// actually need — the ap-base entrypoint has no mechanism to
+		// copy files out of /run/secrets into the target dir, so we
+		// install each file directly at its target via a dedicated
+		// ro bind. Docker's bind-mount-a-file requires the target file
+		// to already exist in the image (picoclaw Dockerfile runs
+		// `picoclaw onboard` which writes the default .security.yml,
+		// so /home/agent/.picoclaw/.security.yml exists pre-mount).
+		for _, f := range mat.Files {
+			name := filepath.Base(f.Target)
+			hostPath := filepath.Join(sessDir, name)
+			opts.Mounts = append(opts.Mounts,
+				fmt.Sprintf("%s:%s:ro", hostPath, f.Target))
+		}
 	}
 
 	// Phase 5 reconciliation labels (SBX-09): every container carries

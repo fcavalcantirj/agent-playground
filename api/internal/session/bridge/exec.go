@@ -64,14 +64,54 @@ func (b *ExecBridge) SendMessage(ctx context.Context, containerID string, recipe
 		defer cancel()
 	}
 
-	// slices.Clone prevents accidental mutation of the recipe's
-	// shared CmdTemplate slice. Phase 2 used the same defensive copy
-	// against recipe.ChatIO.ExecCmd.
-	cmd := slices.Clone(recipe.ChatIO.ExecPerMessage.CmdTemplate)
-	if recipe.ModelFlag != "" && modelID != "" {
+	// Build the exec argv. We support two shapes for cmd_template:
+	//
+	//   (a) Positional append — the original Phase 2 shape. Recipe
+	//       just lists the base cmd; the bridge appends `<model-flag>
+	//       <model-id> <text>` at the end. Works for Hermes where text
+	//       is the last positional arg and model flag comes last.
+	//
+	//   (b) Placeholder substitution — if the template contains the
+	//       literal "{text}" and/or "{model}" elements, they are
+	//       replaced in-place by the user text / model id. This is
+	//       required for recipes like aider where --message VALUE must
+	//       sit next to its flag and --model VALUE must sit next to
+	//       its flag — the Phase 2 "append at end" order produces a
+	//       malformed argv otherwise.
+	//
+	// The argv-invariant (T-02-04b / T-02.5-05a) still holds: the
+	// user text is replaced into its own argv slice element, never
+	// concatenated into a pre-formed command string.
+	tmpl := slices.Clone(recipe.ChatIO.ExecPerMessage.CmdTemplate)
+	hasTextPH := false
+	hasModelPH := false
+	for _, el := range tmpl {
+		if el == "{text}" {
+			hasTextPH = true
+		}
+		if el == "{model}" {
+			hasModelPH = true
+		}
+	}
+
+	cmd := make([]string, 0, len(tmpl)+4)
+	for _, el := range tmpl {
+		switch el {
+		case "{text}":
+			cmd = append(cmd, text)
+		case "{model}":
+			cmd = append(cmd, modelID)
+		default:
+			cmd = append(cmd, el)
+		}
+	}
+
+	if !hasModelPH && recipe.ModelFlag != "" && modelID != "" {
 		cmd = append(cmd, recipe.ModelFlag, modelID)
 	}
-	cmd = append(cmd, text)
+	if !hasTextPH {
+		cmd = append(cmd, text)
+	}
 
 	out, err := b.runner.Exec(ctx, containerID, cmd)
 	if err != nil {
