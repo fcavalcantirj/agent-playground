@@ -205,12 +205,15 @@ def main():
         # 4. Build docker run command
         vol = recipe["runtime"]["volumes"][0]
         container_mount = vol["container"]
+        entrypoint = recipe["invoke"]["spec"].get("entrypoint")
         docker_cmd = [
             "docker", "run", "--rm",
             "-e", f"{api_key_var}={api_key_val}",
             "-v", f"{data_dir}:{container_mount}",
-            image_tag,
-        ] + argv
+        ]
+        if entrypoint:
+            docker_cmd += ["--entrypoint", entrypoint]
+        docker_cmd += [image_tag] + argv
 
         # 5. Run
         print("\n--- step 4: run ---", flush=True)

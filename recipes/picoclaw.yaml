@@ -1,0 +1,159 @@
+apiVersion: ap.recipe/v0
+name: picoclaw
+display_name: PicoClaw
+description: |
+  Ultra-lightweight personal AI assistant written in Go (sipeed/picoclaw).
+  <10MB RAM, single-binary, runs on $10 hardware. Multi-provider via
+  LiteLLM-style `model_list` config. This recipe targets the non-interactive
+  one-shot path (`picoclaw agent -m`) with a pre-templated config that
+  bypasses the upstream entrypoint's interactive `onboard` flow.
+
+source:
+  repo: https://github.com/sipeed/picoclaw
+  ref: main
+  ref_note: |
+    Picoclaw is v0.2.4+ at the time of recon, actively developed, weekly
+    releases. v0 of this recipe tracks main.
+  upstream_version: v0.2.4+
+
+build:
+  mode: upstream_dockerfile
+  dockerfile: docker/Dockerfile
+  context: .
+  notes: |
+    Upstream multi-stage Dockerfile. Stage 1: golang:1.25-alpine builds
+    the static Go binary via `make build`. Stage 2: alpine:3.23 with
+    ca-certificates + tzdata + curl, copies /usr/local/bin/picoclaw +
+    docker/entrypoint.sh. Image size ~200 MB — dramatically smaller than
+    hermes (5.19 GB) or openclaw (5 GB). Build is fast (~2 min on M-series)
+    because Go has no Python or Node dep pulls.
+
+    IMPORTANT: The upstream entrypoint (docker/entrypoint.sh) is
+    two-stage — on a fresh container it runs `picoclaw onboard`,
+    prints "First-run setup complete. Edit config.json then restart",
+    and EXITS. Default CMD after first-run is `picoclaw gateway`.
+    Neither fits a one-shot recipe. We bypass by overriding
+    --entrypoint to sh and running our own init+invoke script.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null    # baked into config.json.model_list[0].api_base
+    model: null       # baked into config.json.model_list[0].model
+  volumes:
+    - name: picoclaw_home
+      host: per_session_tmpdir
+      container: /root/.picoclaw
+      mode: rw
+      ephemeral: true
+      owner_uid: 0     # alpine image runs as root inside the container
+      notes: |
+        PICOCLAW_HOME. First-run creates workspace/ and config.json.
+        We pre-template config.json ourselves in the bootstrap shell
+        script so onboard never runs. Ephemeral mount: per-session
+        state dies at container teardown.
+  warnings:
+    - id: no_shell_entrypoint_bypass
+      rule: Must override --entrypoint sh to bypass upstream entrypoint.sh
+      reason: |
+        docker/entrypoint.sh does `picoclaw onboard` on fresh state
+        then `exit 0`. The default CMD after first-run is
+        `picoclaw gateway`. Neither allows a one-shot `agent -m`
+        call. --entrypoint sh lets us run init+invoke in one container.
+    - id: no_bash_in_image
+      rule: Use `sh`, not `bash`, for the entrypoint override
+      reason: |
+        Picoclaw's runtime image is alpine:3.23 which ships busybox/ash
+        as /bin/sh. bash is not installed. The recipe entrypoint field
+        is `sh` (not `bash`) and the script uses POSIX-compatible syntax.
+    - id: config_model_list_routing
+      rule: |
+        The `model_name` in agents.defaults must reference an entry in
+        model_list[] with matching `model_name`. The actual provider
+        routing comes from that entry's `api_base` + `api_key`.
+      reason: |
+        Picoclaw uses LiteLLM-style model routing. The `model` field in
+        model_list[] looks like `openai/gpt-4o-mini` but the actual
+        provider routing is determined by `api_base` — we point it at
+        https://openrouter.ai/api/v1 so LiteLLM routes through OpenRouter.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /root/.picoclaw/workspace
+        cat > /root/.picoclaw/config.json <<EOF
+        {
+          "agents": {
+            "defaults": {
+              "model_name": "openrouter-default",
+              "workspace": "/root/.picoclaw/workspace"
+            }
+          },
+          "model_list": [
+            {
+              "model_name": "openrouter-default",
+              "model": "$MODEL",
+              "api_key": "${OPENROUTER_API_KEY}",
+              "api_base": "https://openrouter.ai/api/v1"
+            }
+          ]
+        }
+        EOF
+        picoclaw agent -m "$PROMPT"
+    argv_note: |
+      THREE-stage bootstrap inside a single container:
+        1. mkdir workspace dir (satisfies picoclaw's state layout expectations)
+        2. write config.json with the openrouter model routed via api_base
+        3. run `picoclaw agent -m "$PROMPT"` (non-interactive one-shot)
+
+      Substitution order: the runner replaces $PROMPT and $MODEL BEFORE
+      docker run, so by the time sh -c receives the script, those are
+      literal values. $OPENROUTER_API_KEY is NOT substituted by the
+      runner — it's interpolated by sh at container runtime from the
+      process env (which docker -e sets).
+
+      The `${OPENROUTER_API_KEY}` inside the heredoc uses sh's variable
+      expansion because the EOF delimiter is unquoted — if it were
+      'EOF' (quoted), expansion would be disabled and the literal
+      string would land in config.json, breaking auth.
+    stdout_filter:
+      engine: awk
+      program: "{print}"  # v0 pass-through; picoclaw output is already terse
+    session_id_capture:
+      engine: none
+
+smoke:
+  prompt: "who are you?"
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 90
+  verified_cells:
+    - model: openai/gpt-4o-mini
+      verdict: PASS
+      notes: |
+        Reply: "🦞 I am Picoclaw, an AI assistant designed to help you..."
+        Case-insensitive substring match on "picoclaw" in the agent's
+        self-identification. Model DID adopt the picoclaw persona cleanly,
+        unlike openclaw which needed a larger/more capable model.
+
+metadata:
+  recon_date: 2026-04-15
+  recon_by: |
+    main-conversation (direct source + built-image empirical testing,
+    Solvr query pending as of commit but not load-bearing — the CLI's
+    own --help output revealed the one-shot path).
+  source_citations:
+    - "README.md - lists picoclaw as Go 1.25, MIT, v0.2.4"
+    - "docker/Dockerfile - multi-stage alpine, ENTRYPOINT [/entrypoint.sh]"
+    - "docker/entrypoint.sh - two-stage onboard-then-exit pattern"
+    - "cmd/picoclaw/main.go - cobra command tree, agent.NewAgentCommand registered"
+    - "picoclaw agent --help (empirical) - flags: -m/--message, --model, -s/--session, -d/--debug"
+    - "config/config.example.json - agents.defaults.model_name + model_list[] schema"
+    - ".env.example - OPENROUTER_API_KEY listed under LLM Provider"
