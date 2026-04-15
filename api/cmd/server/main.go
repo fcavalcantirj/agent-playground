@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,8 @@ import (
 
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
+	"github.com/agentplayground/api/internal/logging"
+	"github.com/agentplayground/api/internal/recipes"
 	"github.com/agentplayground/api/internal/server"
 	"github.com/agentplayground/api/internal/session"
 	apitemporal "github.com/agentplayground/api/internal/temporal"
@@ -46,6 +49,14 @@ func main() {
 		logger.Fatal().Err(err).Msg("config load failed")
 	}
 	logger = newLogger(cfg.LogLevel)
+
+	// Phase 02.5 Plan 05: wrap stdout with the secret-redaction writer
+	// BEFORE any subsystem that may accidentally log a BYOK key logs
+	// a single byte. This is defence in depth — the handler code path
+	// is still required to never log resolved secrets, but the writer
+	// wrap guarantees that accidental logs are scrubbed.
+	redactedStdout := logging.InstallRedactionHook(os.Stdout)
+	logger = newLoggerTo(cfg.LogLevel, redactedStdout)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -110,6 +121,28 @@ func main() {
 		opts = append(opts, workerOpt)
 	}
 
+	// Phase 02.5 Plan 01/05: wire the YAML-backed recipe loader and the
+	// dev secret source onto the server via functional options. The
+	// loader scans agents/ at startup, validates each recipe against
+	// the embedded schema, and starts a SIGHUP watcher so operators
+	// can reload recipes without a restart. The template registry
+	// (Plan 02) is injected as an interface so Plan 05 tests compile
+	// without a hard dependency on the parallel wave-2 deliverable.
+	validator, vErr := recipes.NewSchemaValidator()
+	if vErr != nil {
+		logger.Fatal().Err(vErr).Msg("recipe schema compile failed")
+	}
+	recipeLoader := recipes.NewLoader("agents/", validator, logger)
+	if lErr := recipeLoader.LoadAll(ctx); lErr != nil {
+		logger.Warn().Err(lErr).Msg("recipe LoadAll failed; continuing with empty catalog")
+	}
+	recipes.StartSIGHUPWatcher(ctx, recipeLoader, logger)
+	secretSource := session.NewDevEnvSecretSource()
+	opts = append(opts,
+		server.WithRecipeLoader(recipeLoader),
+		server.WithSecretSource(secretSource),
+	)
+
 	// Plan 02-05: wire the session HTTP handler. The Docker runner is
 	// optional — if NewRunner fails (no Docker daemon available, e.g.
 	// CI or a dev box without Docker) we skip session wiring and log a
@@ -119,7 +152,6 @@ func main() {
 	if runnerErr != nil {
 		logger.Warn().Err(runnerErr).Msg("docker runner unavailable, session routes disabled")
 	} else {
-		secretSource := session.NewDevEnvSource()
 		secretWriter := session.NewSecretWriter(secretSource)
 		sessStore := session.NewStore(db.Pool)
 		bridge := session.NewBridge(runner)
@@ -161,11 +193,19 @@ func main() {
 // newLogger configures a JSON zerolog writer at the requested level. Defaults
 // to info when the level is unrecognized.
 func newLogger(level string) zerolog.Logger {
+	return newLoggerTo(level, os.Stdout)
+}
+
+// newLoggerTo is the same as newLogger but writes to an explicit
+// io.Writer sink. Phase 02.5 Plan 05 uses this to install the
+// secret-redaction writer wrap around os.Stdout before any subsystem
+// emits a single log line.
+func newLoggerTo(level string, w io.Writer) zerolog.Logger {
 	lvl, err := zerolog.ParseLevel(level)
 	if err != nil || level == "" {
 		lvl = zerolog.InfoLevel
 	}
-	return zerolog.New(os.Stdout).
+	return zerolog.New(w).
 		Level(lvl).
 		With().
 		Timestamp().

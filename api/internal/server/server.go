@@ -18,6 +18,7 @@ import (
 	"github.com/agentplayground/api/internal/config"
 	"github.com/agentplayground/api/internal/handler"
 	"github.com/agentplayground/api/internal/middleware"
+	"github.com/agentplayground/api/internal/recipes"
 	"github.com/agentplayground/api/internal/session"
 )
 
@@ -52,6 +53,14 @@ type Server struct {
 	// Plan 02-05 /api/sessions* routes on the authed group. nil means
 	// session routes are skipped (Phase 1 tests, etc.).
 	sessionHandler *session.Handler
+
+	// Phase 02.5 Plan 05 wiring — injected via functional options and
+	// consumed by the session handler (Plan 09 wires the handler call).
+	// Plan 01-01 callers that omit these options get nil, which matches
+	// the "missing-infra degrades gracefully" contract.
+	recipeLoader     *recipes.Loader
+	templateRegistry session.TemplateRenderer
+	secretSource     session.SecretSource
 }
 
 // WithWorkers attaches a background worker subsystem to the Server. Plan 01-05
@@ -88,6 +97,49 @@ func WithDevAuth(h *handler.DevAuthHandler, provider middleware.SessionProvider)
 func WithSessionHandler(h *session.Handler) Option {
 	return func(s *Server) { s.sessionHandler = h }
 }
+
+// WithRecipeLoader attaches the Phase 02.5 Plan 01 recipe loader to
+// the Server. The session handler consumes this via Server.RecipeLoader
+// when Plan 09 swaps the hardcoded catalog for the YAML-backed one.
+// Plan 01-01 callers that omit this option get a nil loader and the
+// handler falls back to its Phase 2 defaults.
+func WithRecipeLoader(l *recipes.Loader) Option {
+	return func(s *Server) { s.recipeLoader = l }
+}
+
+// WithTemplateRegistry attaches the Phase 02.5 Plan 02 template
+// registry to the Server. The session handler consumes this via
+// Server.TemplateRegistry in Plan 09's Materialize call. The option
+// takes the TemplateRenderer interface (not *recipes.TemplateRegistry
+// directly) so the session package can unit-test Materialize without
+// the recipes package depending on session, and so Plan 02's concrete
+// type lands in parallel without a merge conflict on this file.
+func WithTemplateRegistry(t session.TemplateRenderer) Option {
+	return func(s *Server) { s.templateRegistry = t }
+}
+
+// WithSecretSource attaches the Phase 02.5 Plan 05 SecretSource to
+// the Server. The session handler uses this to resolve every
+// `secret:<name>` reference in a recipe's auth block before launching
+// the container. Phase 02.5 ships session.DevEnvSecretSource; Phase 3
+// will replace it with a pgcrypto-backed source without touching
+// server.go.
+func WithSecretSource(src session.SecretSource) Option {
+	return func(s *Server) { s.secretSource = src }
+}
+
+// RecipeLoader exposes the injected recipe loader for downstream
+// handlers. Returns nil if WithRecipeLoader was not supplied.
+func (s *Server) RecipeLoader() *recipes.Loader { return s.recipeLoader }
+
+// TemplateRegistry exposes the injected template renderer for
+// downstream handlers. Returns nil if WithTemplateRegistry was not
+// supplied.
+func (s *Server) TemplateRegistry() session.TemplateRenderer { return s.templateRegistry }
+
+// SecretSource exposes the injected SecretSource for downstream
+// handlers. Returns nil if WithSecretSource was not supplied.
+func (s *Server) SecretSource() session.SecretSource { return s.secretSource }
 
 // New constructs the Server. Required arguments cover what every Phase 1
 // caller needs: config, logger, and the health checker. Anything else
