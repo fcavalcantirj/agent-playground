@@ -1,16 +1,4 @@
-# agents/picoclaw/templates/security-yml.tmpl
-# Phase 02.5 template for picoclaw's .security.yml — mirrors upstream shape.
-# (Design notes live in agents/picoclaw/README.md — documentation stays OUT
-# of this template body so that text/template never evaluates a second
-# `quote` expression and accidentally widens the secret's blast radius into
-# a comment line of the rendered file.)
-
-channels:
-  telegram: {}
 model_list:
   claude-sonnet-4.6:0:
     api_keys:
-      - {{ quote .secrets.anthropic_key }}
-web:
-  brave: {}
-  tavily: {}
+      - {{ quote .secrets.anthropic_api_key }}

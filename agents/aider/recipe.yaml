@@ -25,7 +25,9 @@ runtime:
   version: "3.12"
   image: ap-runtime-python:v0.1.0-3.12
   resources:
-    memory_mib: 1024
+    # 2 GiB — the peak of `uv tool install aider-chat` is around
+    # ~1.5 GiB of combined tmpfs + heap during wheel extraction.
+    memory_mib: 2048
     cpus: 1.0
     pids_limit: 256
 
@@ -54,24 +56,38 @@ lifecycle:
   waitFor: postCreateCommand
 
 launch:
-  # exec_per_message recipes don't have a long-running launch.
-  # This is a sanity-check command that runs once at startup to verify
-  # the binary is installed and importable.
+  # exec_per_message recipes DO need a long-running main process — the
+  # container's PID 1 must stay alive between chat messages so the
+  # ExecBridge can `docker exec aider ...` into it per message.
+  # `sleep infinity` is a portable keep-alive that matches the image
+  # default behavior (bash -lc "tail -f /dev/null") without fighting
+  # the sandbox's read-only rootfs. Gate A verifies this end-to-end.
   cmd:
-    - aider
-    - --help
+    - sleep
+    - infinity
   workdir: /home/agent
 
 chat_io:
   mode: exec_per_message
-  response_timeout_sec: 120
+  # 240s covers worst-case aider+litellm retry behavior — aider retries 9x
+  # with exponential backoff (0.2 + 0.5 + 1 + 2 + 4 + 8 + 16 + 32 = ~64s
+  # pure sleep) before giving up. A 402/credit error path plus network
+  # round-trips comfortably fits 4 minutes; 120s produced false timeouts.
+  response_timeout_sec: 240
   exec_per_message:
+    # Placeholder substitution: ExecBridge replaces `{text}` with the
+    # user message and `{model}` with the chosen model id. This keeps
+    # --message and --model next to their values so aider's argparse
+    # interprets them correctly — appending at the end of the template
+    # (Phase 2 shape) produces a malformed argv for aider.
     cmd_template:
       - aider
       - --no-auto-commits
       - --no-dirty-commits
       - --no-stream
       - --yes-always
+      - --model
+      - "{model}"
       - --message
       - "{text}"
     docker_exec_user: agent
@@ -117,18 +133,36 @@ model_flag: --model
 isolation:
   tier: strict
   cap_drop: [ALL]
-  cap_add: []
+  # ap-base's entrypoint runs gosu to drop PID 1 from root → agent. gosu
+  # needs CAP_SETUID + CAP_SETGID; CAP_CHOWN is used by the entrypoint's
+  # ownership fixups on the per-session tmpfs. Same set picoclaw uses.
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+    - SETPCAP
   no_new_privs: true
   read_only_rootfs: true
 
 persistent_state:
   tmpfs:
+    # /tmp is the uv extraction scratch dir during `uv tool install`.
+    # aider + numpy + tree_sitter_language_pack + litellm + friends
+    # peak-extract ~700 MB — 1 GB gives headroom.
     - path: /tmp
-      size_mib: 128
+      size_mib: 1024
     - path: /run
       size_mib: 16
     - path: /home/agent/.aider
       size_mib: 64
+    # `uv tool install --no-cache aider-chat` writes into
+    # /home/agent/.local/share/uv/tools/ + /home/agent/.local/bin/ .
+    # The handler mounts /home/agent/* tmpfs with uid=10000,gid=10000,
+    # mode=0755 and without noexec so aider's launcher script runs.
+    - path: /home/agent/.local
+      size_mib: 1024
+    - path: /home/agent/.cache
+      size_mib: 256
 
 frontend:
   display_name: Aider

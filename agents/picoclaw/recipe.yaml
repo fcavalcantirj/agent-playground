@@ -45,46 +45,52 @@ install:
       - build
 
 lifecycle:
-  # Belt-and-suspenders: make sure /run/ap exists before the daemon
-  # starts. The ap-base entrypoint shim already creates it at PID 1,
-  # but an idempotent mkdir is cheap and documents intent.
-  # Pitfall 4 rule: do NOT reopen or consume FIFOs anywhere in the lifecycle.
+  # exec_per_message mode: the picoclaw binary is invoked fresh per
+  # user turn, so there is no long-running daemon to probe. The only
+  # meaningful gate is that the binary is present and loads the
+  # bind-mounted .security.yml without error. `picoclaw version`
+  # exits 0 as a sanity check without touching any network.
   postCreateCommand:
-    - mkdir
-    - -p
-    - /run/ap
-  # Verify the picoclaw daemon is alive. The ap-base entrypoint shim
-  # launches AP_AGENT_CMD (= "picoclaw agent --session cli:default")
-  # inside the tmux `chat` window at container start — this hook is a
-  # liveness probe, NOT a starter.
-  postStartCommand:
-    - pgrep
-    - -f
     - picoclaw
-  # Verify FIFOs exist. test -p is read-only and does NOT consume bytes
-  # (Pitfall 4 enforcement). We check chat.in only; chat.out is created
-  # and held by the same ap-base entrypoint code path.
-  postAttachCommand:
-    - test
-    - -p
-    - /run/ap/chat.in
-  waitFor: postAttachCommand
+    - --no-color
+    - version
+  waitFor: postCreateCommand
 
 launch:
+  # The container's PID 1 is `tini → /entrypoint.sh` from ap-base. The
+  # entrypoint runs ttyd + tmux + (optionally) AP_AGENT_CMD in a chat
+  # window, then loops forever on `tmux has-session`. It never execs
+  # the recipe's launch.cmd — it uses its own supervision chain. So
+  # the cmd here is a no-op; what matters is that AP_AGENT_CMD is
+  # CLEARED (env block below) so the entrypoint doesn't try to spawn
+  # a broken `picoclaw agent --session cli:default` (no --model) in
+  # tmux. chat_io.mode=exec_per_message handles all agent invocations
+  # via `docker exec` per message.
   cmd:
-    - picoclaw
-    - agent
-    - --session
-    - cli:default
+    - sleep
+    - infinity
   workdir: /home/agent
+  env:
+    AP_AGENT_CMD: ""
 
 chat_io:
-  mode: fifo
-  response_timeout_sec: 60
-  fifo:
-    fifo_in: /run/ap/chat.in
-    fifo_out: /run/ap/chat.out
-    strip_ansi: true
+  mode: exec_per_message
+  response_timeout_sec: 120
+  exec_per_message:
+    # picoclaw has a one-shot --message mode that reads config + model
+    # from /home/agent/.picoclaw/.security.yml (rendered from the
+    # security-yml template) and returns a single reply to stdout.
+    # Using exec mode avoids the FIFO/tmux chat-window complexity and
+    # matches the aider/hermes pattern end-to-end.
+    cmd_template:
+      - picoclaw
+      - --no-color
+      - agent
+      - --model
+      - "{model}"
+      - --message
+      - "{text}"
+    docker_exec_user: agent
 
 auth:
   mechanism: secret_file_mount
@@ -115,7 +121,12 @@ providers:
     auth_style: bearer
 
 models:
-  - id: claude-haiku-4-5-20251001
+  # picoclaw's CLI `--model` flag takes the bare model_name from
+  # config.json (`claude-sonnet-4.6`) — the `:<n>` suffix seen in
+  # security.yml model_list keys is an api_key-index, NOT part of the
+  # CLI model name. The Dockerfile's jq step maps this picoclaw name
+  # onto the canonical Anthropic wire name `anthropic/claude-sonnet-4-6`.
+  - id: claude-sonnet-4.6
     provider: anthropic
     max_input_tokens: 200000
     max_output_tokens: 8192
@@ -142,8 +153,12 @@ persistent_state:
       size_mib: 128
     - path: /run
       size_mib: 16
-    - path: /home/agent/.picoclaw/workspace/sessions
-      size_mib: 32
+    # picoclaw writes session journal state under
+    # /home/agent/.picoclaw/workspace/. The baked config.json and the
+    # bind-mounted .security.yml stay accessible because we only
+    # tmpfs the workspace subdir, not the whole .picoclaw/ tree.
+    - path: /home/agent/.picoclaw/workspace
+      size_mib: 64
 
 frontend:
   display_name: PicoClaw
