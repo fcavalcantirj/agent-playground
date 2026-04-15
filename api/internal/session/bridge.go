@@ -1,181 +1,162 @@
+// Package session's bridge.go is the Phase 2 facade that delegates
+// into the new ChatBridge substrate under api/internal/session/bridge/.
+// Plan 02.5-04 promoted the fifoMode / execMode bodies into the
+// subpackage so Phase 4 can plug new chat-io modes in without touching
+// the session handler.
+//
+// The Phase 2 public surface (session.Bridge, session.NewBridge,
+// session.ErrTimeout, session.RunnerExec, the *recipes.LegacyRecipe
+// signature on SendMessage) is preserved byte-for-byte so handler.go
+// and the Phase 2 integration tests keep compiling and passing. Plan
+// 02.5-09 will cut handlers over to the YAML-backed Recipe type and
+// delete this shim entirely.
 package session
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/agentplayground/api/internal/recipes"
+	"github.com/agentplayground/api/internal/session/bridge"
+	"github.com/rs/zerolog"
 )
 
-// ErrTimeout means the agent did not respond within the recipe's
-// ChatIO.ResponseTimeout. Plan 05's message handler maps this to
-// HTTP 504 Gateway Timeout.
-var ErrTimeout = errors.New("agent response timeout")
+// ErrTimeout is re-exported from the bridge subpackage so Phase 2
+// callers that do `errors.Is(err, session.ErrTimeout)` keep working.
+// The value and identity are preserved across the indirection.
+var ErrTimeout = bridge.ErrTimeout
 
-// RunnerExec is the minimal subset of *docker.Runner the chat bridge
-// needs. It exists so bridge_test.go can inject a mock without touching
-// the real Docker daemon; production wiring passes a *docker.Runner.
-//
-// Signature MUST match the real Runner methods exactly (see
-// api/pkg/docker/runner.go) — Exec returns ([]byte, error), and
-// ExecWithStdin takes an io.Reader for the stdin stream.
-type RunnerExec interface {
-	Exec(ctx context.Context, containerID string, cmd []string) ([]byte, error)
-	ExecWithStdin(ctx context.Context, containerID string, cmd []string, stdin io.Reader) ([]byte, error)
-}
+// RunnerExec is an alias for the bridge subpackage's narrow docker
+// exec interface. Keeping the Phase 2 name via `type ... =` (alias,
+// not new type) means *docker.Runner continues to satisfy both
+// session.RunnerExec and bridge.RunnerExec without adapter code.
+type RunnerExec = bridge.RunnerExec
 
-// Bridge dispatches chat messages into a running container, choosing
-// between the FIFO path (picoclaw — long-lived agent reading from
-// /run/ap/chat.in) and the exec-per-message path (Hermes — one docker
-// exec invocation per message) based on the recipe's ChatIO.Mode.
+// Bridge is the Phase 2 facade. Its public shape is unchanged:
+// NewBridge(runner) → *Bridge → SendMessage(*LegacyRecipe). Internally
+// every call goes through a BridgeRegistry that routes on the new
+// chat_io.mode enum after a tiny legacy→YAML recipe adapter.
 //
-// The struct is tiny by design: it owns no state other than the
-// injected runner, so multiple concurrent Bridge calls against the same
-// container are safe as long as the underlying runner is.
+// Adapter responsibility is isolated in synthRecipeFromLegacy below —
+// when Plan 02.5-09 rewrites handler.go to use *recipes.Recipe
+// directly, this shim (and the adapter) can be deleted in one commit.
 type Bridge struct {
-	runner RunnerExec
+	registry *bridge.BridgeRegistry
 }
 
-// NewBridge constructs a Bridge backed by the given runner.
+// NewBridge constructs a Bridge backed by the given runner. Phase 2
+// callers (cmd/server/main.go, handler_test.go, bridge_test.go) pass
+// a single runner argument; the shim silently wires a zerolog.Nop()
+// logger into the underlying subpackage so no existing call site
+// needs to change.
 func NewBridge(r RunnerExec) *Bridge {
-	return &Bridge{runner: r}
+	return &Bridge{registry: bridge.NewBridgeRegistry(r, zerolog.Nop())}
 }
 
 // SendMessage delivers the user's text to the agent process running
 // inside containerID and returns the agent's reply. The dispatch path
-// is determined by recipe.ChatIO.Mode:
+// is determined by recipe.ChatIO.Mode (the Phase 2 ChatIOMode values
+// "stdin_fifo" / "exec_per_message") — this shim translates those
+// into the new Plan 02.5 enum ("fifo" / "exec_per_message") and hands
+// off to the BridgeRegistry.
 //
-//   - ChatIOFIFO  — write text to /run/ap/chat.in via ExecWithStdin
-//     using `sh -c 'cat >> /run/ap/chat.in'`, then poll
-//     /run/ap/chat.out until a reply arrives or the context expires.
-//   - ChatIOExec — clone recipe.ChatIO.ExecCmd, append the user text
-//     as a single final argv element, and exec it via Runner.Exec.
-//
-// The context is wrapped with recipe.ChatIO.ResponseTimeout so callers
-// that pass a longer-lived context still honor the per-recipe cap.
-// Timeouts surface as ErrTimeout (HTTP 504 at the handler layer).
+// Behavior preserved byte-for-byte from Phase 2:
+//   - ErrTimeout is returned on ctx deadline in either mode.
+//   - Recipe is cloned, not mutated (the underlying exec bridge uses
+//     slices.Clone on its cmd template).
+//   - ANSI is stripped from replies.
+//   - Text with shell metacharacters is safe: FIFO pipes through
+//     stdin, Exec sends argv.
 func (b *Bridge) SendMessage(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, modelID, text string) (string, error) {
 	if recipe == nil {
-		return "", fmt.Errorf("session bridge: nil recipe")
+		return "", errNilRecipe
 	}
+
+	// Apply the Phase 2 response timeout at the shim layer using the
+	// raw time.Duration so sub-second values (e.g. 50ms in
+	// TestBridge_Timeout) survive the round-trip through the new
+	// Recipe type, whose ResponseTimeoutSec field is int-seconds and
+	// would truncate anything below 1s to zero. The synthetic recipe
+	// below leaves ResponseTimeoutSec at zero so the downstream
+	// FIFOBridge / ExecBridge do not redundantly wrap the context.
 	if recipe.ChatIO.ResponseTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, recipe.ChatIO.ResponseTimeout)
 		defer cancel()
 	}
 
-	switch recipe.ChatIO.Mode {
-	case recipes.ChatIOExec:
-		return b.execMode(ctx, containerID, recipe, modelID, text)
-	case recipes.ChatIOFIFO:
-		return b.fifoMode(ctx, containerID, recipe, text)
-	default:
-		return "", fmt.Errorf("session bridge: unknown chat io mode: %q", recipe.ChatIO.Mode)
-	}
-}
-
-// execMode runs the recipe's ExecCmd with the user text appended as a
-// single final argv element. slices.Clone prevents accidental mutation
-// of the recipe's shared ExecCmd slice.
-//
-// THREAT NOTE (T-02-04b): the Docker SDK passes cmd as []string
-// directly to dockerd over the daemon HTTP API — there is NO shell
-// between Go and the container's exec layer. The user text therefore
-// cannot be interpreted as shell metacharacters even if it contains
-// `;`, `$()`, or backticks.
-func (b *Bridge) execMode(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, modelID, text string) (string, error) {
-	cmd := slices.Clone(recipe.ChatIO.ExecCmd)
-	if recipe.ModelFlag != "" && modelID != "" {
-		cmd = append(cmd, recipe.ModelFlag, modelID)
-	}
-	cmd = append(cmd, text)
-	out, err := b.runner.Exec(ctx, containerID, cmd)
+	syn := synthRecipeFromLegacy(recipe)
+	modeKey, err := mapLegacyChatIOMode(recipe.ChatIO.Mode)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", ErrTimeout
-		}
-		return "", fmt.Errorf("session bridge: exec: %w", err)
+		return "", err
 	}
-	return stripANSI(strings.TrimSpace(string(out))), nil
+
+	impl, err := b.registry.Dispatch(modeKey)
+	if err != nil {
+		return "", err
+	}
+	return impl.SendMessage(ctx, containerID, syn, modelID, text)
 }
 
-// fifoMode writes the user text to /run/ap/chat.in via stdin-pipe'd
-// `cat` and then polls /run/ap/chat.out for a reply. The `cat` shell
-// invocation is SAFE because the user text flows over stdin — the
-// shell only sees the literal string `cat >> /run/ap/chat.in`.
+// errNilRecipe preserves the Phase 2 error text verbatim. Callers
+// like integration_test.go may match on this string; the format is
+// kept identical to what Phase 2 bridge.go returned.
+var errNilRecipe = &recipeError{msg: "session bridge: nil recipe"}
+
+type recipeError struct{ msg string }
+
+func (e *recipeError) Error() string { return e.msg }
+
+// mapLegacyChatIOMode converts the Phase 2 ChatIOMode constant values
+// into the v0.1 YAML-level chat_io.mode strings the BridgeRegistry
+// understands. The mapping is static: ChatIOFIFO → "fifo" and
+// ChatIOExec → "exec_per_message". Anything else becomes an
+// ErrUnsupportedMode wrap so the shim cannot silently misroute.
+func mapLegacyChatIOMode(m recipes.ChatIOMode) (string, error) {
+	switch m {
+	case recipes.ChatIOFIFO:
+		return "fifo", nil
+	case recipes.ChatIOExec:
+		return "exec_per_message", nil
+	default:
+		return "", bridge.ErrUnsupportedMode
+	}
+}
+
+// synthRecipeFromLegacy projects a Phase 2 *LegacyRecipe onto a
+// minimally populated *recipes.Recipe so the new ChatBridge
+// implementations can consume it without a dedicated adapter. Only
+// the fields the bridges actually read are filled in: ID, Name,
+// ModelFlag, and the ChatIO sub-structs. Everything else stays zero.
 //
-// THREAT NOTE (T-02-04): the user text NEVER becomes shell arguments.
-// Bytes on stdin are not interpreted by `sh` — they are handed verbatim
-// to `cat` which copies them to the FIFO.
-func (b *Bridge) fifoMode(ctx context.Context, containerID string, recipe *recipes.LegacyRecipe, text string) (string, error) {
-	payload := bytes.NewReader([]byte(text + "\n"))
-	if _, err := b.runner.ExecWithStdin(
-		ctx, containerID,
-		[]string{"sh", "-c", "cat >> /run/ap/chat.in"},
-		payload,
-	); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", ErrTimeout
-		}
-		return "", fmt.Errorf("session bridge: fifo write: %w", err)
+// This function is intentionally narrow — Plan 02.5-09 deletes both
+// this shim and the LegacyRecipe type; there is no value in making
+// the translation exhaustive.
+func synthRecipeFromLegacy(r *recipes.LegacyRecipe) *recipes.Recipe {
+	syn := &recipes.Recipe{
+		ID:        r.Name,
+		Name:      r.Name,
+		ModelFlag: r.ModelFlag,
+		ChatIO: recipes.RecipeChatIO{
+			ResponseTimeoutSec: int(r.ChatIO.ResponseTimeout / time.Second),
+		},
 	}
-
-	// Poll chat.out until non-empty or context expires. Each probe runs
-	// `timeout 5 head -n 1 /run/ap/chat.out` so a dead agent cannot
-	// block the docker exec indefinitely; the outer context still caps
-	// total wall time.
-	for {
-		if err := ctx.Err(); err != nil {
-			return "", ErrTimeout
+	switch r.ChatIO.Mode {
+	case recipes.ChatIOFIFO:
+		syn.ChatIO.Mode = "fifo"
+		syn.ChatIO.FIFO = &recipes.RecipeChatIOFIFO{
+			FIFOIn:    "/run/ap/chat.in",
+			FIFOOut:   "/run/ap/chat.out",
+			StripANSI: true,
 		}
-		out, err := b.runner.Exec(
-			ctx, containerID,
-			[]string{"timeout", "5", "head", "-n", "1", "/run/ap/chat.out"},
-		)
-		if err == nil && len(bytes.TrimSpace(out)) > 0 {
-			return stripANSI(strings.TrimSpace(string(out))), nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ErrTimeout
-		case <-time.After(25 * time.Millisecond):
+	case recipes.ChatIOExec:
+		syn.ChatIO.Mode = "exec_per_message"
+		syn.ChatIO.ExecPerMessage = &recipes.RecipeChatIOExec{
+			CmdTemplate: r.ChatIO.ExecCmd,
 		}
 	}
+	return syn
 }
 
-// stripANSI removes simple CSI escape sequences (e.g. `\x1b[31m`) from
-// a string. Hermes prints colored output by default; the API layer
-// returns plain text to the client so we normalize here.
-//
-// This is intentionally not a full ECMA-48 parser — it handles the
-// common `\x1b[<params><letter>` form which is what the upstream
-// agents emit. If a future recipe emits OSC or DCS sequences, add a
-// more sophisticated stripper; for Phase 2 this covers the two
-// shipped recipes.
-func stripANSI(s string) string {
-	var out strings.Builder
-	out.Grow(len(s))
-	inEscape := false
-	for _, r := range s {
-		if r == '\x1b' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			// CSI params are digits, `;`, `[`, etc. Terminates on
-			// any ASCII letter (e.g. 'm', 'A', 'K').
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
-}
+var _ = context.Background // keep the context import grounded even
+// if a future edit drops the SendMessage delegation body.
