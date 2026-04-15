@@ -37,7 +37,12 @@ C_RESET=$'\e[0m'
 # --- Teardown guards (global CLAUDE.md rule: kill previous before starting) ---
 teardown_containers() {
     local stragglers
-    stragglers=$(docker ps -aq --filter 'name=playground-' 2>/dev/null || true)
+    # Anchor the name pattern so it only matches containers literally
+    # named `playground-*` (the session-container prefix). Without the
+    # anchor, Docker's filter is an unanchored substring match that also
+    # matches compose containers like `agent-playground-redis-1`,
+    # `agent-playground-postgresql-1`, etc., and nukes the dev stack.
+    stragglers=$(docker ps -aq --filter 'name=^playground-' 2>/dev/null || true)
     if [ -n "$stragglers" ]; then
         local count
         count=$(echo "$stragglers" | wc -l | tr -d ' ')
@@ -86,7 +91,19 @@ if ! curl -fsS -c "$COOKIE_JAR" -X POST "$API_URL/api/dev/login" >/dev/null 2>&1
 fi
 
 # --- Cell runner ---
-declare -A RESULTS
+# macOS ships bash 3.2, which has no associative arrays. Use two helper
+# functions that sanitize the cell key and set/read a dynamic variable
+# `RES_<sanitized_key>`. Keeps the script portable on stock macOS.
+_result_set() {
+    local _key
+    _key=$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_')
+    eval "RES_${_key}=\"\$2\""
+}
+_result_get() {
+    local _key
+    _key=$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_')
+    eval "printf '%s' \"\${RES_${_key}:-}\""
+}
 PASS=0
 FAIL=0
 SKIP=0
@@ -101,7 +118,7 @@ run_cell() {
         anthropic)
             if [ "$HAS_ANTHROPIC" -eq 0 ]; then
                 echo "${C_YELLOW}[SKIP]${C_RESET} $cell — no AP_DEV_BYOK_KEY"
-                RESULTS[$cell]=SKIP
+                _result_set "$cell" SKIP
                 SKIP=$((SKIP + 1))
                 return
             fi
@@ -109,7 +126,7 @@ run_cell() {
         openrouter)
             if [ "$HAS_OPENROUTER" -eq 0 ]; then
                 echo "${C_YELLOW}[SKIP]${C_RESET} $cell — no AP_DEV_OPENROUTER_KEY"
-                RESULTS[$cell]=SKIP
+                _result_set "$cell" SKIP
                 SKIP=$((SKIP + 1))
                 return
             fi
@@ -121,7 +138,7 @@ run_cell() {
     recipe_json=$(curl -sf -b "$COOKIE_JAR" "$API_URL/api/recipes/$recipe" 2>/dev/null || true)
     if [ -z "$recipe_json" ]; then
         echo "${C_RED}[FAIL]${C_RESET} $cell — GET /api/recipes/$recipe returned nothing"
-        RESULTS[$cell]=FAIL
+        _result_set "$cell" FAIL
         FAIL=$((FAIL + 1))
         return
     fi
@@ -132,7 +149,7 @@ run_cell() {
         | jq -r --arg p "$provider" '.providers[]? | select(.id == $p) | .id' 2>/dev/null)
     if [ -z "$has_provider" ]; then
         echo "${C_YELLOW}[SKIP]${C_RESET} $cell — recipe does not declare provider"
-        RESULTS[$cell]=SKIP
+        _result_set "$cell" SKIP
         SKIP=$((SKIP + 1))
         return
     fi
@@ -144,7 +161,7 @@ run_cell() {
         | jq -r --arg p "$provider" '[.models[]? | select(.provider == $p)][0].id' 2>/dev/null)
     if [ -z "$model" ] || [ "$model" = "null" ]; then
         echo "${C_YELLOW}[SKIP]${C_RESET} $cell — no model declared for provider"
-        RESULTS[$cell]=SKIP
+        _result_set "$cell" SKIP
         SKIP=$((SKIP + 1))
         return
     fi
@@ -161,7 +178,7 @@ run_cell() {
     session_id=$(echo "$create_resp" | jq -r '.id // empty' 2>/dev/null)
     if [ -z "$session_id" ] || [ "$session_id" = "null" ]; then
         echo "${C_RED}[FAIL]${C_RESET} $cell — session create failed: $create_resp"
-        RESULTS[$cell]=FAIL
+        _result_set "$cell" FAIL
         FAIL=$((FAIL + 1))
         return
     fi
@@ -180,13 +197,15 @@ run_cell() {
     curl -sf -b "$COOKIE_JAR" -X DELETE "$API_URL/api/sessions/$session_id" >/dev/null 2>&1 || true
 
     # Assert no dangling container (T-02.5-06 mitigation).
+    # Anchored filter (see teardown_containers); unanchored would match
+    # the compose stack containers (agent-playground-*).
     local stragglers
-    stragglers=$(docker ps -aq --filter "name=playground-" 2>/dev/null || true)
+    stragglers=$(docker ps -aq --filter "name=^playground-" 2>/dev/null || true)
     if [ -n "$stragglers" ]; then
         echo "${C_RED}[FAIL]${C_RESET} $cell — dangling container(s) after DELETE: $stragglers"
         # shellcheck disable=SC2086
         docker rm -f $stragglers >/dev/null 2>&1 || true
-        RESULTS[$cell]=FAIL
+        _result_set "$cell" FAIL
         FAIL=$((FAIL + 1))
         return
     fi
@@ -197,21 +216,21 @@ run_cell() {
 
     if [ -n "$has_error" ]; then
         echo "${C_RED}[FAIL]${C_RESET} $cell — error envelope: $has_error (${elapsed}s)"
-        RESULTS[$cell]=FAIL
+        _result_set "$cell" FAIL
         FAIL=$((FAIL + 1))
         return
     fi
 
     if [ -z "$reply" ]; then
         echo "${C_RED}[FAIL]${C_RESET} $cell — empty reply (${elapsed}s) raw=$msg_resp"
-        RESULTS[$cell]=FAIL
+        _result_set "$cell" FAIL
         FAIL=$((FAIL + 1))
         return
     fi
 
     local snippet="${reply:0:60}"
     echo "${C_GREEN}[PASS]${C_RESET} $cell — ${elapsed}s -> ${snippet}..."
-    RESULTS[$cell]=PASS
+    _result_set "$cell" PASS
     PASS=$((PASS + 1))
 }
 
@@ -229,7 +248,8 @@ printf '%-30s %s\n' "cell" "result"
 for recipe in "${RECIPES[@]}"; do
     for provider in "${PROVIDERS[@]}"; do
         cell="${recipe}x${provider}"
-        printf '%-30s %s\n' "$cell" "${RESULTS[$cell]:-MISSING}"
+        r=$(_result_get "$cell")
+        printf '%-30s %s\n' "$cell" "${r:-MISSING}"
     done
 done
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
@@ -245,7 +265,7 @@ check_d47() {
     for rec in "${RECIPES[@]}"; do
         ok=0
         for provider in "${PROVIDERS[@]}"; do
-            if [ "${RESULTS[${rec}x${provider}]:-}" = "PASS" ]; then
+            if [ "$(_result_get "${rec}x${provider}")" = "PASS" ]; then
                 ok=1
                 break
             fi
@@ -260,7 +280,7 @@ check_d47() {
     for rec in "${RECIPES[@]}"; do
         count=0
         for provider in "${PROVIDERS[@]}"; do
-            [ "${RESULTS[${rec}x${provider}]:-}" = "PASS" ] && count=$((count + 1))
+            [ "$(_result_get "${rec}x${provider}")" = "PASS" ] && count=$((count + 1))
         done
         if [ "$count" -eq 2 ]; then
             both=1
