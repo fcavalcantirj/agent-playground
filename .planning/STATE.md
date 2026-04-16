@@ -4,7 +4,7 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
-last_updated: "2026-04-16T02:49:29.357Z"
+last_updated: "2026-04-16T02:52:09.968Z"
 progress:
   total_phases: 19
   completed_phases: 3
@@ -20,14 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 02.5 planning next — context captured, matrix acceptance gate locked.
+**Current focus:** Phase 09 — spec-lint-test-harness-foundations
 
 ## Current Position
 
-Phase: 02.5 (discuss complete, ready for planning)
+Phase: 09 (spec-lint-test-harness-foundations) — EXECUTING
+Plan: 1 of 4
 Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
-Status: Ready to execute
+Status: Executing Phase 09
 
 Progress: [██░░░░░░░░] 20% (2/10 phases)
 
