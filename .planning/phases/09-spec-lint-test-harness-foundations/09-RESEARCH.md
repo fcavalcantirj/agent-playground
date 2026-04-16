@@ -578,17 +578,11 @@ At least 10 broken fragments are required. Here is the recommended set (12 fragm
 | A3 | Draft 2020-12 chosen over 2019-09 for the schema | Schema Design | Low -- both work identically for our use case |
 | A4 | Flat test directory structure (no subdirectories under `tools/tests/`) | Architecture | Low -- can reorganize later |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Python 3.12+ vs 3.10 for local dev**
-   - What we know: Dev machine has 3.10.10; all libraries work on it; CI can use 3.12+
-   - What's unclear: Should `pyproject.toml` say `>=3.10` (permissive) or `>=3.12` (per D-19)?
-   - Recommendation: Set `>=3.10` in pyproject.toml since this is a dev tool, not a public library. Add a comment referencing D-19. CI enforces 3.12+.
+1. **Python 3.12+ vs 3.10 for local dev** — RESOLVED: User approved relaxing D-19 to `>=3.10` in pyproject.toml. CI enforces 3.12+. All libraries work on 3.10.
 
-2. **Recipes v0 to v0.1 bump -- is it this phase's job?**
-   - What we know: D-04 says drop v0 support. All 5 recipes currently say v0.
-   - What's unclear: Whether Phase 3 was supposed to bump them (it didn't).
-   - Recommendation: Phase 9 includes a task to update all 5 recipes to `ap.recipe/v0.1`. This is a precondition for the lint gate to work. The update also removes `RECIPE-SCHEMA.md` Section 9 (v0 compatibility) or adds a note that v0 is no longer accepted.
+2. **Recipes v0 to v0.1 bump -- is it this phase's job?** — RESOLVED: Yes. Phase 9 Plan 01 bumps all 5 recipes from `ap.recipe/v0` to `ap.recipe/v0.1` as a prerequisite for the lint gate.
 
 ## Sources
 

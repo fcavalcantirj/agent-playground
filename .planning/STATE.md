@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: planning
+milestone: v0.2
+milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
+status: executing
 stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
-last_updated: "2026-04-14T23:58:57.646Z"
+last_updated: "2026-04-16T02:49:29.357Z"
 progress:
-  total_phases: 10
-  completed_phases: 2
-  total_plans: 12
-  completed_plans: 12
-  percent: 100
+  total_phases: 19
+  completed_phases: 3
+  total_plans: 27
+  completed_plans: 23
+  percent: 85
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 Phase: 02.5 (discuss complete, ready for planning)
 Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
-Status: 02.5 CONTEXT.md written. Scope: recipe manifest YAML + 10 recipes + 4 chat_io bridges + 6 lifecycle hooks + N×N matrix smoke test with Anthropic + OpenRouter. No UI, no Temporal (both deferred).
+Status: Ready to execute
 
 Progress: [██░░░░░░░░] 20% (2/10 phases)
 
@@ -61,6 +61,19 @@ Read files in this order after /clear:
 ### Roadmap Evolution
 
 - Phase 02.5 inserted after Phase 2: Recipe Manifest Reshape (URGENT) — 2026-04-14
+- Phase 03 (v0.1 consolidation) completed — 2026-04-15
+- Phases 9–17 added: framework maturity roadmap (v0.2 floor + v0.3 ceiling) — 2026-04-15
+  - P09: Spec lint + test harness (gates all)
+  - P10: Error taxonomy + timeouts
+  - P11: Linux owner_uid correctness
+  - P12: Provenance + output bounds
+  - P13: SHA pinning + v0.2
+  - P14: Isolation limits + default-deny
+  - P15: Stochasticity / multi-run
+  - P16: Dead verb coverage (fake-agent)
+  - P17: Doc-runner sync check
+  - Prior-art research: recon/prior-art-research.md
+  - Full plan: .planning/FRAMEWORK-MATURITY-ROADMAP.md
 
 ### ⚠️ Phase 02 Reshape (2026-04-14) — READ BEFORE PLANNING
 

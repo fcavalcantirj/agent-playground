@@ -50,7 +50,7 @@ This is the **gate phase** — Phases 10–17 all depend on the foundation laid 
 ### Python packaging
 - **D-17:** `tools/pyproject.toml` — modern Python packaging. Runtime deps: `ruamel.yaml`, `jsonschema`. Dev deps in `[project.optional-dependencies]`: `pytest`.
 - **D-18:** Tests live at `tools/tests/`. All Python under `tools/`.
-- **D-19:** Minimum Python version: 3.12+. This is a dev tool, not a library.
+- **D-19:** Minimum Python version: >=3.10 in pyproject.toml (dev machine has 3.10.10), CI enforces 3.12+. Relaxed from original 3.12+ per user approval 2026-04-15.
 - **D-20:** Makefile targets: `make install-tools` (pip install -e tools/[dev]), `make test` (pytest tools/tests/), `make lint-recipes` (run_recipe.py --lint-all), `make check` (lint-recipes + test chained).
 
 ### CI pipeline
