@@ -137,16 +137,21 @@ smoke:
       verdict: PASS
       wall_time_s: 12.69
       notes: Adopts persona cleanly. Single-copy output.
+  known_incompatible_cells:
     - model: google/gemini-2.5-flash
-      verdict: FAIL
-      wall_time_s: 10.35
+      verdict: STOCHASTIC
       notes: |
-        Model did NOT adopt Hermes persona. Answered literally
-        "I am a large language model, trained by Google." Recipe
-        plumbing is correct (container ran clean, exit 0, reached
-        OpenRouter, received a completion). This is a model-
-        compatibility finding, not a recipe failure. Flag cell as
-        weak in any agent × model matrix.
+        Initial recon (2026-04-15) observed a deterministic FAIL:
+        "I am a large language model, trained by Google." Plumbing
+        was correct — container ran clean, exit 0, reached OpenRouter,
+        received a completion — but the model refused to adopt the
+        Hermes persona. The v0.1 retroactive sweep showed the cell
+        flipping between PASS and FAIL across runs with no other
+        change, so it is NOT a stable regression probe. Removed from
+        verified_cells[] to keep the --all-cells gate deterministic.
+        Documented here as a model-compatibility finding: gemini-2.5-flash
+        does not reliably adopt the Hermes persona, so consumers that
+        care about persona cohesion should not pick it.
 
 metadata:
   recon_date: 2026-04-15
