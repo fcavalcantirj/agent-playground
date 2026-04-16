@@ -101,8 +101,8 @@ Declarative description of which environment variables the agent reads. The runn
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `process_env.api_key` | string | yes | Canonical env var name the agent reads (e.g. `OPENROUTER_API_KEY`). The runner resolves this from process env first, then from `./.env` at repo root. |
-| `process_env.api_key_fallback` | string | no | Alternate env var name the agent will also accept. The runner adds this to its alias list when searching for a value. |
+| `process_env.api_key` | string | yes | Canonical env var name the agent reads (e.g. `OPENROUTER_API_KEY`). The runner resolves a value for this from process env first, then from `./.env` at repo root, then from the local-dev aliases `OPENROUTER_API_KEY` / `OPEN_ROUTER_API_TOKEN`. |
+| `process_env.api_key_fallback` | string | no | **Documentation only.** An alternate env var name the agent's own code accepts internally (e.g. hermes will also read `OPENAI_API_KEY` for some providers). The runner does **not** use this field as a value-source hint, to avoid cross-provider key bleed — a host-env `OPENAI_API_KEY` should never be auto-injected as an `OPENROUTER_API_KEY`. |
 | `process_env.base_url` | string \| null | yes (explicit null OK) | Override for the provider base URL. `null` means "agent's default is fine" (e.g. hermes defaults to OpenRouter). |
 | `process_env.model` | string \| null | yes (explicit null OK) | Default model. `null` means "set per-call" (the standard case — the runner substitutes `$MODEL` into `invoke.spec.argv`). |
 
@@ -248,7 +248,7 @@ Options:
 
 ### 8.2 API key resolution
 
-For each recipe, the runner builds an alias list: `[process_env.api_key, process_env.api_key_fallback (if set), "OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]`. It tries each alias first in `os.environ`, then in `./.env` at repo root. The first hit is injected into the container as the recipe's canonical `process_env.api_key` name.
+For each recipe, the runner builds an alias list: `[process_env.api_key, "OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]` (deduped, order preserved). For each alias in order, it checks `os.environ` first, then `./.env` at repo root. The first hit is injected into the container as the recipe's canonical `process_env.api_key` name. `process_env.api_key_fallback` is **not** consulted during resolution — see its definition in §4.2.
 
 ### 8.3 Disk guard
 

@@ -29,6 +29,15 @@ _yaml.preserve_quotes = True
 _yaml.width = 4096
 _yaml.indent(mapping=2, sequence=4, offset=2)
 
+
+def _represent_none(dumper, _data):
+    # Emit `null` explicitly instead of a bare empty value so round-trip
+    # write-back does not turn `base_url: null` into `base_url:`.
+    return dumper.represent_scalar("tag:yaml.org,2002:null", "null")
+
+
+_yaml.representer.add_representer(type(None), _represent_none)
+
 DISK_GUARD_FLOOR_GB = 5.0
 
 
@@ -68,21 +77,32 @@ def load_dotenv(path: Path) -> dict:
 
 
 def resolve_api_key(recipe: dict, repo_root: Path) -> tuple[str, str]:
+    """Find a value for the recipe's canonical api_key env var.
+
+    Intentionally does NOT consult `process_env.api_key_fallback` — that field
+    documents what the agent's own code internally accepts, not a hint about
+    where the runner should source the value. Mixing those two concerns causes
+    cross-provider key bleed (e.g. an OpenAI direct key in the host env being
+    injected as an OpenRouter key).
+
+    Search order for a value: the recipe's canonical `api_key` var, then the
+    local-dev aliases OPENROUTER_API_KEY and OPEN_ROUTER_API_TOKEN, in that
+    order. Process env wins over repo-root .env.
+    """
     var_name = recipe["runtime"]["process_env"]["api_key"]
-    fallback = recipe["runtime"]["process_env"].get("api_key_fallback")
     dotenv = load_dotenv(repo_root / ".env")
 
-    aliases = [var_name]
-    if fallback:
-        aliases.append(fallback)
-    aliases += ["OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]
+    aliases = [var_name, "OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]
+    # dedupe while preserving order
+    seen: set[str] = set()
+    ordered = [a for a in aliases if not (a in seen or seen.add(a))]
 
-    for alias in aliases:
+    for alias in ordered:
         val = os.environ.get(alias) or dotenv.get(alias)
         if val:
             return var_name, val
     raise SystemExit(
-        f"ERROR: no API key — set {var_name} (or one of {aliases}) "
+        f"ERROR: no API key — set {var_name} (or one of {ordered}) "
         f"in process env or {repo_root}/.env"
     )
 
