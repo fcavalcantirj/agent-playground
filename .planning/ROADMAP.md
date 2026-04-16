@@ -244,13 +244,13 @@ Plans:
 ### Phase 10: Error taxonomy + timeout enforcement
 **Goal:** Replace single `PASS|FAIL` verdict with category-aware verdicts (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`) + 2 reserved (`STOCHASTIC`, `SKIP`). Wire `smoke.timeout_s` to `--cidfile` + `docker kill` for true container reaping. Add `build.timeout_s`, `build.clone_timeout_s`, `--global-timeout`. Migrate 5 committed recipes to new shape. Steal from Inspect AI (5-layer timeout) and SWE-bench (`ResolvedStatus` enum).
 **Depends on:** Phase 9
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 Plans:
 - [x] 10-01-PLAN.md — Loosen schema: add category/detail as OPTIONAL + 11-value enum + build.timeout_s/clone_timeout_s [Wave 1]
 - [x] 10-02-PLAN.md — Migrate 5 committed recipes (ruamel round-trip) adding category+detail per D-04 [Wave 2]
 - [x] 10-03-PLAN.md — Tighten schema: category/detail REQUIRED on verified_cells + known_incompatible_cells [Wave 3]
 - [x] 10-04-PLAN.md — Runner: Category enum + Verdict dataclass + preflight_docker + cidfile timeout + main() refactor [Wave 3]
-- [ ] 10-05-PLAN.md — tools/tests/test_categories.py: 9 live-category fixtures + cidfile lifecycle + emit format [Wave 4]
+- [x] 10-05-PLAN.md — tools/tests/test_categories.py: 9 live-category fixtures + cidfile lifecycle + emit format [Wave 4]
 
 ### Phase 11: Linux host owner_uid correctness
 **Goal:** All 5 recipes run cleanly on a Linux host. Pick approach: chown tmpdir to `volumes[].owner_uid` before mount, OR `docker cp` instead of bind mount (SWE-bench pattern), OR `docker run --user`. Hard fail on permission mismatch. CI fixture against distinct UIDs (0, 1000, 10000, 65534).
