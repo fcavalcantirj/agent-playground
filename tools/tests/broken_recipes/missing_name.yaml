@@ -1,0 +1,34 @@
+# Broken recipe: missing name field
+# Tests: required property at root level
+apiVersion: ap.recipe/v0.1
+display_name: Broken Test
+description: Broken recipe for testing.
+source:
+  repo: https://github.com/test/test
+  ref: abc123
+build:
+  mode: upstream_dockerfile
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    base_url: null
+    model: null
+  volumes:
+    - name: vol
+      host: per_session_tmpdir
+      container: /data
+invoke:
+  mode: cli-passthrough
+  spec:
+    argv: ["echo", "hello"]
+smoke:
+  prompt: "hello"
+  pass_if: exit_zero
+  verified_cells:
+    - model: test/model
+      verdict: PASS
+metadata:
+  recon_date: "2026-04-15"
+  recon_by: test
+  source_citations: ["test"]
