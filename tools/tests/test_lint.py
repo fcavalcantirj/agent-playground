@@ -97,3 +97,10 @@ class TestLintBrokenRecipes:
         recipe = _y.load(path.read_text())
         errors = lint_recipe(recipe, schema)
         assert errors, f"{filename} should fail lint but passed"
+        # Each broken fixture targets exactly one violation — overlapping schema
+        # clauses (e.g. top-level + allOf branch both requiring the same field)
+        # would surface as duplicate messages. Assert message uniqueness to
+        # catch that class of schema redundancy.
+        assert len(errors) == len(set(errors)), (
+            f"{filename} produced duplicate error messages: {errors}"
+        )

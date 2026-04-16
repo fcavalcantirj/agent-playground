@@ -407,8 +407,10 @@
   "allOf": [
     {
       "if": {
+        "required": ["smoke"],
         "properties": {
           "smoke": {
+            "required": ["pass_if"],
             "properties": {
               "pass_if": { "const": "response_contains_string" }
             }
@@ -425,8 +427,10 @@
     },
     {
       "if": {
+        "required": ["smoke"],
         "properties": {
           "smoke": {
+            "required": ["pass_if"],
             "properties": {
               "pass_if": { "const": "response_not_contains" }
             }
@@ -443,8 +447,10 @@
     },
     {
       "if": {
+        "required": ["smoke"],
         "properties": {
           "smoke": {
+            "required": ["pass_if"],
             "properties": {
               "pass_if": { "const": "response_regex" }
             }
@@ -461,8 +467,10 @@
     },
     {
       "if": {
+        "required": ["build"],
         "properties": {
           "build": {
+            "required": ["mode"],
             "properties": {
               "mode": { "const": "upstream_dockerfile" }
             }
@@ -470,10 +478,7 @@
         }
       },
       "then": {
-        "required": [
-          "apiVersion", "name", "display_name", "description",
-          "source", "build", "runtime", "invoke", "smoke", "metadata"
-        ],
+        "required": ["source"],
         "properties": {
           "source": {
             "required": ["repo", "ref"]
@@ -483,8 +488,10 @@
     },
     {
       "if": {
+        "required": ["build"],
         "properties": {
           "build": {
+            "required": ["mode"],
             "properties": {
               "mode": { "const": "image_pull" }
             }
@@ -494,7 +501,7 @@
       "then": {
         "properties": {
           "build": {
-            "required": ["mode", "image"]
+            "required": ["image"]
           }
         }
       }
