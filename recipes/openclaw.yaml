@@ -1,4 +1,4 @@
-apiVersion: ap.recipe/v0
+apiVersion: ap.recipe/v0.1
 name: openclaw
 display_name: OpenClaw
 description: |

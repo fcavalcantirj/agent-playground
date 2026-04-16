@@ -1,4 +1,4 @@
-apiVersion: ap.recipe/v0
+apiVersion: ap.recipe/v0.1
 name: nanobot
 display_name: nanobot
 description: |

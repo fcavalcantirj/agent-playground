@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "ap-recipe-tools"
+version = "0.1.0"
+description = "Agent Playground recipe runner and lint tools"
+requires-python = ">=3.10"
+dependencies = [
+    "ruamel.yaml>=0.17.21",
+    "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-x --tb=short"
