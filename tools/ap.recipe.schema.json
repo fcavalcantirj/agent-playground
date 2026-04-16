@@ -4,9 +4,8 @@
   "title": "Agent Playground Recipe — ap.recipe/v0.1.1",
   "description": "Schema for Agent Playground recipe YAML files consumed by tools/run_recipe.py. See docs/RECIPE-SCHEMA.md for the canonical specification. v0.1.1 adds $defs extraction (v0_1 body + category enum), a oneOf discriminator seam on apiVersion for future v0.2 wire-compat, tightened bounds (source.ref pattern, name maxLength, timeout maxima, owner_uid uid_t range), the known_incompatible_cells verdict enum (WR-05), an annotations open-object escape valve on 7 subschemas, and optional metadata.license + metadata.maintainer — all additive over v0.1.",
   "type": "object",
-  "oneOf": [
-    { "$ref": "#/$defs/v0_1" }
-  ],
+  "$ref": "#/$defs/v0_1",
+  "$comment": "Root uses $ref to the single v0_1 branch today. When v0.2 ships (Phase 13), this becomes `oneOf: [{$ref: v0_1}, {$ref: v0_2}]` with apiVersion discriminator. Keeping $ref today preserves deep error paths from jsonschema; oneOf with a single branch collapses inner errors into an opaque top-level message (WR-01).",
   "$defs": {
     "category": {
       "type": "string",
@@ -494,9 +493,11 @@
             "maintainer": {
               "type": "object",
               "additionalProperties": false,
+              "required": ["name"],
               "properties": {
                 "name": {
                   "type": "string",
+                  "minLength": 1,
                   "description": "Maintainer name or handle."
                 },
                 "url": {
@@ -505,7 +506,7 @@
                   "description": "Maintainer homepage or contact URL."
                 }
               },
-              "description": "Optional in v0.1.1; required before external contribution lands (phase 19+)."
+              "description": "Optional in v0.1.1; required before external contribution lands (phase 19+). When present, `name` is required inside the object — url alone does not identify a maintainer."
             },
             "annotations": {
               "type": "object",

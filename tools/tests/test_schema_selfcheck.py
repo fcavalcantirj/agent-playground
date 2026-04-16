@@ -85,13 +85,17 @@ def test_defs_are_well_formed_and_reachable():
     """
     schema = json.loads(SCHEMA_PATH.read_text())
     defs = schema.get("$defs")
-    if not defs:
-        # Vacuous: before Plan 02 the schema has no `$defs`. The contract
-        # activates as soon as `$defs` is declared with at least one entry.
-        return
-
-    assert isinstance(defs, dict), (
-        f"$defs must be a JSON object, got {type(defs).__name__}"
+    # Post-Plan-02: $defs is load-bearing. The original vacuous guard
+    # (`if not defs: return`) is gone — $defs MUST contain `v0_1` (D-01)
+    # and `category` (D-02). Restating as positive contract so a future
+    # accidental $defs deletion is caught.
+    assert isinstance(defs, dict) and defs, (
+        f"$defs must be a non-empty JSON object post-Plan-02; got {defs!r}"
+    )
+    required_defs = {"v0_1", "category"}
+    missing = required_defs - set(defs.keys())
+    assert not missing, (
+        f"$defs missing required entries after Plan 02: {sorted(missing)}"
     )
 
     # Well-formedness: each entry is a dict and declares a shape keyword.
