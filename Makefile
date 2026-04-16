@@ -22,7 +22,8 @@ PICOCLAW_SHA := c7461f9e963496c4471336642ac6a8d91a456978
 HERMES_SHA := 5621fc449a7c00f11168328c87e024a0203792c3
 
 .PHONY: build-ap-base build-picoclaw build-hermes build-recipes clean-recipes smoke-test \
-	dev-frontend build-frontend lint-frontend install-frontend copy-schema
+	dev-frontend build-frontend lint-frontend install-frontend copy-schema \
+	install-tools test lint-recipes check
 
 # copy-schema keeps the canonical Draft 2019-09 recipe schema in
 # agents/schemas/ byte-identical to the embedded copy under
@@ -175,3 +176,16 @@ build-frontend:
 
 lint-frontend:
 	cd frontend && pnpm lint
+
+# --- Phase 09: Python recipe tools (D-10, D-20) ---
+
+install-tools:
+	pip install -e "tools/[dev]"
+
+test:
+	pytest tools/tests/ -v
+
+lint-recipes:
+	python3 tools/run_recipe.py --lint-all
+
+check: lint-recipes test
