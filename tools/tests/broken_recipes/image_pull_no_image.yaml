@@ -1,0 +1,32 @@
+# Broken recipe: build.mode is image_pull but build.image is missing
+# Tests: if/then cross-field invariant for image_pull mode
+apiVersion: ap.recipe/v0.1
+name: broken-test
+display_name: Broken Test
+description: Broken recipe for testing.
+build:
+  mode: image_pull
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    base_url: null
+    model: null
+  volumes:
+    - name: vol
+      host: per_session_tmpdir
+      container: /data
+invoke:
+  mode: cli-passthrough
+  spec:
+    argv: ["echo", "hello"]
+smoke:
+  prompt: "hello"
+  pass_if: exit_zero
+  verified_cells:
+    - model: test/model
+      verdict: PASS
+metadata:
+  recon_date: "2026-04-15"
+  recon_by: test
+  source_citations: ["test"]
