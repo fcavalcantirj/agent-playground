@@ -19,6 +19,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +45,60 @@ DISK_GUARD_FLOOR_GB = 5.0
 
 _SCHEMA_PATH = Path(__file__).parent / "ap.recipe.schema.json"
 
+# Phase 10 defaults (D-03)
+DEFAULT_SMOKE_TIMEOUT_S = 180
+DEFAULT_BUILD_TIMEOUT_S = 900
+DEFAULT_CLONE_TIMEOUT_S = 300
+DOCKER_DAEMON_PROBE_TIMEOUT_S = 5
+
 # ANSI colors for lint output (D-08)
 _RED = "\033[31m"
 _GREEN = "\033[32m"
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
+
+
+# ---------- category taxonomy (Phase 10) ----------
+
+
+class Category(str, Enum):
+    """Phase 10 verdict category enum (9 live + 2 reserved per D-01).
+
+    Subclassing `str` (not `enum.StrEnum`) keeps compatibility with
+    Python 3.10 per pyproject.toml `requires-python = ">=3.10"`.
+    Members auto-coerce to strings for JSON emission.
+    """
+    # Live (9)
+    PASS = "PASS"
+    ASSERT_FAIL = "ASSERT_FAIL"
+    INVOKE_FAIL = "INVOKE_FAIL"
+    BUILD_FAIL = "BUILD_FAIL"
+    PULL_FAIL = "PULL_FAIL"
+    CLONE_FAIL = "CLONE_FAIL"
+    TIMEOUT = "TIMEOUT"
+    LINT_FAIL = "LINT_FAIL"
+    INFRA_FAIL = "INFRA_FAIL"
+    # Reserved (2) — schema enum only; runner never emits these in Phase 10.
+    STOCHASTIC = "STOCHASTIC"   # reserved — phase 15 (multi-run determinism)
+    SKIP = "SKIP"               # reserved — later UX phase (known_incompatible SKIP)
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """Phase 10 verdict record per D-02. `verdict` field is derived."""
+    category: Category
+    detail: str = ""
+
+    @property
+    def verdict(self) -> str:
+        return "PASS" if self.category is Category.PASS else "FAIL"
+
+    def to_cell_dict(self) -> dict:
+        return {
+            "category": self.category.value,
+            "detail": self.detail,
+            "verdict": self.verdict,
+        }
 
 
 # ---------- importable API ----------
@@ -263,6 +315,74 @@ def evaluate_pass_if(
     if rule == "exit_zero":
         return "PASS" if exit_code == 0 else "FAIL"
     return f"UNKNOWN(pass_if={rule})"
+
+
+# ---------- phase 10 helpers ----------
+
+
+def _redact_api_key(text: str, api_key_var: str) -> str:
+    """Replace every <api_key_var>=<non-space-value> substring with <api_key_var>=<REDACTED>.
+
+    Applied to all `detail` strings derived from subprocess stderr per D-02 + V7/V8 of
+    RESEARCH.md §Security Domain.
+    """
+    if not text:
+        return ""
+    return re.sub(
+        rf"{re.escape(api_key_var)}=\S+",
+        f"{api_key_var}=<REDACTED>",
+        text,
+    )
+
+
+def preflight_docker() -> Verdict | None:
+    """Return INFRA_FAIL Verdict if the Docker daemon is unreachable, None if OK.
+
+    Uses `docker version` (not `docker --version`) because it explicitly connects
+    to the daemon — the client-only probe would succeed even when dockerd is down.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            timeout=DOCKER_DAEMON_PROBE_TIMEOUT_S,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            tail = (result.stderr or "").strip()[:200]
+            return Verdict(
+                Category.INFRA_FAIL,
+                f"docker version exit {result.returncode}: {tail}",
+            )
+        return None
+    except subprocess.TimeoutExpired:
+        return Verdict(
+            Category.INFRA_FAIL,
+            f"docker daemon unresponsive (>{DOCKER_DAEMON_PROBE_TIMEOUT_S}s)",
+        )
+    except FileNotFoundError:
+        return Verdict(Category.INFRA_FAIL, "docker CLI not in PATH")
+
+
+def emit_verdict_line(
+    verdict: Verdict,
+    *,
+    recipe: str,
+    model: str,
+    wall_s: float,
+) -> None:
+    """Emit the D-05 one-line human verdict format.
+
+    Format: `<CATEGORY pad 10>  <recipe> (<model>) <wall>s[ — <detail>]`
+    Green PASS / red everything else.
+    """
+    cat = verdict.category.value.ljust(10)
+    color = _GREEN if verdict.category is Category.PASS else _RED
+    line = f"{color}{cat}{_RESET} {recipe} ({model}) {wall_s:.2f}s"
+    if verdict.detail:
+        line += f" — {verdict.detail}"
+    print(line, flush=True)
 
 
 # ---------- disk guard ----------
