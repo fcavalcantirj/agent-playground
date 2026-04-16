@@ -1,5 +1,14 @@
 # Agent Recipe Backlog
 
+> **⚠️ ON HOLD as of 2026-04-15 — format v0.1 consolidation phase pending before adding more agents.**
+>
+> 5 recipes validated end-to-end (hermes, openclaw, picoclaw, nullclaw, nanobot) but the format has grown organically and accumulated debt across 8 concrete items: a thin `pass_if` vocabulary, CLI-only smoke prompts, undocumented schema fields, no structured runner output, no sweep mode, no disk guard, no regression re-runs, no user-facing docs.
+>
+> Phase brief: `.planning/phases/03-recipe-format-v0.1/CONTEXT.md`
+> Debt detail: auto-memory `feedback_recipe_runner_debt.md`
+>
+> **Do NOT add a new recipe before format-v0.1 lands.** The stars-desc queue below resumes AFTER that phase completes. Top of queue: ZeroClaw (30,171 ★, Rust).
+
 Tracking agents we want to validate against `ap.recipe/v0`. A row flips to `[x]` only when the recipe is committed **and** `tools/run_recipe.py` returns `PASS` against at least one model cell.
 
 **Status legend**
