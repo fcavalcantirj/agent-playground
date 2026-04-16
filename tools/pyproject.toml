@@ -19,4 +19,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-x --tb=short"
+addopts = "-x --tb=short -m 'not integration'"
+markers = [
+    "integration: spawn real Docker containers; opt-in via pytest -m integration",
+]
