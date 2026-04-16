@@ -256,31 +256,26 @@ def load_dotenv(path: Path) -> dict:
 def resolve_api_key(recipe: dict, repo_root: Path) -> tuple[str, str]:
     """Find a value for the recipe's canonical api_key env var.
 
-    Intentionally does NOT consult `process_env.api_key_fallback` — that field
-    documents what the agent's own code internally accepts, not a hint about
-    where the runner should source the value. Mixing those two concerns causes
-    cross-provider key bleed (e.g. an OpenAI direct key in the host env being
-    injected as an OpenRouter key).
+    Canonical var only. The value must be set under the exact name declared by
+    the recipe in `runtime.process_env.api_key` — either in the process env or
+    in `<repo_root>/.env`. Process env wins.
 
-    Search order for a value: the recipe's canonical `api_key` var, then the
-    local-dev aliases OPENROUTER_API_KEY and OPEN_ROUTER_API_TOKEN, in that
-    order. Process env wins over repo-root .env.
+    No provider aliases are consulted. A recipe declaring `ANTHROPIC_API_KEY`
+    must find ANTHROPIC_API_KEY — never OPENROUTER_API_KEY. Cross-provider
+    aliasing is the exact anti-pattern that causes a key minted for one
+    provider to be silently injected as another provider's key.
+
+    `process_env.api_key_fallback` (schema field) documents what the agent's
+    own internal code accepts; it is intentionally not consulted here.
     """
     var_name = recipe["runtime"]["process_env"]["api_key"]
     dotenv = load_dotenv(repo_root / ".env")
 
-    aliases = [var_name, "OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]
-    # dedupe while preserving order
-    seen: set[str] = set()
-    ordered = [a for a in aliases if not (a in seen or seen.add(a))]
-
-    for alias in ordered:
-        val = os.environ.get(alias) or dotenv.get(alias)
-        if val:
-            return var_name, val
+    val = os.environ.get(var_name) or dotenv.get(var_name)
+    if val:
+        return var_name, val
     raise SystemExit(
-        f"ERROR: no API key — set {var_name} (or one of {ordered}) "
-        f"in process env or {repo_root}/.env"
+        f"ERROR: no API key — set {var_name} in process env or {repo_root}/.env"
     )
 
 
