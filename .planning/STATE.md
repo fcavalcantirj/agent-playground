@@ -4,13 +4,13 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
-last_updated: "2026-04-16T02:52:09.968Z"
+last_updated: "2026-04-16T20:13:15.159Z"
 progress:
   total_phases: 19
-  completed_phases: 3
-  total_plans: 27
-  completed_plans: 23
-  percent: 85
+  completed_phases: 4
+  total_plans: 32
+  completed_plans: 27
+  percent: 84
 ---
 
 # Project State
@@ -28,7 +28,7 @@ Phase: 09 (spec-lint-test-harness-foundations) — EXECUTING
 Plan: 1 of 4
 Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
-Status: Executing Phase 09
+Status: Ready to execute
 
 Progress: [██░░░░░░░░] 20% (2/10 phases)
 
