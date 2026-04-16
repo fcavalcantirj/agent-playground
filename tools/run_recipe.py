@@ -40,6 +40,51 @@ _yaml.representer.add_representer(type(None), _represent_none)
 
 DISK_GUARD_FLOOR_GB = 5.0
 
+_SCHEMA_PATH = Path(__file__).parent / "ap.recipe.schema.json"
+
+
+# ---------- importable API ----------
+
+
+def _load_schema() -> dict:
+    """Load the JSON Schema from the co-located schema file."""
+    return json.loads(_SCHEMA_PATH.read_text())
+
+
+def load_recipe(path: Path) -> dict:
+    """Load and parse a recipe YAML file. Returns the parsed dict."""
+    return _yaml.load(path.read_text())
+
+
+def lint_recipe(recipe: dict, schema: dict | None = None) -> list[str]:
+    """Validate recipe dict against JSON Schema. Returns list of error messages (empty = valid).
+
+    If schema is None, loads from the default location (tools/ap.recipe.schema.json).
+
+    Normalizes the recipe through JSON round-trip before validation so that
+    ruamel.yaml types (CommentedMap, datetime.date, etc.) are converted to
+    plain Python dicts/strings that jsonschema can type-check correctly.
+    """
+    if schema is None:
+        schema = _load_schema()
+    from jsonschema import Draft202012Validator
+
+    # Normalize: ruamel rt loader returns CommentedMap and may coerce
+    # YAML date scalars (e.g. 2026-04-15) to datetime.date objects.
+    # JSON round-trip converts everything to plain dicts/strings.
+    normalized = json.loads(json.dumps(recipe, default=str))
+
+    validator = Draft202012Validator(schema)
+    errors = sorted(
+        validator.iter_errors(normalized),
+        key=lambda e: list(e.absolute_path),
+    )
+    messages = []
+    for e in errors:
+        path = ".".join(str(p) for p in e.absolute_path) or "(root)"
+        messages.append(f"{path}: {e.message}")
+    return messages
+
 
 # ---------- small helpers ----------
 
@@ -481,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     repo_root = recipe_path.parent.parent
-    recipe = _yaml.load(recipe_path.read_text())
+    recipe = load_recipe(recipe_path)
     name = recipe["name"]
     image_tag = f"ap-recipe-{name}"
 
