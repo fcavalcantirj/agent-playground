@@ -1,15 +1,15 @@
 # Agent Recipe Backlog
 
-> **⚠️ ON HOLD as of 2026-04-15 — format v0.1 consolidation phase pending before adding more agents.**
+> **✅ v0.1 canonical as of 2026-04-15 — see [`../docs/RECIPE-SCHEMA.md`](../docs/RECIPE-SCHEMA.md) and [`README.md`](./README.md).**
 >
-> 5 recipes validated end-to-end (hermes, openclaw, picoclaw, nullclaw, nanobot) but the format has grown organically and accumulated debt across 8 concrete items: a thin `pass_if` vocabulary, CLI-only smoke prompts, undocumented schema fields, no structured runner output, no sweep mode, no disk guard, no regression re-runs, no user-facing docs.
+> The format-v0.1 consolidation phase shipped: schema spec, runner upgrades (new `pass_if` verbs, `--json`, `--all-cells` sweep with drift detection, disk guard), retroactive re-validation of all 5 committed recipes, and a user-facing README. All 5 existing recipes returned `verdict: PASS` (or documented FAIL) under `--all-cells --json` with zero drift — openclaw required a minimal probe retrofit (forcing prompt vs. the blank-slate "who are you?").
 >
-> Phase brief: `.planning/phases/03-recipe-format-v0.1/CONTEXT.md`
-> Debt detail: auto-memory `feedback_recipe_runner_debt.md`
+> Phase brief: `../.planning/phases/03-recipe-format-v0.1/CONTEXT.md`
+> Debt reference (now paid down): auto-memory `feedback_recipe_runner_debt.md`
 >
-> **Do NOT add a new recipe before format-v0.1 lands.** The stars-desc queue below resumes AFTER that phase completes. Top of queue: ZeroClaw (30,171 ★, Rust).
+> **The stars-desc queue below is now live again.** New recipes should declare `apiVersion: ap.recipe/v0.1` and follow the contribution checklist in [`README.md`](./README.md). Top of queue: **ZeroClaw** (30,171 ★, Rust).
 
-Tracking agents we want to validate against `ap.recipe/v0`. A row flips to `[x]` only when the recipe is committed **and** `tools/run_recipe.py` returns `PASS` against at least one model cell.
+Tracking agents we want to validate against `ap.recipe/v0.1`. A row flips to `[x]` only when the recipe is committed **and** `tools/run_recipe.py` returns `PASS` against at least one model cell.
 
 **Status legend**
 
