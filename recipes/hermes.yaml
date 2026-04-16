@@ -133,13 +133,17 @@ smoke:
       verdict: PASS
       wall_time_s: 12.86
       notes: Adopts persona cleanly. Response duplicated in stdout (Rich + plain).
+      category: PASS
+      detail: ''
     - model: openai/gpt-4o-mini
       verdict: PASS
       wall_time_s: 12.69
       notes: Adopts persona cleanly. Single-copy output.
+      category: PASS
+      detail: ''
   known_incompatible_cells:
     - model: google/gemini-2.5-flash
-      verdict: STOCHASTIC
+      verdict: FAIL
       notes: |
         Initial recon (2026-04-15) observed a deterministic FAIL:
         "I am a large language model, trained by Google." Plumbing
@@ -153,6 +157,8 @@ smoke:
         does not reliably adopt the Hermes persona, so consumers that
         care about persona cohesion should not pick it.
 
+      category: ASSERT_FAIL
+      detail: flapping verdict — see notes
 metadata:
   recon_date: "2026-04-15"
   recon_by: agent-playground-recon (subagent) + clawdbot-hermes-helper (Solvr)

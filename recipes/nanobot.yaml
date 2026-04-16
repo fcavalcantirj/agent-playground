@@ -159,6 +159,8 @@ smoke:
         string. Second attempt with `provider: "openrouter"` explicit
         + bare model ID succeeded.
       wall_time_s: 9.12
+      category: PASS
+      detail: ''
   known_quirks:
     - quirk: Rich streaming UI emits ANSI cursor/spinner codes even with --no-markdown
       impact: |

@@ -131,6 +131,8 @@ smoke:
         response_contains_name passes on the agent's own project-name
         self-identification.
       wall_time_s: 62.25
+      category: PASS
+      detail: ''
   known_weak_probes:
     - prompt: "who are you?"
       problem: |
@@ -153,6 +155,8 @@ smoke:
         contract or system-prompt shape. Not a recipe bug. Claude
         models via openrouter work fine.
 
+      category: ASSERT_FAIL
+      detail: "Agent loop exits with `attempts: []` and \"⚠️ Agent couldn't\ngenerate a response\""
 metadata:
   recon_date: "2026-04-15"
   recon_by: main-conversation (direct source read; Solvr rooms for openclaw probed — none available)

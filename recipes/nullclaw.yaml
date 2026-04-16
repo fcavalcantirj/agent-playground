@@ -143,6 +143,8 @@ smoke:
         and boots in <8 ms. Model adopted a direct factual tone (not
         the blank-slate persona) because the prompt asked "what is X"
         rather than "who are you".
+      category: PASS
+      detail: ''
   known_weak_probes:
     - prompt: "who are you?"
       problem: |
