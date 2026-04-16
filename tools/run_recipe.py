@@ -635,6 +635,17 @@ def run_cell(
     # See RESEARCH.md §Pitfall 2 + docker/cli#5954.
     cidfile = Path(f"/tmp/ap-cid-{uuid.uuid4().hex}.cid")
 
+    # Env file: keys delivered via `docker run -e KEY=VAL` leak to the kernel
+    # process listing (ps / /proc/*/cmdline). `--env-file` reads at docker CLI
+    # time and sets the var in the container without exposing the value on
+    # the argv. Chmod 600, unlinked in finally below.
+    env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
+    env_file.write_text(f"{api_key_var}={api_key_val}\n")
+    try:
+        env_file.chmod(0o600)
+    except OSError:
+        pass
+
     # Timeout precedence: explicit kwarg > recipe.smoke.timeout_s > default.
     smoke = recipe["smoke"]
     if smoke_timeout_s is None:
@@ -643,18 +654,14 @@ def run_cell(
     docker_cmd = [
         "docker", "run", "--rm",
         f"--cidfile={cidfile}",
-        "-e", f"{api_key_var}={api_key_val}",
+        "--env-file", str(env_file),
         "-v", f"{data_dir}:{container_mount}",
     ]
     if entrypoint:
         docker_cmd += ["--entrypoint", entrypoint]
     docker_cmd += [image_tag] + argv
 
-    safe_cmd = [
-        a if not a.startswith(f"{api_key_var}=") else f"{api_key_var}=<REDACTED>"
-        for a in docker_cmd
-    ]
-    log(f"  $ {' '.join(safe_cmd)}", quiet=quiet)
+    log(f"  $ {' '.join(docker_cmd)}", quiet=quiet)
 
     rc = -1
     stdout = ""
@@ -706,12 +713,15 @@ def run_cell(
                     timeout=10, check=False, capture_output=True,
                 )
     finally:
-        # Cleanup order: data_dir (existing), cidfile (new).
-        # Both with missing_ok / best-effort — moby/moby#20766.
+        # Cleanup order: data_dir, cidfile, env_file. All best-effort.
         if data_dir.exists():
             run(["rm", "-rf", str(data_dir)], check=False)
         try:
             cidfile.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            env_file.unlink(missing_ok=True)
         except OSError:
             pass
 
