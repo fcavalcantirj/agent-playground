@@ -240,11 +240,11 @@ Options:
 
 | Flag | Effect |
 |---|---|
-| `--json` | Emit a single JSON object on stdout with the verdict and suppress human-readable banners. Shape: `{recipe, model, verdict, exit_code, wall_time_s, filtered_payload, stderr_tail, pass_if, prompt}`. Errors during setup (missing Docker, missing API key) still go to stderr as text. |
-| `--all-cells` | Sweep every entry in `smoke.verified_cells[]`, running each as its own cell. When combined with `--json`, emits one JSON object per line (JSONL). Updates `wall_time_s` for each cell in the recipe file. Exits non-zero if any cell regresses to `FAIL`. |
+| `--json` | Emit a single JSON object on stdout with the verdict and suppress human-readable banners. Shape: `{recipe, model, prompt, pass_if, verdict, expected_verdict, drift, exit_code, wall_time_s, filtered_payload, stderr_tail}`. `expected_verdict` and `drift` are populated from the recipe cell (or default to `PASS`/`false` in single-cell mode). Errors during setup (missing Docker, missing API key) still go to stderr as text. |
+| `--all-cells` | Sweep every entry in `smoke.verified_cells[]`, running each as its own cell. When combined with `--json`, emits one JSON object per line (JSONL). This is the **regression detector**: exit is non-zero only when observed verdict ≠ documented verdict (drift), not when a cell's documented FAIL stays FAIL. Cells that drift are also logged on stderr as `DRIFT: <name> × <model> — expected X, got Y`. |
 | `--no-cache` | Remove the tagged image (`ap-recipe-<name>`) before build/pull. Useful for regression testing against upstream changes. |
 | `--no-disk-check` | Skip the free-space guard. Default is to abort if `/` has less than 5 GB free before a build or pull. |
-| `--write-back / --no-write-back` | In `--all-cells` mode, control whether the recipe file is updated in place with new `wall_time_s`/`verdict`. Default is `--write-back`. |
+| `--write-back / --no-write-back` | In `--all-cells` mode, control whether the recipe file is updated in place. Only `wall_time_s` is ever updated; the authored `verdict` is intentionally left alone so drift is reported via exit code, never by silent mutation. Default is `--write-back`. |
 
 ### 8.2 API key resolution
 

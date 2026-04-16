@@ -359,9 +359,12 @@ def emit_human(result: dict) -> None:
 
 # ---------- write-back ----------
 
-def writeback_cell(recipe_path: Path, model: str, wall_time_s: float, verdict: str) -> None:
-    """Round-trip update of verified_cells[].wall_time_s / verdict for <model>.
+def writeback_cell(recipe_path: Path, model: str, wall_time_s: float) -> None:
+    """Round-trip update of verified_cells[].wall_time_s for <model>.
 
+    Only wall_time_s is updated. The documented `verdict` is authored by the
+    recon contributor and is intentionally NOT overwritten — drift is reported
+    via the process exit code, not by silently mutating the recipe.
     Uses ruamel.yaml round-trip so comments and ordering survive.
     """
     text = recipe_path.read_text()
@@ -372,7 +375,6 @@ def writeback_cell(recipe_path: Path, model: str, wall_time_s: float, verdict: s
     for cell in cells:
         if cell.get("model") == model:
             cell["wall_time_s"] = float(round(wall_time_s, 2))
-            cell["verdict"] = verdict
             break
     else:
         return
@@ -389,12 +391,13 @@ def first_pass_cell_model(recipe: dict) -> str | None:
     return None
 
 
-def all_verified_cell_models(recipe: dict) -> list[str]:
-    return [
-        cell["model"]
-        for cell in recipe.get("smoke", {}).get("verified_cells", []) or []
-        if "model" in cell
-    ]
+def all_verified_cells(recipe: dict) -> list[tuple[str, str]]:
+    """Return [(model, documented_verdict), ...] in recipe order."""
+    out: list[tuple[str, str]] = []
+    for cell in recipe.get("smoke", {}).get("verified_cells", []) or []:
+        if "model" in cell:
+            out.append((cell["model"], cell.get("verdict", "PASS")))
+    return out
 
 
 # ---------- main ----------
@@ -488,15 +491,15 @@ def main(argv: list[str] | None = None) -> int:
         quiet=quiet,
     )
 
-    # Determine the cell list
+    # Determine the (model, expected_verdict) list
     if args.all_cells:
-        models = all_verified_cell_models(recipe)
-        if not models:
+        cells = all_verified_cells(recipe)
+        if not cells:
             sys.stderr.write("ERROR: --all-cells but no verified_cells in recipe\n")
             return 2
     else:
         if args.model:
-            models = [args.model]
+            cells = [(args.model, "PASS")]
         else:
             default = first_pass_cell_model(recipe)
             if default is None:
@@ -504,11 +507,12 @@ def main(argv: list[str] | None = None) -> int:
                     "ERROR: no model on CLI and no PASS verified_cell to fall back on\n"
                 )
                 return 2
-            models = [default]
+            cells = [(default, "PASS")]
 
-    any_fail = False
-    for model in models:
-        log(f"\n--- cell: {name} × {model} ---", quiet=quiet)
+    any_drift = False
+    any_nonpass = False
+    for model, expected in cells:
+        log(f"\n--- cell: {name} × {model} (expected {expected}) ---", quiet=quiet)
         result = run_cell(
             recipe,
             image_tag=image_tag,
@@ -518,6 +522,9 @@ def main(argv: list[str] | None = None) -> int:
             api_key_val=api_key_val,
             quiet=quiet,
         )
+        result["expected_verdict"] = expected
+        result["drift"] = result["verdict"] != expected
+
         if args.json:
             emit_json(result)
         else:
@@ -529,15 +536,23 @@ def main(argv: list[str] | None = None) -> int:
                     recipe_path,
                     model=model,
                     wall_time_s=result["wall_time_s"],
-                    verdict=result["verdict"],
                 )
             except Exception as e:
                 sys.stderr.write(f"WARN: write-back failed for {model}: {e}\n")
 
+        if result["drift"]:
+            any_drift = True
+            sys.stderr.write(
+                f"DRIFT: {name} × {model} — expected {expected}, got {result['verdict']}\n"
+            )
         if result["verdict"] != "PASS":
-            any_fail = True
+            any_nonpass = True
 
-    return 1 if any_fail else 0
+    # --all-cells: regression detector — exit non-zero ONLY on drift.
+    # Single-cell: legacy behavior — exit non-zero if observed != PASS.
+    if args.all_cells:
+        return 1 if any_drift else 0
+    return 1 if any_nonpass else 0
 
 
 if __name__ == "__main__":
