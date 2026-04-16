@@ -132,15 +132,18 @@ def main():
     recipe = yaml.safe_load(recipe_path.read_text())
     name = recipe["name"]
 
-    # Only `upstream_dockerfile` build mode is supported today.
+    # Supported build modes: upstream_dockerfile (clone + build) and image_pull (docker pull).
     build_mode = recipe["build"].get("mode", "upstream_dockerfile")
-    if build_mode != "upstream_dockerfile":
+    if build_mode not in ("upstream_dockerfile", "image_pull"):
         raise SystemExit(f"ERROR: unsupported build.mode: {build_mode}")
 
-    repo_url = recipe["source"]["repo"]
-    ref = recipe["source"]["ref"]
+    # upstream_dockerfile-only fields
+    repo_url = recipe.get("source", {}).get("repo")
+    ref = recipe.get("source", {}).get("ref")
     dockerfile = recipe["build"].get("dockerfile", "Dockerfile")
     context_dir = recipe["build"].get("context", ".")
+    # image_pull-only field
+    pull_image = recipe["build"].get("image")
 
     api_key_var, api_key_val = resolve_api_key(recipe, repo_root)
 
@@ -158,42 +161,59 @@ def main():
     print(f"  api_key:    {api_key_var}=<{len(api_key_val)} chars>", flush=True)
 
     try:
-        # 1. Clone (cached between runs)
-        if not clone_dir.exists():
-            print("\n--- step 1: clone ---", flush=True)
-            run(["git", "clone", "--depth=1", repo_url, str(clone_dir)])
-            # Try to pin to the exact ref; fail-soft if shallow clone can't reach it
-            if ref:
-                print(f"  attempting to pin to {ref[:12]}...", flush=True)
-                rc = run(
-                    ["git", "-C", str(clone_dir), "fetch", "--depth=1", "origin", ref],
-                    check=False,
-                )
-                if rc == 0:
-                    run(["git", "-C", str(clone_dir), "checkout", "FETCH_HEAD"], check=False)
-                else:
-                    print(f"  WARN: could not fetch pinned ref {ref}, using shallow HEAD", flush=True)
-        else:
-            print("\n--- step 1: clone (cached) ---", flush=True)
+        if build_mode == "upstream_dockerfile":
+            # 1. Clone (cached between runs)
+            if not clone_dir.exists():
+                print("\n--- step 1: clone ---", flush=True)
+                run(["git", "clone", "--depth=1", repo_url, str(clone_dir)])
+                # Try to pin to the exact ref; fail-soft if shallow clone can't reach it
+                if ref:
+                    print(f"  attempting to pin to {ref[:12]}...", flush=True)
+                    rc = run(
+                        ["git", "-C", str(clone_dir), "fetch", "--depth=1", "origin", ref],
+                        check=False,
+                    )
+                    if rc == 0:
+                        run(["git", "-C", str(clone_dir), "checkout", "FETCH_HEAD"], check=False)
+                    else:
+                        print(f"  WARN: could not fetch pinned ref {ref}, using shallow HEAD", flush=True)
+            else:
+                print("\n--- step 1: clone (cached) ---", flush=True)
 
-        # 2. Build (cached by image tag)
-        rc, _, _ = run(
-            ["docker", "image", "inspect", image_tag],
-            check=False,
-            capture=True,
-        )
-        if rc != 0:
-            print("\n--- step 2: build (image missing, building cold) ---", flush=True)
-            print(f"  NOTE: hermes cold build ~7 min. Streaming...", flush=True)
-            run([
-                "docker", "build",
-                "--progress=plain",
-                "-t", image_tag,
-                "-f", str(clone_dir / dockerfile),
-                str(clone_dir / context_dir),
-            ])
-        else:
-            print("\n--- step 2: build (image cached) ---", flush=True)
+            # 2. Build (cached by image tag)
+            rc, _, _ = run(
+                ["docker", "image", "inspect", image_tag],
+                check=False,
+                capture=True,
+            )
+            if rc != 0:
+                print("\n--- step 2: build (image missing, building cold) ---", flush=True)
+                run([
+                    "docker", "build",
+                    "--progress=plain",
+                    "-t", image_tag,
+                    "-f", str(clone_dir / dockerfile),
+                    str(clone_dir / context_dir),
+                ])
+            else:
+                print("\n--- step 2: build (image cached) ---", flush=True)
+
+        elif build_mode == "image_pull":
+            if not pull_image:
+                raise SystemExit("ERROR: build.mode=image_pull requires build.image")
+            print(f"\n--- step 1: image_pull ({pull_image}) ---", flush=True)
+            rc, _, _ = run(
+                ["docker", "image", "inspect", image_tag],
+                check=False,
+                capture=True,
+            )
+            if rc != 0:
+                print(f"  pulling {pull_image}...", flush=True)
+                run(["docker", "pull", pull_image])
+                print(f"  tagging as {image_tag}...", flush=True)
+                run(["docker", "tag", pull_image, image_tag])
+            else:
+                print(f"  cached as {image_tag}", flush=True)
 
         # 3. Substitute variables in argv
         print("\n--- step 3: substitute argv ---", flush=True)
