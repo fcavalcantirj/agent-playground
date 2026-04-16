@@ -303,6 +303,9 @@ def substitute_argv(argv: list[str], prompt: str, model: str) -> list[str]:
     return out
 
 
+AWK_FILTER_TIMEOUT_S = 30
+
+
 def apply_stdout_filter(raw: str, spec: Any) -> str:
     if spec is None:
         return raw
@@ -312,9 +315,19 @@ def apply_stdout_filter(raw: str, spec: Any) -> str:
     if engine != "awk":
         raise SystemExit(f"ERROR: unsupported stdout_filter.engine: {engine}")
     program = spec["program"]
-    proc = subprocess.run(
-        ["awk", program], input=raw, capture_output=True, text=True
-    )
+    try:
+        proc = subprocess.run(
+            ["awk", program],
+            input=raw,
+            capture_output=True,
+            text=True,
+            timeout=AWK_FILTER_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # Pathological awk program (infinite loop, runaway regex backtracking).
+        # Fail-open to raw payload so the pass_if gate can still run — an empty
+        # return would mask all downstream verdicts.
+        return raw
     return proc.stdout
 
 
@@ -553,10 +566,21 @@ def ensure_image(
                         quiet=quiet,
                     )
                 elif rc2 == 0:
-                    run(
+                    rc3, _, se3, co_to = run_with_timeout(
                         ["git", "-C", str(clone_dir), "checkout", "FETCH_HEAD"],
-                        check=False,
+                        timeout_s=60,
                     )
+                    if co_to:
+                        log(
+                            "  WARN: checkout FETCH_HEAD timeout — using shallow HEAD",
+                            quiet=quiet,
+                        )
+                    elif rc3 != 0:
+                        tail = (se3 or "").strip().splitlines()[-1:] or [""]
+                        log(
+                            f"  WARN: checkout FETCH_HEAD failed (rc={rc3}): {tail[0][:200]} — using shallow HEAD",
+                            quiet=quiet,
+                        )
                 else:
                     log(
                         f"  WARN: could not fetch pinned ref {ref}, using shallow HEAD",
