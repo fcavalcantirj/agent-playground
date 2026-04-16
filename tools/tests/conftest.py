@@ -53,6 +53,129 @@ def mock_subprocess(monkeypatch):
 
 
 @pytest.fixture
+def mock_subprocess_timeout(monkeypatch):
+    """Factory: configure subprocess.run to raise TimeoutExpired on docker run,
+    return success on cleanup calls (docker kill, docker rm, rm -rf).
+
+    Optionally records every non-docker-run invocation so tests can assert the
+    cleanup path (docker kill / docker rm -f) fired. Per Phase 10 RESEARCH.md
+    §Pitfall 5 — TimeoutExpired injection is what drives the TIMEOUT category
+    code path; the recorded invocations list is what lets W5's
+    `test_docker_kill_invoked_on_timeout` assert the load-bearing D-03 promise
+    that `docker kill <cid>` + `docker rm -f <cid>` actually fire on timeout.
+    """
+
+    recorded: list[list[str]] = []
+
+    def _configure(timeout_s: int = 1, *, record: bool = False):
+        def fake_run(cmd, **kwargs):
+            if len(cmd) >= 2 and list(cmd[:2]) == ["docker", "run"]:
+                raise subprocess.TimeoutExpired(
+                    cmd=cmd, timeout=timeout_s, output="", stderr=""
+                )
+            if record:
+                recorded.append(list(cmd))
+            # docker kill, docker rm -f, rm -rf (cleanup), docker version (preflight) etc.
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="" if kwargs.get("capture_output") else None,
+                stderr="" if kwargs.get("capture_output") else None,
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        return recorded
+
+    return _configure
+
+
+@pytest.fixture
+def mock_subprocess_dispatch(monkeypatch):
+    """Factory: per-command return code dispatcher.
+
+    Usage:
+        mock_subprocess_dispatch({
+            ("git", "clone"): (0, "", ""),
+            ("docker", "build"): (125, "", "error response"),
+            ("docker", "image", "inspect"): (1, "", ""),
+        }, default=(0, "", ""))
+
+    Dispatches by argv prefix — first matching tuple wins. The default tuple
+    handles any command not explicitly mapped. Used by Phase 10 category tests
+    to drive BUILD_FAIL / PULL_FAIL / CLONE_FAIL / INVOKE_FAIL paths by giving
+    each shelled-out tool a distinct return code.
+    """
+
+    def _configure(rules: dict, *, default=(0, "", "")):
+        def fake_run(cmd, **kwargs):
+            for prefix, (rc, so, se) in rules.items():
+                if len(cmd) >= len(prefix) and tuple(cmd[: len(prefix)]) == prefix:
+                    return subprocess.CompletedProcess(
+                        args=cmd,
+                        returncode=rc,
+                        stdout=so if kwargs.get("capture_output") else None,
+                        stderr=se if kwargs.get("capture_output") else None,
+                    )
+            rc, so, se = default
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=rc,
+                stdout=so if kwargs.get("capture_output") else None,
+                stderr=se if kwargs.get("capture_output") else None,
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+    return _configure
+
+
+@pytest.fixture
+def fake_cidfile(monkeypatch, tmp_path):
+    """Factory: pre-populate a cidfile on disk with a known container ID.
+
+    Writes the cid text to a real file under `tmp_path` and patches
+    `run_recipe.Path` so any construction of `/tmp/ap-cid-*.cid` inside
+    `run_cell` resolves to that populated file. The point of this fixture is
+    W5's D-03 maturity test: when `run_cell` hits TimeoutExpired, it reads
+    the cidfile, extracts the CID, and calls `docker kill <cid>` + `docker
+    rm -f <cid>`. Pre-populating the cidfile is what lets the test assert
+    the exact CID made it into those calls.
+
+    Usage:
+        cid = "fake-cid-abc123"
+        cidfile_path = fake_cidfile(cid=cid)
+        # Now run_cell's Path(f"/tmp/ap-cid-{uuid.uuid4().hex}.cid")
+        # construction is redirected to cidfile_path; the kill/rm reap path
+        # reads the pre-populated content and targets the known CID.
+
+    Returns: Path to the on-disk cidfile (already populated with cid text).
+    """
+
+    def _configure(*, cid: str = "fake-cid-abc123") -> Path:
+        cidfile_path = tmp_path / "cidfile.cid"
+        cidfile_path.write_text(cid)
+
+        # Intercept Path construction in run_recipe for the specific cidfile
+        # pattern. run_cell does `cidfile = Path(f"/tmp/ap-cid-{uuid.uuid4().hex}.cid")`,
+        # so we patch run_recipe.Path (the namespace run_cell uses, since run_recipe
+        # imports Path via `from pathlib import Path`) — NOT pathlib.Path globally,
+        # which would break every other code path.
+        import run_recipe as _rr
+        original_path = _rr.Path
+
+        def _path_ctor(arg, *rest, **kwargs):
+            if isinstance(arg, str) and arg.startswith("/tmp/ap-cid-"):
+                return cidfile_path
+            return original_path(arg, *rest, **kwargs)
+
+        monkeypatch.setattr(_rr, "Path", _path_ctor)
+
+        return cidfile_path
+
+    return _configure
+
+
+@pytest.fixture
 def minimal_valid_recipe():
     """A minimal recipe dict that passes lint."""
     return {
