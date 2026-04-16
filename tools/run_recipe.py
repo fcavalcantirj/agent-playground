@@ -1,52 +1,60 @@
 #!/usr/bin/env python3
-"""Minimal Agent Playground recipe runner.
+"""Agent Playground recipe runner — ap.recipe/v0.1.
 
-Usage:
-    python3 tools/run_recipe.py <recipe.yaml> <prompt> <model>
+Loads a recipe, produces the container image (upstream_dockerfile build or
+image_pull), runs the agent against a single prompt/model cell (or sweeps
+every verified cell), applies the stdout filter, evaluates the smoke
+pass_if rule, and reports a verdict.
 
-Reads a recipe in the ap.recipe/v0 format, builds the upstream Dockerfile
-if the image is missing, runs the non-interactive invocation with
-substituted $PROMPT and $MODEL, applies the stdout filter, and evaluates
-the smoke pass_if rule.
-
-This is a minimal, iterative runner. It will grow every time a new agent's
-recipe reveals a gap in the format. Today it supports exactly what hermes
-needs; tomorrow it may need to support file-backed secrets (picoclaw),
-REPL-pty invocation, or other shapes.
+Contract: see docs/RECIPE-SCHEMA.md.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+from typing import Any
 
-import yaml
+from ruamel.yaml import YAML
+
+_yaml = YAML(typ="rt")
+_yaml.preserve_quotes = True
+_yaml.width = 4096
+_yaml.indent(mapping=2, sequence=4, offset=2)
+
+DISK_GUARD_FLOOR_GB = 5.0
 
 
-def run(cmd, check=True, capture=False, stream_label=None):
-    """Run a command. Returns (rc, stdout, stderr) if capture else rc."""
-    if stream_label:
-        print(f"  [{stream_label}] $ {' '.join(cmd)}", flush=True)
-    result = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=capture,
-        text=True,
-    )
+# ---------- small helpers ----------
+
+def log(msg: str, *, quiet: bool) -> None:
+    if not quiet:
+        print(msg, flush=True)
+
+
+def run(cmd, check=True, capture=False, quiet=False):
+    """Run a subprocess. Returns (rc, stdout, stderr) if capture else rc."""
+    result = subprocess.run(cmd, check=False, capture_output=capture, text=True)
     if check and result.returncode != 0:
         if capture:
             sys.stderr.write(result.stderr or "")
-        raise SystemExit(f"ERROR: command failed (exit {result.returncode}): {' '.join(cmd)}")
+        raise SystemExit(
+            f"ERROR: command failed (exit {result.returncode}): {' '.join(cmd)}"
+        )
     if capture:
         return result.returncode, result.stdout, result.stderr
     return result.returncode
 
 
 def load_dotenv(path: Path) -> dict:
-    """Naive .env parser — KEY=VALUE, ignores comments."""
-    env = {}
+    env: dict[str, str] = {}
     if not path.exists():
         return env
     for line in path.read_text().splitlines():
@@ -60,11 +68,15 @@ def load_dotenv(path: Path) -> dict:
 
 
 def resolve_api_key(recipe: dict, repo_root: Path) -> tuple[str, str]:
-    """Return (env_var_name, value). Falls back to .env and common aliases."""
     var_name = recipe["runtime"]["process_env"]["api_key"]
+    fallback = recipe["runtime"]["process_env"].get("api_key_fallback")
     dotenv = load_dotenv(repo_root / ".env")
 
-    aliases = [var_name, "OPEN_ROUTER_API_TOKEN", "OPENROUTER_API_KEY"]
+    aliases = [var_name]
+    if fallback:
+        aliases.append(fallback)
+    aliases += ["OPENROUTER_API_KEY", "OPEN_ROUTER_API_TOKEN"]
+
     for alias in aliases:
         val = os.environ.get(alias) or dotenv.get(alias)
         if val:
@@ -76,215 +88,456 @@ def resolve_api_key(recipe: dict, repo_root: Path) -> tuple[str, str]:
 
 
 def substitute_argv(argv: list[str], prompt: str, model: str) -> list[str]:
-    """Replace $PROMPT and $MODEL tokens inside each argv element."""
     subs = {"$PROMPT": prompt, "$MODEL": model}
-    out = []
+    out: list[str] = []
     for arg in argv:
         if arg in subs:
             out.append(subs[arg])
-        else:
-            # also handle embedded substitution like "prefix-$MODEL-suffix"
-            s = arg
-            for k, v in subs.items():
-                s = s.replace(k, v)
-            out.append(s)
+            continue
+        s = arg
+        for k, v in subs.items():
+            s = s.replace(k, v)
+        out.append(s)
     return out
 
 
-def apply_stdout_filter(raw: str, awk_program: str) -> str:
-    """Run the raw stdout through the recipe's awk filter program."""
+def apply_stdout_filter(raw: str, spec: Any) -> str:
+    if spec is None:
+        return raw
+    engine = spec.get("engine")
+    if engine is None:
+        return raw
+    if engine != "awk":
+        raise SystemExit(f"ERROR: unsupported stdout_filter.engine: {engine}")
+    program = spec["program"]
     proc = subprocess.run(
-        ["awk", awk_program],
-        input=raw,
-        capture_output=True,
-        text=True,
+        ["awk", program], input=raw, capture_output=True, text=True
     )
     return proc.stdout
 
 
-def evaluate_pass_if(rule: str, payload: str, name: str, case_insensitive: bool) -> str:
-    """Return PASS or FAIL for a given smoke.pass_if rule."""
-    if rule == "response_contains_name":
-        needle = name
+def evaluate_pass_if(
+    rule: str,
+    *,
+    payload: str,
+    name: str,
+    exit_code: int,
+    smoke: dict,
+) -> str:
+    case_insensitive = bool(smoke.get("case_insensitive", False))
+
+    def _contains(needle: str) -> bool:
         hay = payload
+        n = needle
         if case_insensitive:
-            needle = needle.lower()
             hay = hay.lower()
-        return "PASS" if needle in hay else "FAIL"
+            n = n.lower()
+        return n in hay
+
+    if rule == "response_contains_name":
+        return "PASS" if _contains(name) else "FAIL"
+    if rule == "response_contains_string":
+        needle = smoke.get("needle")
+        if needle is None:
+            return "ERROR(missing smoke.needle)"
+        return "PASS" if _contains(needle) else "FAIL"
+    if rule == "response_not_contains":
+        needle = smoke.get("needle")
+        if needle is None:
+            return "ERROR(missing smoke.needle)"
+        return "FAIL" if _contains(needle) else "PASS"
+    if rule == "response_regex":
+        pattern = smoke.get("regex")
+        if pattern is None:
+            return "ERROR(missing smoke.regex)"
+        flags = re.IGNORECASE if case_insensitive else 0
+        return "PASS" if re.search(pattern, payload, flags) else "FAIL"
+    if rule == "exit_zero":
+        return "PASS" if exit_code == 0 else "FAIL"
     return f"UNKNOWN(pass_if={rule})"
 
 
-def main():
-    if len(sys.argv) != 4:
-        sys.stderr.write(
-            "usage: run_recipe.py <recipe.yaml> <prompt> <model>\n"
-            "  e.g. run_recipe.py recipes/hermes.yaml 'who are you?' 'openai/gpt-4o-mini'\n"
+# ---------- disk guard ----------
+
+def disk_free_gb(path: str = "/") -> float:
+    usage = shutil.disk_usage(path)
+    return usage.free / (1024 ** 3)
+
+
+def enforce_disk_guard(*, skip: bool, quiet: bool) -> None:
+    if skip:
+        return
+    free_gb = disk_free_gb("/")
+    if free_gb < DISK_GUARD_FLOOR_GB:
+        raise SystemExit(
+            f"ERROR: disk guard tripped — only {free_gb:.1f} GB free on / "
+            f"(floor is {DISK_GUARD_FLOOR_GB} GB). "
+            f"Free space, or pass --no-disk-check to bypass."
         )
-        return 2
+    log(f"  disk_free: {free_gb:.1f} GB (floor {DISK_GUARD_FLOOR_GB} GB)", quiet=quiet)
 
-    recipe_path = Path(sys.argv[1]).resolve()
-    prompt = sys.argv[2]
-    model = sys.argv[3]
 
-    # Repo root = parent of `recipes/` or `tools/`
-    repo_root = recipe_path.parent.parent
+# ---------- image lifecycle ----------
 
-    recipe = yaml.safe_load(recipe_path.read_text())
-    name = recipe["name"]
+def image_exists(tag: str) -> bool:
+    rc, _, _ = run(
+        ["docker", "image", "inspect", tag], check=False, capture=True
+    )
+    return rc == 0
 
-    # Supported build modes: upstream_dockerfile (clone + build) and image_pull (docker pull).
-    build_mode = recipe["build"].get("mode", "upstream_dockerfile")
+
+def image_remove(tag: str) -> None:
+    run(["docker", "image", "rm", "-f", tag], check=False, capture=True)
+
+
+def ensure_image(
+    recipe: dict,
+    *,
+    image_tag: str,
+    no_cache: bool,
+    no_disk_check: bool,
+    quiet: bool,
+) -> None:
+    build = recipe["build"]
+    build_mode = build.get("mode", "upstream_dockerfile")
     if build_mode not in ("upstream_dockerfile", "image_pull"):
         raise SystemExit(f"ERROR: unsupported build.mode: {build_mode}")
 
-    # upstream_dockerfile-only fields
-    repo_url = recipe.get("source", {}).get("repo")
-    ref = recipe.get("source", {}).get("ref")
-    dockerfile = recipe["build"].get("dockerfile", "Dockerfile")
-    context_dir = recipe["build"].get("context", ".")
-    # image_pull-only field
-    pull_image = recipe["build"].get("image")
+    if no_cache and image_exists(image_tag):
+        log(f"  --no-cache: removing {image_tag}", quiet=quiet)
+        image_remove(image_tag)
+
+    if image_exists(image_tag):
+        log(f"  image cached: {image_tag}", quiet=quiet)
+        return
+
+    enforce_disk_guard(skip=no_disk_check, quiet=quiet)
+
+    if build_mode == "upstream_dockerfile":
+        source = recipe["source"]
+        repo_url = source["repo"]
+        ref = source.get("ref")
+        dockerfile = build.get("dockerfile", "Dockerfile")
+        context_dir = build.get("context", ".")
+
+        clone_dir = Path(f"/tmp/ap-recipe-{recipe['name']}-clone")
+        if not clone_dir.exists():
+            log(f"  cloning {repo_url} → {clone_dir}", quiet=quiet)
+            run(["git", "clone", "--depth=1", repo_url, str(clone_dir)])
+            if ref:
+                log(f"  attempting to pin {ref[:12]}...", quiet=quiet)
+                rc = run(
+                    ["git", "-C", str(clone_dir), "fetch", "--depth=1", "origin", ref],
+                    check=False,
+                )
+                if rc == 0:
+                    run(
+                        ["git", "-C", str(clone_dir), "checkout", "FETCH_HEAD"],
+                        check=False,
+                    )
+                else:
+                    log(
+                        f"  WARN: could not fetch pinned ref {ref}, using shallow HEAD",
+                        quiet=quiet,
+                    )
+        else:
+            log(f"  clone cached: {clone_dir}", quiet=quiet)
+
+        log(f"  building {image_tag} ...", quiet=quiet)
+        run([
+            "docker", "build",
+            "--progress=plain",
+            "-t", image_tag,
+            "-f", str(clone_dir / dockerfile),
+            str(clone_dir / context_dir),
+        ])
+        return
+
+    # image_pull
+    pull_image = build.get("image")
+    if not pull_image:
+        raise SystemExit("ERROR: build.mode=image_pull requires build.image")
+    log(f"  pulling {pull_image} → {image_tag}", quiet=quiet)
+    run(["docker", "pull", pull_image])
+    run(["docker", "tag", pull_image, image_tag])
+
+
+# ---------- cell execution ----------
+
+def run_cell(
+    recipe: dict,
+    *,
+    image_tag: str,
+    prompt: str,
+    model: str,
+    api_key_var: str,
+    api_key_val: str,
+    quiet: bool,
+) -> dict:
+    raw_argv = recipe["invoke"]["spec"]["argv"]
+    argv = substitute_argv(list(raw_argv), prompt, model)
+
+    vol = recipe["runtime"]["volumes"][0]
+    container_mount = vol["container"]
+    entrypoint = recipe["invoke"]["spec"].get("entrypoint")
+    data_dir = Path(tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-"))
+
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "-e", f"{api_key_var}={api_key_val}",
+        "-v", f"{data_dir}:{container_mount}",
+    ]
+    if entrypoint:
+        docker_cmd += ["--entrypoint", entrypoint]
+    docker_cmd += [image_tag] + argv
+
+    safe_cmd = [
+        a if not a.startswith(f"{api_key_var}=") else f"{api_key_var}=<REDACTED>"
+        for a in docker_cmd
+    ]
+    log(f"  $ {' '.join(safe_cmd)}", quiet=quiet)
+
+    t0 = time.time()
+    try:
+        rc, stdout, stderr = run(docker_cmd, check=False, capture=True)
+    finally:
+        if data_dir.exists():
+            run(["rm", "-rf", str(data_dir)], check=False)
+    wall = time.time() - t0
+
+    filtered = apply_stdout_filter(
+        stdout, recipe["invoke"]["spec"].get("stdout_filter")
+    )
+
+    smoke = recipe["smoke"]
+    verdict = evaluate_pass_if(
+        smoke["pass_if"],
+        payload=filtered,
+        name=recipe["name"],
+        exit_code=rc,
+        smoke=smoke,
+    )
+
+    return {
+        "recipe": recipe["name"],
+        "model": model,
+        "prompt": prompt,
+        "pass_if": smoke["pass_if"],
+        "verdict": verdict,
+        "exit_code": rc,
+        "wall_time_s": round(wall, 2),
+        "filtered_payload": filtered,
+        "stderr_tail": "\n".join((stderr or "").splitlines()[-20:]) or None,
+    }
+
+
+# ---------- reporting ----------
+
+def emit_json(result: dict) -> None:
+    print(json.dumps(result), flush=True)
+
+
+def emit_human(result: dict) -> None:
+    print()
+    print("=" * 70)
+    print(f"  VERDICT: {result['verdict']}")
+    print(f"  recipe:  {result['recipe']}")
+    print(f"  model:   {result['model']}")
+    print(f"  pass_if: {result['pass_if']}")
+    print(f"  exit:    {result['exit_code']}")
+    print(f"  wall:    {result['wall_time_s']}s")
+    print("=" * 70)
+    print("FILTERED PAYLOAD:")
+    print(result["filtered_payload"])
+    print("=" * 70)
+    if result["exit_code"] != 0 or result["verdict"] != "PASS":
+        if result["stderr_tail"]:
+            print("RAW STDERR (last 20 lines):")
+            print(result["stderr_tail"])
+            print("-" * 70)
+
+
+# ---------- write-back ----------
+
+def writeback_cell(recipe_path: Path, model: str, wall_time_s: float, verdict: str) -> None:
+    """Round-trip update of verified_cells[].wall_time_s / verdict for <model>.
+
+    Uses ruamel.yaml round-trip so comments and ordering survive.
+    """
+    text = recipe_path.read_text()
+    data = _yaml.load(text)
+    cells = data.get("smoke", {}).get("verified_cells")
+    if cells is None:
+        return
+    for cell in cells:
+        if cell.get("model") == model:
+            cell["wall_time_s"] = float(round(wall_time_s, 2))
+            cell["verdict"] = verdict
+            break
+    else:
+        return
+    with recipe_path.open("w") as f:
+        _yaml.dump(data, f)
+
+
+# ---------- model / prompt resolution ----------
+
+def first_pass_cell_model(recipe: dict) -> str | None:
+    for cell in recipe.get("smoke", {}).get("verified_cells", []) or []:
+        if cell.get("verdict") == "PASS":
+            return cell.get("model")
+    return None
+
+
+def all_verified_cell_models(recipe: dict) -> list[str]:
+    return [
+        cell["model"]
+        for cell in recipe.get("smoke", {}).get("verified_cells", []) or []
+        if "model" in cell
+    ]
+
+
+# ---------- main ----------
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="run_recipe.py",
+        description="Agent Playground recipe runner (ap.recipe/v0.1)",
+    )
+    p.add_argument("recipe", help="Path to recipe YAML (recipes/<agent>.yaml)")
+    p.add_argument(
+        "prompt",
+        nargs="?",
+        default=None,
+        help="Prompt to send. Falls back to smoke.prompt in the recipe.",
+    )
+    p.add_argument(
+        "model",
+        nargs="?",
+        default=None,
+        help="Model to use. Falls back to first PASS verified_cell.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit structured JSON verdict(s).")
+    p.add_argument(
+        "--all-cells",
+        action="store_true",
+        help="Sweep every verified_cell in the recipe.",
+    )
+    p.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Remove the tagged image before build/pull.",
+    )
+    p.add_argument(
+        "--no-disk-check",
+        action="store_true",
+        help="Skip the 5 GB free-space guard before build/pull.",
+    )
+    p.add_argument(
+        "--write-back",
+        dest="write_back",
+        action="store_true",
+        default=True,
+        help="In --all-cells mode, write wall_time_s/verdict back to the recipe (default).",
+    )
+    p.add_argument(
+        "--no-write-back",
+        dest="write_back",
+        action="store_false",
+        help="In --all-cells mode, do not modify the recipe file.",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    recipe_path = Path(args.recipe).resolve()
+    if not recipe_path.exists():
+        sys.stderr.write(f"ERROR: recipe not found: {recipe_path}\n")
+        return 2
+
+    repo_root = recipe_path.parent.parent
+    recipe = _yaml.load(recipe_path.read_text())
+    name = recipe["name"]
+    image_tag = f"ap-recipe-{name}"
+
+    prompt = args.prompt
+    if prompt is None:
+        prompt = recipe.get("smoke", {}).get("prompt")
+        if not prompt:
+            sys.stderr.write(
+                "ERROR: no prompt provided on CLI and smoke.prompt missing from recipe\n"
+            )
+            return 2
+
+    quiet = args.json  # suppress banners in JSON mode
 
     api_key_var, api_key_val = resolve_api_key(recipe, repo_root)
 
-    image_tag = f"ap-recipe-{name}"
-    clone_dir = Path(f"/tmp/ap-recipe-{name}-clone")
-    data_dir = Path(tempfile.mkdtemp(prefix=f"ap-recipe-{name}-data-"))
+    log(f"=== ap-recipe-runner :: {name} ===", quiet=quiet)
+    log(f"  recipe:   {recipe_path}", quiet=quiet)
+    log(f"  image:    {image_tag}", quiet=quiet)
+    log(f"  api_key:  {api_key_var}=<{len(api_key_val)} chars>", quiet=quiet)
 
-    print(f"=== ap-recipe-runner :: {name} ===", flush=True)
-    print(f"  recipe:     {recipe_path}", flush=True)
-    print(f"  prompt:     {prompt!r}", flush=True)
-    print(f"  model:      {model}", flush=True)
-    print(f"  image:      {image_tag}", flush=True)
-    print(f"  clone:      {clone_dir}", flush=True)
-    print(f"  data_dir:   {data_dir}", flush=True)
-    print(f"  api_key:    {api_key_var}=<{len(api_key_val)} chars>", flush=True)
+    ensure_image(
+        recipe,
+        image_tag=image_tag,
+        no_cache=args.no_cache,
+        no_disk_check=args.no_disk_check,
+        quiet=quiet,
+    )
 
-    try:
-        if build_mode == "upstream_dockerfile":
-            # 1. Clone (cached between runs)
-            if not clone_dir.exists():
-                print("\n--- step 1: clone ---", flush=True)
-                run(["git", "clone", "--depth=1", repo_url, str(clone_dir)])
-                # Try to pin to the exact ref; fail-soft if shallow clone can't reach it
-                if ref:
-                    print(f"  attempting to pin to {ref[:12]}...", flush=True)
-                    rc = run(
-                        ["git", "-C", str(clone_dir), "fetch", "--depth=1", "origin", ref],
-                        check=False,
-                    )
-                    if rc == 0:
-                        run(["git", "-C", str(clone_dir), "checkout", "FETCH_HEAD"], check=False)
-                    else:
-                        print(f"  WARN: could not fetch pinned ref {ref}, using shallow HEAD", flush=True)
-            else:
-                print("\n--- step 1: clone (cached) ---", flush=True)
+    # Determine the cell list
+    if args.all_cells:
+        models = all_verified_cell_models(recipe)
+        if not models:
+            sys.stderr.write("ERROR: --all-cells but no verified_cells in recipe\n")
+            return 2
+    else:
+        if args.model:
+            models = [args.model]
+        else:
+            default = first_pass_cell_model(recipe)
+            if default is None:
+                sys.stderr.write(
+                    "ERROR: no model on CLI and no PASS verified_cell to fall back on\n"
+                )
+                return 2
+            models = [default]
 
-            # 2. Build (cached by image tag)
-            rc, _, _ = run(
-                ["docker", "image", "inspect", image_tag],
-                check=False,
-                capture=True,
-            )
-            if rc != 0:
-                print("\n--- step 2: build (image missing, building cold) ---", flush=True)
-                run([
-                    "docker", "build",
-                    "--progress=plain",
-                    "-t", image_tag,
-                    "-f", str(clone_dir / dockerfile),
-                    str(clone_dir / context_dir),
-                ])
-            else:
-                print("\n--- step 2: build (image cached) ---", flush=True)
+    any_fail = False
+    for model in models:
+        log(f"\n--- cell: {name} × {model} ---", quiet=quiet)
+        result = run_cell(
+            recipe,
+            image_tag=image_tag,
+            prompt=prompt,
+            model=model,
+            api_key_var=api_key_var,
+            api_key_val=api_key_val,
+            quiet=quiet,
+        )
+        if args.json:
+            emit_json(result)
+        else:
+            emit_human(result)
 
-        elif build_mode == "image_pull":
-            if not pull_image:
-                raise SystemExit("ERROR: build.mode=image_pull requires build.image")
-            print(f"\n--- step 1: image_pull ({pull_image}) ---", flush=True)
-            rc, _, _ = run(
-                ["docker", "image", "inspect", image_tag],
-                check=False,
-                capture=True,
-            )
-            if rc != 0:
-                print(f"  pulling {pull_image}...", flush=True)
-                run(["docker", "pull", pull_image])
-                print(f"  tagging as {image_tag}...", flush=True)
-                run(["docker", "tag", pull_image, image_tag])
-            else:
-                print(f"  cached as {image_tag}", flush=True)
+        if args.all_cells and args.write_back:
+            try:
+                writeback_cell(
+                    recipe_path,
+                    model=model,
+                    wall_time_s=result["wall_time_s"],
+                    verdict=result["verdict"],
+                )
+            except Exception as e:
+                sys.stderr.write(f"WARN: write-back failed for {model}: {e}\n")
 
-        # 3. Substitute variables in argv
-        print("\n--- step 3: substitute argv ---", flush=True)
-        raw_argv = recipe["invoke"]["spec"]["argv"]
-        argv = substitute_argv(raw_argv, prompt, model)
-        print(f"  raw argv:    {raw_argv}", flush=True)
-        print(f"  subbed argv: {argv}", flush=True)
+        if result["verdict"] != "PASS":
+            any_fail = True
 
-        # 4. Build docker run command
-        vol = recipe["runtime"]["volumes"][0]
-        container_mount = vol["container"]
-        entrypoint = recipe["invoke"]["spec"].get("entrypoint")
-        docker_cmd = [
-            "docker", "run", "--rm",
-            "-e", f"{api_key_var}={api_key_val}",
-            "-v", f"{data_dir}:{container_mount}",
-        ]
-        if entrypoint:
-            docker_cmd += ["--entrypoint", entrypoint]
-        docker_cmd += [image_tag] + argv
-
-        # 5. Run
-        print("\n--- step 4: run ---", flush=True)
-        safe_cmd = [a if not a.startswith(f"{api_key_var}=") else f"{api_key_var}=<REDACTED>" for a in docker_cmd]
-        print(f"  $ {' '.join(safe_cmd)}", flush=True)
-        import time
-        t0 = time.time()
-        rc, stdout, stderr = run(docker_cmd, check=False, capture=True)
-        wall = time.time() - t0
-        print(f"  exit: {rc}  wall: {wall:.1f}s", flush=True)
-
-        # 6. Apply stdout_filter
-        print("\n--- step 5: stdout_filter ---", flush=True)
-        awk_program = recipe["invoke"]["spec"]["stdout_filter"]["program"]
-        filtered = apply_stdout_filter(stdout, awk_program)
-        print(f"  raw stdout bytes:      {len(stdout)}", flush=True)
-        print(f"  filtered payload bytes: {len(filtered)}", flush=True)
-
-        # 7. Evaluate pass_if
-        print("\n--- step 6: evaluate ---", flush=True)
-        pass_if = recipe["smoke"]["pass_if"]
-        case_insensitive = recipe["smoke"].get("case_insensitive", False)
-        verdict = evaluate_pass_if(pass_if, filtered, name, case_insensitive)
-
-        # 8. Report
-        print()
-        print("=" * 70)
-        print(f"  VERDICT: {verdict}")
-        print(f"  pass_if: {pass_if} (case_insensitive={case_insensitive}, needle={name!r})")
-        print(f"  model:   {model}")
-        print(f"  exit:    {rc}")
-        print(f"  wall:    {wall:.1f}s")
-        print("=" * 70)
-        print("FILTERED PAYLOAD:")
-        print(filtered)
-        print("=" * 70)
-        if rc != 0 or verdict != "PASS":
-            print("RAW STDOUT (last 40 lines):")
-            print("\n".join(stdout.splitlines()[-40:]))
-            print("-" * 70)
-            print("RAW STDERR (last 20 lines):")
-            print("\n".join(stderr.splitlines()[-20:]))
-
-        return 0 if verdict == "PASS" else 1
-
-    finally:
-        # Teardown: only data_dir. Keep clone + image cached between runs.
-        if data_dir.exists():
-            run(["rm", "-rf", str(data_dir)], check=False)
-        print(f"\n[teardown] cached: image={image_tag} clone={clone_dir}", flush=True)
-        print(f"[teardown] removed: data_dir={data_dir}", flush=True)
+    return 1 if any_fail else 0
 
 
 if __name__ == "__main__":
