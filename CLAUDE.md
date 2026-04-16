@@ -1,3 +1,44 @@
+# ⚠️ Current project state as of 2026-04-15
+
+**READ THIS FIRST. The content below this banner is historical.**
+
+On 2026-04-15 this project pivoted from the 9-phase GSD roadmap described below to a **recipe-first recon methodology**. Current state:
+
+- **5 agent recipes are validated and committed** under `recipes/` — hermes, openclaw, picoclaw, nullclaw, nanobot. Each has a YAML recipe + a cell-verified PASS against OpenRouter.
+- **2 agents are BLOCKED(format)** with documented reasons — nanoclaw (OneCLI Agent Vault dependency), openhands (trajectory-file responses + deprecated V0 headless + out of clawclones.com scope).
+- **A minimal runner exists** at `tools/run_recipe.py` — ~300 lines of Python, consumes `ap.recipe/v0` YAML, does `docker build`/`docker pull` + sh-chained container invocation + `response_contains_name` pass_if check.
+- **Backlog at `recipes/BACKLOG.md`** contains 35+ more clawclones.com candidates sorted by highest stars descending. **It is ON HOLD** — do not add new recipes until the consolidation phase below lands.
+
+## The next phase (queued, not started)
+
+`.planning/phases/03-recipe-format-v0.1/CONTEXT.md` is a standalone brief for the **format-v0.1 consolidation phase**. This phase must ship before any new agent is added. Scope:
+
+1. `docs/RECIPE-SCHEMA.md` — canonical v0.1 spec formalizing every ad-hoc field that grew across the 5 recipes
+2. Runner v0.1 — new `pass_if` verbs (`exit_zero`, `response_contains_string`, `response_regex`, `response_not_contains`), recipe-sourced smoke prompts, `--json` output, `--all-cells` sweep mode, disk budget guard
+3. Retroactive re-validation — all 5 existing recipes must PASS against the new runner (regression gate)
+4. `recipes/README.md` — user-facing how-to
+5. BACKLOG banner update — "v0.1 canonical"
+
+## Before doing ANY work, read in this order
+
+1. `memory/MEMORY.md` (auto-memory index, likely already in context)
+2. `memory/project_recipe_v0_state.md` — the 5-recipe matrix + every format innovation absorbed
+3. `memory/feedback_recipe_runner_debt.md` — the 8 concrete debt items (this is the phase agenda)
+4. `.planning/phases/03-recipe-format-v0.1/CONTEXT.md` — the phase brief with exit gate
+5. `recipes/BACKLOG.md` — the ON HOLD banner + the post-phase queue (top: ZeroClaw, 30k ★ Rust)
+6. `recipes/hermes.yaml` through `recipes/nanobot.yaml` — the five validated recipes showing every field in use
+7. `tools/run_recipe.py` — the current runner state (2 build modes, 1 pass_if verb, sh-chain entrypoint override)
+
+## Rules for this session (do not break these)
+
+- **Do NOT add a new agent recipe** before format-v0.1 lands. The backlog waits.
+- **Do NOT touch `api/`, `deploy/`, `test/`, or the old substrate** described below — that work was abandoned during the pivot.
+- **Do NOT act on the 9-phase roadmap below as if it were authoritative.** It reflects a direction that was paused on 2026-04-15.
+- **Do NOT delete or rewrite the 5 existing recipes** unless the retroactive re-validation specifically requires a minimal retrofit.
+- When the phase exit gate passes (5 recipes return `"verdict": "PASS"` via `--all-cells --json`), the stars-desc queue in BACKLOG resumes with ZeroClaw.
+
+---
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
