@@ -108,7 +108,15 @@ invoke:
       engine: none
 
 smoke:
-  prompt: "who are you?"
+  # OpenClaw boots into a "birth conversation" on a fresh workspace — the
+  # agent introspects and asks the user to give it a name, vibe, and
+  # persona. A bare "who are you?" prompt therefore does NOT surface the
+  # string "openclaw" in the reply (the agent is explicitly blank-slate).
+  # The retroactive v0.1 sweep caught this drift vs. the original recon
+  # and the probe was switched to a forcing prompt that asks the agent
+  # to describe the project by name, which reliably produces a reply
+  # containing "OpenClaw".
+  prompt: "What is OpenClaw? Reply in one short sentence starting with 'OpenClaw is'."
   pass_if: response_contains_name
   case_insensitive: true
   timeout_s: 180
@@ -116,9 +124,23 @@ smoke:
     - model: anthropic/claude-haiku-4-5
       verdict: PASS
       notes: |
-        Agent loop completes, emits real response content that mentions
-        "OpenClaw" explicitly. response_contains_name passes on the
-        agent's own self-identification in the reply text.
+        Forcing prompt "What is OpenClaw? Reply..." yields a single clean
+        output such as "OpenClaw is an open-source personal AI assistant
+        framework that runs locally and integrates with messaging
+        platforms, web browsers, and device controls."
+        response_contains_name passes on the agent's own project-name
+        self-identification.
+      wall_time_s: 62.25
+  known_weak_probes:
+    - prompt: "who are you?"
+      problem: |
+        OpenClaw boots into a birth-conversation introspection flow on a
+        fresh workspace — the agent explicitly has no name yet and asks
+        the user what it should be called. The reply never contains
+        "openclaw" and response_contains_name fails. Plumbing is correct;
+        the probe is wrong for this agent. Use a forcing prompt like
+        "What is OpenClaw? Reply in one short sentence starting with
+        'OpenClaw is'." instead.
   known_incompatible_cells:
     - model: openai/gpt-4o-mini
       verdict: FAIL

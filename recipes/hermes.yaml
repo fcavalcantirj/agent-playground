@@ -131,15 +131,15 @@ smoke:
   verified_cells:
     - model: anthropic/claude-haiku-4-5
       verdict: PASS
-      wall_time_s: 18.1
+      wall_time_s: 12.86
       notes: Adopts persona cleanly. Response duplicated in stdout (Rich + plain).
     - model: openai/gpt-4o-mini
       verdict: PASS
-      wall_time_s: 10.4
+      wall_time_s: 12.69
       notes: Adopts persona cleanly. Single-copy output.
     - model: google/gemini-2.5-flash
       verdict: FAIL
-      wall_time_s: 10.9
+      wall_time_s: 10.35
       notes: |
         Model did NOT adopt Hermes persona. Answered literally
         "I am a large language model, trained by Google." Recipe

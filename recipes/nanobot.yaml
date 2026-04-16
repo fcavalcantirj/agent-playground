@@ -158,6 +158,7 @@ smoke:
         because nanobot's provider resolver sends the full prefixed
         string. Second attempt with `provider: "openrouter"` explicit
         + bare model ID succeeded.
+      wall_time_s: 9.12
   known_quirks:
     - quirk: Rich streaming UI emits ANSI cursor/spinner codes even with --no-markdown
       impact: |

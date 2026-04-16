@@ -133,7 +133,7 @@ smoke:
   verified_cells:
     - model: anthropic/claude-haiku-4-5
       verdict: PASS
-      wall_time_s: 2.5
+      wall_time_s: 2.42
       notes: |
         Reply: "NullClaw is an AI agent framework that gives you a
         persistent, autonomous assistant with memory, multi-channel
