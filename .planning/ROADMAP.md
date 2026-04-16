@@ -294,6 +294,36 @@ Plans:
 **Plans:** 0 plans
 - [ ] TBD (run /gsd-plan-phase 17 to break down)
 
+### Phase 18: Schema Maturity v0.1.1
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 17
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 18 to break down)
+
+### Phase 19: API Foundation (FastAPI)
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 18
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 19 to break down)
+
+### Phase 20: Frontend Alicerce
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 19
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 20 to break down)
+
 ---
 *Roadmap created: 2026-04-11*
 *Phase 1 planned: 2026-04-13*
