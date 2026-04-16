@@ -1,0 +1,184 @@
+apiVersion: ap.recipe/v0
+name: nanobot
+display_name: nanobot
+description: |
+  Ultra-lightweight personal AI agent by HKUDS — "99% fewer lines of
+  code than OpenClaw", pure Python, pip-installable as `nanobot-ai`.
+  The project PicoClaw was originally ported from this codebase.
+  nanobot dropped LiteLLM on 2026-03-21 in favor of native openai +
+  anthropic SDKs; the `openai_compat_provider` handles OpenRouter +
+  any OpenAI-compatible endpoint. This recipe targets `nanobot agent
+  -m` (non-interactive one-shot) with a pre-templated config.json
+  holding the OpenRouter credentials.
+
+source:
+  repo: https://github.com/HKUDS/nanobot
+  ref: main
+  ref_note: |
+    nanobot is actively developed (releases weekly). v0 recipe tracks
+    main; pyproject reports version 0.1.5.post1 at recon date.
+  upstream_version: v0.1.5.post1
+
+build:
+  mode: upstream_dockerfile
+  dockerfile: Dockerfile
+  context: .
+  notes: |
+    Upstream Dockerfile uses `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`
+    as base, installs Node.js 20 for the WhatsApp bridge, then
+    `uv pip install --system --no-cache .` for the nanobot package.
+    ENTRYPOINT is `entrypoint.sh` which checks writability of
+    ~/.nanobot and `exec nanobot "$@"`. Default CMD is `status`.
+    Image size ~842 MB — smaller than hermes (5.2 GB) or openclaw
+    (~5 GB), larger than picoclaw (200 MB) or nullclaw (8 MB).
+    Cold build time ~2-3 min on M-series (uv is fast).
+
+    Runs as USER nanobot (uid 1000), HOME=/home/nanobot. Bind-mount
+    at /home/nanobot/.nanobot must be writable by uid 1000.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null    # goes into config.json providers.openrouter.api_base
+    model: null       # goes into config.json agents.defaults.model
+  volumes:
+    - name: nanobot_home
+      host: per_session_tmpdir
+      container: /home/nanobot/.nanobot
+      mode: rw
+      ephemeral: true
+      owner_uid: 1000
+      notes: |
+        NANOBOT_HOME. `~/.nanobot/config.json` is the authoritative
+        config file (per `nanobot/config/loader.py:25`). First run
+        populates workspace/, cron/, media/, etc. under this dir.
+  warnings:
+    - id: config_json_is_authoritative
+      rule: OpenRouter credentials MUST be written to ~/.nanobot/config.json before `nanobot agent` runs
+      reason: |
+        `nanobot/providers/openai_compat_provider.py` reads api_key
+        from `providers.openrouter.api_key` in config.json (not
+        from env vars). `_match_provider` parses the model string
+        prefix (`openrouter/...`) to find the provider entry, and
+        requires `p.api_key` to be set. The sh bootstrap writes
+        config.json via heredoc with `${OPENROUTER_API_KEY}`
+        interpolated at container runtime from the process env.
+    - id: sh_entrypoint_override
+      rule: Override --entrypoint to sh so we can write config before running nanobot
+      reason: |
+        Default ENTRYPOINT is `entrypoint.sh` which runs a single
+        nanobot subcommand. To chain "write config + run agent" in
+        one container lifetime without persistent volumes, override
+        --entrypoint to sh and run our own script. Works because
+        the nanobot binary is installed to /usr/local/bin at build
+        time and stays on PATH.
+    - id: uid_1000_writable_mount
+      rule: Container runs as USER nanobot (uid 1000) — bind mount must be writable for that UID
+      reason: |
+        Dockerfile sets `USER nanobot` with useradd -u 1000. On
+        macOS Docker Desktop the bind-mount shim handles UID
+        remapping transparently. On Linux hosts, the mounted
+        tmpdir needs to be chowned to 1000:1000 OR we skip the
+        mount (state is ephemeral to the container anyway).
+    - id: no_markdown_for_clean_stdout
+      rule: Use --no-markdown on `agent -m` to avoid ANSI escapes in stdout
+      reason: |
+        Default is Rich-rendered Markdown which injects ANSI color
+        codes into stdout. `--no-markdown` emits plain text and
+        `response_contains_name` matches cleanly.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /home/nanobot/.nanobot
+        cat > /home/nanobot/.nanobot/config.json <<EOF
+        {
+          "agents": {
+            "defaults": {
+              "model": "$MODEL",
+              "provider": "openrouter",
+              "workspace": "/home/nanobot/.nanobot/workspace"
+            }
+          },
+          "providers": {
+            "openrouter": {
+              "api_key": "${OPENROUTER_API_KEY}"
+            }
+          }
+        }
+        EOF
+        nanobot agent -m "$PROMPT" --no-markdown
+    argv_note: |
+      Two-step sh chain:
+        1. Write ~/.nanobot/config.json with `agents.defaults.model`
+           set to the BARE model ID (e.g. `openai/gpt-4o-mini`) and
+           `agents.defaults.provider = "openrouter"` to FORCE provider
+           selection. Also sets `providers.openrouter.api_key` from
+           process env.
+        2. Run `nanobot agent -m "<prompt>" --no-markdown`.
+
+      **Why `provider: "openrouter"` must be explicit (not "auto"):**
+      nanobot's `_match_provider` in `config/schema.py:228` uses the
+      model string prefix (e.g. `openrouter/...`) to select the
+      provider in auto mode, but then sends the FULL model string
+      (prefix included) to OpenRouter — which rejects
+      `openrouter/openai/gpt-4o-mini` as an invalid model ID because
+      OpenRouter's own IDs are `openai/gpt-4o-mini` (no prefix).
+      Setting `provider: "openrouter"` explicitly short-circuits
+      the prefix match so the bare model string flows through to
+      the API call. Empirically verified 2026-04-15 (first attempt
+      with the prefix returned HTTP 400 "not a valid model ID").
+    stdout_filter:
+      engine: awk
+      program: "{print}"  # v0 pass-through; refine after first run
+    session_id_capture:
+      engine: none
+
+smoke:
+  prompt: "What is nanobot? Reply in one short sentence starting with 'nanobot is'."
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 90
+  verified_cells:
+    - model: openai/gpt-4o-mini
+      verdict: PASS
+      notes: |
+        Reply: "Nanobot is a personal AI assistant designed to solve
+        problems by taking action rather than just providing
+        descriptions." Took one iteration fix — initial attempt with
+        `model: openrouter/openai/gpt-4o-mini` + `provider: auto`
+        failed with HTTP 400 "not a valid model ID" from OpenRouter
+        because nanobot's provider resolver sends the full prefixed
+        string. Second attempt with `provider: "openrouter"` explicit
+        + bare model ID succeeded.
+  known_quirks:
+    - quirk: Rich streaming UI emits ANSI cursor/spinner codes even with --no-markdown
+      impact: |
+        The `agent -m` command always runs through nanobot's prompt_toolkit
+        + Rich streaming pipeline, which injects spinner frames and cursor
+        control codes into stdout as the LLM streams. `--no-markdown`
+        only disables Markdown-to-ANSI rendering; it does NOT disable
+        the live-update UI. For a stricter stdout match, setting TERM=dumb
+        might force a simpler code path — not tested in this recipe.
+
+metadata:
+  recon_date: 2026-04-15
+  recon_by: main-conversation (direct source + built-image empirical CLI check)
+  source_citations:
+    - "README - inspired by OpenClaw, 99% fewer lines, PyPI package nanobot-ai"
+    - "Dockerfile - uv + python3.12 bookworm, USER nanobot uid 1000, ENTRYPOINT entrypoint.sh, CMD status"
+    - "entrypoint.sh - checks ~/.nanobot writability then `exec nanobot \"$@\"`"
+    - "pyproject.toml - version 0.1.5.post1, project.scripts: nanobot = nanobot.cli.commands:app"
+    - "nanobot/cli/commands.py:912 - def agent(-m/--message, -s/--session, -c/--config, --markdown/--no-markdown, -w/--workspace)"
+    - "nanobot/config/loader.py:25 - config path ~/.nanobot/config.json (JSON)"
+    - "nanobot/config/schema.py:96-134 - ProviderConfig (api_key, api_base, extra_headers); openrouter is a first-class provider"
+    - "nanobot/config/schema.py:228 - _match_provider parses model prefix to select providers.<name>"
+    - "nanobot/providers/openai_compat_provider.py - openrouter attribution headers baked in"
+    - "2026-03-21 commit - replaced litellm with native openai + anthropic SDKs"

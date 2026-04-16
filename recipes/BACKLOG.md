@@ -27,9 +27,49 @@ Agent Playground's flagship value prop is hosting agents that **improve over tim
 
 - [x] **NullClaw** — https://github.com/nullclaw/nullclaw — **Zig** 0.15.2+, 7.2k stars, 2026.4.9+ — `recipes/nullclaw.yaml` — validated 2026-04-15 with `anthropic/claude-haiku-4-5` via OpenRouter, wall **2.5s** (tied with picoclaw for fastest). Recon: direct source read (no Solvr helper). **Required format innovation:** sh-chained two-step `nullclaw onboard --api-key ... --provider openrouter` → `nullclaw agent -m "..." --model "openrouter/..."` inside a single container. Upstream Dockerfile *already bakes* `openrouter/anthropic/claude-sonnet-4` as the default model — we only inject the API key via onboard. **Self-improving:** 10 memory engines, 35+ tools, MCP, subagents, 50+ providers, 19 channels. **Ultra-ultra-lightweight**: **678 KB static binary**, ~1 MB RAM, <8 ms startup. **Smoke finding:** the default `who are you?` prompt returns a blank-slate persona ("I don't have a name yet..."), so the recipe uses `"What is NullClaw? Reply in one short sentence starting with 'NullClaw is'."` to force the keyword into the response. Documented in recipe under `smoke.known_weak_probes`.
 
-### Recon targets — self-improving
+- [x] **nanobot** (HKUDS) — https://github.com/HKUDS/nanobot — Python 3.11+, 39.6k stars, v0.1.5.post1 — `recipes/nanobot.yaml` — validated 2026-04-15 with `openai/gpt-4o-mini` via OpenRouter. Recon: direct source + built-image empirical CLI check. **Required format innovation:** JSON config.json heredoc with **explicit `agents.defaults.provider: "openrouter"` override** to prevent nanobot's auto-provider resolver from sending the full `openrouter/<model>` prefixed string to the OpenRouter API. First attempt with `provider: auto` returned HTTP 400 "not a valid model ID"; explicit provider fixes it. **Self-improving:** skills, dream memory, context compaction, cron scheduler, 13+ channel plugins, heartbeat. nanobot is the original project PicoClaw was ported from — the `agent -m` CLI signature is 1:1 identical. **Known quirk:** Rich streaming UI emits ANSI cursor/spinner codes even with `--no-markdown`; plain text response extractable but not 100% clean.
 
-_(none queued — TrustClaw removed as copycat, NanoClaw BLOCKED, nullclaw done)_
+### Recon targets — self-improving (by highest stars, per user direction 2026-04-15)
+
+Remaining clawclones.com candidates, sorted by ★ desc:
+
+- [ ] **ZeroClaw** — 30,171 ★ — Rust — https://github.com/zeroclaw-labs/zeroclaw (verify org) — security-by-default, ~8 MB binary, 8 ms boot. **Next.**
+- [ ] **AstrBot** — 30,013 ★ — Python — https://github.com/Soulter/AstrBot (verify) — polished multi-platform chatbot framework, QQ/WeChat/15+ channels, plugin marketplace, sandboxed skill execution.
+- [ ] **AionUi** — 21,898 ★ — TypeScript — cross-platform "Cowork" desktop app, multi-agent orchestration.
+- [ ] **OpenFang** — 16,641 ★ — Rust — "Agent Operating System", 32 MB binary, 137K LOC, autonomous 24/7 Hands.
+- [ ] **CoPaw** — 15,401 ★ — Python — Alibaba's AgentScope-based personal AI workstation.
+- [ ] **IronClaw** — 11,786 ★ — Rust — security-first, WASM sandbox, Ed25519-signed plugins.
+- [ ] **LobsterAI** — 5,028 ★ — TypeScript — NetEase Youdao Electron desktop with Alpine sandbox.
+- [ ] **MimiClaw** — 5,177 ★ — C — ESP32-S3 embedded, 16 MB flash.
+- [ ] **TinyClaw** — 3,512 ★ — TypeScript — multi-agent orchestration monorepo.
+- [ ] **MetaClaw** — 3,407 ★ — Python — "talk to your agent, it learns and evolves".
+- [ ] **Goclaw** — 2,726 ★ — Go — extreme perf + dev ergonomics.
+- [ ] **Moltis** — 2,557 ★ — Rust — sandboxed execution, single-binary, zero Node.js.
+- [ ] **Spacebot** — 2,086 ★ — Rust — concurrent multi-process agent, team collab.
+- [ ] **zclaw** — 2,074 ★ — C — ESP32 firmware, 888 KiB hard cap, IoT.
+- [ ] **ThePopeBot** — 1,682 ★ — JavaScript — self-evolving via GitHub Actions.
+- [ ] **DroidClaw** — 1,382 ★ — TypeScript — Android accessibility-tree control.
+- [ ] **Poco** — 1,281 ★ — TypeScript — polished UI, artifacts rendering, Claude Code.
+- [ ] **Picobot** — 1,176 ★ — Go — ~9 MB binary, persistent memory, zero bloat.
+- [ ] **MicroClaw** — 649 ★ — Rust — 13+ channels, Docker sandboxing.
+- [ ] **Loongclaw** — 613 ★ — Rust — "learn easily, customize anything".
+- [ ] **ZeptoClaw** — 591 ★ — Rust — 6 MB binary, defense-in-depth TOCTOU mitigation.
+- [ ] **Ouroboros** — 493 ★ — Python — self-modifying agent, git-based identity.
+- [ ] **memU Bot** — 377 ★ — TypeScript — enterprise memory-first.
+- [ ] **LettaBot** — 314 ★ — TypeScript — Letta SDK, multi-channel memory.
+- [ ] **SmallClaw** — 233 ★ — TypeScript — local-first, optimized for small models.
+- [ ] **n8nClaw** — 223 ★ — TypeScript — visual n8n workflows.
+- [ ] **GitClaw** — 208 ★ — TypeScript — agents as git repos.
+- [ ] **LightClaw** — 205 ★ — Rust — 15 MB single binary.
+- [ ] **SafeClaw** — 131 ★ — Python — **out of scope** (deterministic, NO LLM — can't smoke test via OpenRouter).
+- [ ] **OpenGork** — 110 ★ — Shell — Grok "Heretic Mode" wrapper.
+- [ ] **AndyClaw** — 77 ★ — Kotlin — Android local-LLM on ethOS.
+- [ ] **Freeclaw** — 54 ★ — Python — NVIDIA NIM / Groq / OpenRouter free-tier.
+- [ ] **Carapace** — 43 ★ — Rust — Ed25519-signed WASM plugins.
+- [ ] **TitanClaw** — 24 ★ — Rust — swarm mesh, WASM tools.
+- [ ] **KafClaw** — 18 ★ — Go — Apache Kafka multi-agent orchestration.
+- [ ] **grip-ai** — 6 ★ — Python — Claude Agent SDK + LiteLLM fallback.
+- [ ] **BashoBot** — 6 ★ — Shell — pure Bash with named pipes.
 
 ### Blocked / deferred
 - **NanoClaw** — https://github.com/qwibitai/nanoclaw — TypeScript, 27k stars, "Lightweight alternative to OpenClaw... runs directly on Anthropic's Agents SDK". **BLOCKED(format)** 2026-04-15. Reasons (in order of hardness):
@@ -40,9 +80,9 @@ _(none queued — TrustClaw removed as copycat, NanoClaw BLOCKED, nullclaw done)
   **What v0 format is missing to unblock**: `runtime.external_services[]` (declaring required sidecar services like OneCLI), `setup.interactive: true` escape hatch, and an `invoke.provider_proxy` field for SDK-native agents. Deferred until v1 when we have more agents demanding the same fields.
 - **TrustClaw** — https://github.com/trustclaw/trustclaw — 2 stars, TypeScript, description is word-for-word copy of OpenClaw ("Your own personal AI assistant. Any OS. Any Platform. The lobster way. 🦞"). **SKIPPED** — indistinguishable from a fork/clone of openclaw; no recon value.
 
-### Recon targets — architectural diversity (maybe self-improving, need to verify)
+### Removed from scope
 
-- [ ] **OpenHands** (ex-OpenDevin) — https://github.com/All-Hands-AI/OpenHands — Docker-first, runs its own orchestrator + browser + web UI. Likely has memory/persistent state; verify whether it's a learning loop or a session-bound task runner. Heavy, architecturally very different from the claw family.
+- **OpenHands** — https://github.com/All-Hands-AI/OpenHands — Python, 71k stars. Attempted 2026-04-15 as an architectural-diversity add-on. Found to be **out of clawclones.com scope entirely** (All-Hands-AI is a different lineage — formerly OpenDevin — not part of the OpenClaw family the v0 backlog tracks). Also hit a format mismatch: response goes to trajectory JSON files + auto-continue flow either hangs or auto-finishes before response capture, and V0 headless main.py is deprecated with a scheduled-removal banner ("April 1, 2026"). Backed out cleanly; `ap-recipe-openhands` image and `recipes/openhands.yaml` removed 2026-04-15 (reclaimed ~15 GB).
 
 ---
 
