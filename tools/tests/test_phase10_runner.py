@@ -261,7 +261,7 @@ class TestRunCellCategories:
                     cidpath = Path(cidarg.split("=", 1)[1])
                     cidpath.write_text("abc123fake-container-id")
                 raise subprocess.TimeoutExpired(
-                    cmd=cmd, timeout=1, stderr="", stdout=""
+                    cmd=cmd, timeout=1, output="", stderr=""
                 )
             if cmd[:2] == ["docker", "kill"] or cmd[:3] == ["docker", "rm", "-f"]:
                 reap_calls.append(tuple(cmd))
