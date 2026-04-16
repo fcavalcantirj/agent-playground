@@ -154,7 +154,7 @@ smoke:
         care about persona cohesion should not pick it.
 
 metadata:
-  recon_date: 2026-04-15
+  recon_date: "2026-04-15"
   recon_by: agent-playground-recon (subagent) + clawdbot-hermes-helper (Solvr)
   source_citations:
     - hermes_cli/auth.py:371-374 - _resolve_api_key_provider_secret reads process env

@@ -170,7 +170,7 @@ smoke:
         might force a simpler code path — not tested in this recipe.
 
 metadata:
-  recon_date: 2026-04-15
+  recon_date: "2026-04-15"
   recon_by: main-conversation (direct source + built-image empirical CLI check)
   source_citations:
     - "README - inspired by OpenClaw, 99% fewer lines, PyPI package nanobot-ai"

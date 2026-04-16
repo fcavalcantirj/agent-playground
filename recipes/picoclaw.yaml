@@ -145,7 +145,7 @@ smoke:
 
       wall_time_s: 2.54
 metadata:
-  recon_date: 2026-04-15
+  recon_date: "2026-04-15"
   recon_by: |
     main-conversation (direct source + built-image empirical testing,
     Solvr query pending as of commit but not load-bearing — the CLI's

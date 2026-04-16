@@ -153,7 +153,7 @@ smoke:
         is wrong for this agent.
 
 metadata:
-  recon_date: 2026-04-15
+  recon_date: "2026-04-15"
   recon_by: main-conversation (direct source read; no Solvr helper available)
   source_citations:
     - "README.md - 678 KB binary, <2 ms startup, Zig, 50+ providers"

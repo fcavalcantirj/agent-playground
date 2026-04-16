@@ -154,7 +154,7 @@ smoke:
         models via openrouter work fine.
 
 metadata:
-  recon_date: 2026-04-15
+  recon_date: "2026-04-15"
   recon_by: main-conversation (direct source read; Solvr rooms for openclaw probed — none available)
   source_citations:
     - docs/cli/infer.md:14 - "openclaw infer is the canonical headless surface"
