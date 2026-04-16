@@ -299,12 +299,12 @@ Plans:
 **Goal:** Close concrete gaps in `tools/ap.recipe.schema.json` + `docs/RECIPE-SCHEMA.md` to make the recipe spec mature enough to serve as the API contract for Phase 19. No wire-format break — all 5 committed recipes continue to lint-pass unchanged. v0.1.1 is additive over v0.1: `$defs.v0_1` discriminator seam (D-01), `$defs.category` extraction (D-02), `known_incompatible_cells.verdict` enum tightening per WR-05 (D-03), `source.ref` allowlist pattern (D-04), `name` maxLength 64 (D-05), differentiated timeout bounds (D-06), `owner_uid` full-uid_t range (D-07), `annotations` escape valve on 7 subschemas (D-08), optional `metadata.license`/`metadata.maintainer` (D-09), self-validation gate in pytest (D-10), markdown spec kept in sync (D-11).
 **Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11
 **Depends on:** Phase 17
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 18-01-PLAN.md — Self-validation gate (D-10): TDD RED test scaffolding [Wave 1]
 - [x] 18-02-PLAN.md — Schema refactor (D-01..D-09): $defs, bounds, annotations, license/maintainer [Wave 2]
-- [ ] 18-03-PLAN.md — Narrative spec update (D-11): RECIPE-SCHEMA.md v0.1.1 [Wave 3]
+- [x] 18-03-PLAN.md — Narrative spec update (D-11): RECIPE-SCHEMA.md v0.1.1 [Wave 3]
 
 ### Phase 19: API Foundation (FastAPI)
 
