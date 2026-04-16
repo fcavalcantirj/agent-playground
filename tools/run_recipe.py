@@ -11,9 +11,11 @@ Contract: see docs/RECIPE-SCHEMA.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -283,6 +285,15 @@ def resolve_api_key(recipe: dict, repo_root: Path) -> tuple[str, str]:
 
 
 def substitute_argv(argv: list[str], prompt: str, model: str) -> list[str]:
+    """Substitute $PROMPT / $MODEL in argv.
+
+    Two contexts:
+      1. Standalone element — exact match `arg == "$PROMPT"`. Docker passes it as
+         its own argv entry; no shell parses it, so raw substitution is correct.
+      2. Embedded in a larger string — e.g. `sh -c 'foo --prompt "$PROMPT"'`.
+         A shell will parse the result, so the value MUST be shlex-quoted to
+         prevent injection when the prompt contains quotes or shell metacharacters.
+    """
     subs = {"$PROMPT": prompt, "$MODEL": model}
     out: list[str] = []
     for arg in argv:
@@ -291,7 +302,8 @@ def substitute_argv(argv: list[str], prompt: str, model: str) -> list[str]:
             continue
         s = arg
         for k, v in subs.items():
-            s = s.replace(k, v)
+            if k in s:
+                s = s.replace(k, shlex.quote(v))
         out.append(s)
     return out
 
