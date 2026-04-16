@@ -377,6 +377,22 @@ def _redact_api_key(text: str, api_key_var: str) -> str:
     )
 
 
+def _clone_dir_for(name: str, ref: str | None) -> Path:
+    """Derive a clone cache path keyed on both recipe name and source.ref.
+
+    `/tmp/ap-recipe-<name>-<sha256(ref)[:12]>-clone`. Any ref change creates
+    a new cache dir, so recipes that update `source.ref` get a fresh clone
+    instead of silently running against the stale pin.
+
+    When `ref` is None (no ref declared — shallow HEAD), a stable sentinel
+    hash is used so the path is still deterministic and doesn't alias with
+    any real ref.
+    """
+    ref_value = ref if ref is not None else "__noref__"
+    digest = hashlib.sha256(ref_value.encode()).hexdigest()[:12]
+    return Path(f"/tmp/ap-recipe-{name}-{digest}-clone")
+
+
 def preflight_docker() -> Verdict | None:
     """Return INFRA_FAIL Verdict if the Docker daemon is unreachable, None if OK.
 
@@ -500,7 +516,13 @@ def ensure_image(
         dockerfile = build.get("dockerfile", "Dockerfile")
         context_dir = build.get("context", ".")
 
-        clone_dir = Path(f"/tmp/ap-recipe-{recipe['name']}-clone")
+        clone_dir = _clone_dir_for(recipe["name"], ref)
+        if no_cache:
+            # Wipe any stale clone dirs for this recipe name — across all refs.
+            # Defense against leftover orphans from prior ref values.
+            import glob
+            for stale in glob.glob(f"/tmp/ap-recipe-{recipe['name']}-*-clone"):
+                run(["rm", "-rf", stale], check=False)
         if not clone_dir.exists():
             log(f"  cloning {repo_url} → {clone_dir}", quiet=quiet)
             rc, so, se, timed_out = run_with_timeout(
