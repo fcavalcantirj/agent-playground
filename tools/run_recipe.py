@@ -42,6 +42,12 @@ DISK_GUARD_FLOOR_GB = 5.0
 
 _SCHEMA_PATH = Path(__file__).parent / "ap.recipe.schema.json"
 
+# ANSI colors for lint output (D-08)
+_RED = "\033[31m"
+_GREEN = "\033[32m"
+_BOLD = "\033[1m"
+_RESET = "\033[0m"
+
 
 # ---------- importable API ----------
 
@@ -84,6 +90,43 @@ def lint_recipe(recipe: dict, schema: dict | None = None) -> list[str]:
         path = ".".join(str(p) for p in e.absolute_path) or "(root)"
         messages.append(f"{path}: {e.message}")
     return messages
+
+
+# ---------- lint CLI helpers ----------
+
+
+def _print_lint_result(name: str, errors: list[str]) -> None:
+    """Print colored lint result for a single recipe."""
+    if not errors:
+        print(f"{_GREEN}PASS{_RESET} {name}")
+    else:
+        print(f"{_RED}FAIL{_RESET} {name} ({len(errors)} error{'s' if len(errors) != 1 else ''})")
+        for msg in errors:
+            print(f"  {_RED}-{_RESET} {msg}")
+
+
+def _lint_single(recipe_path: Path) -> list[str]:
+    """Load and lint a single recipe file. Returns error list."""
+    try:
+        recipe = load_recipe(recipe_path)
+    except Exception as e:
+        return [f"YAML parse error: {e}"]
+    return lint_recipe(recipe)
+
+
+def _lint_all_recipes(recipes_dir: Path) -> int:
+    """Lint all *.yaml files in the recipes directory. Returns exit code."""
+    yaml_files = sorted(recipes_dir.glob("*.yaml"))
+    if not yaml_files:
+        print(f"{_RED}ERROR{_RESET}: no *.yaml files found in {recipes_dir}")
+        return 2
+    any_fail = False
+    for path in yaml_files:
+        errors = _lint_single(path)
+        _print_lint_result(path.name, errors)
+        if errors:
+            any_fail = True
+    return 2 if any_fail else 0
 
 
 # ---------- small helpers ----------
@@ -472,7 +515,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog="run_recipe.py",
         description="Agent Playground recipe runner (ap.recipe/v0.1)",
     )
-    p.add_argument("recipe", help="Path to recipe YAML (recipes/<agent>.yaml)")
+    p.add_argument(
+        "recipe",
+        nargs="?",
+        default=None,
+        help="Path to recipe YAML (recipes/<agent>.yaml). Optional with --lint-all.",
+    )
     p.add_argument(
         "prompt",
         nargs="?",
@@ -485,6 +533,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Model to use. Falls back to first PASS verified_cell.",
     )
+    p.add_argument("--lint", action="store_true",
+                    help="Validate recipe against schema and exit (no Docker run).")
+    p.add_argument("--lint-all", action="store_true",
+                    help="Validate all recipes in recipes/ directory and exit.")
+    p.add_argument("--no-lint", action="store_true",
+                    help="Skip the mandatory lint pre-step before running.")
     p.add_argument("--json", action="store_true", help="Emit structured JSON verdict(s).")
     p.add_argument(
         "--all-cells",
@@ -520,10 +574,38 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
+    # --lint-all mode: lint every recipe and exit (D-06)
+    if args.lint_all:
+        recipes_dir = Path("recipes")
+        if not recipes_dir.exists():
+            recipes_dir = Path.cwd() / "recipes"
+        return _lint_all_recipes(recipes_dir)
+
+    # Require recipe path for all other modes
+    if args.recipe is None:
+        sys.stderr.write("ERROR: recipe path is required (or use --lint-all)\n")
+        return 2
+
     recipe_path = Path(args.recipe).resolve()
     if not recipe_path.exists():
         sys.stderr.write(f"ERROR: recipe not found: {recipe_path}\n")
         return 2
+
+    # --lint mode: validate single recipe and exit (D-06)
+    if args.lint:
+        errors = _lint_single(recipe_path)
+        _print_lint_result(recipe_path.name, errors)
+        return 2 if errors else 0
+
+    # Mandatory lint pre-step (D-07): runs before every Docker invocation
+    if not args.no_lint:
+        errors = _lint_single(recipe_path)
+        if errors:
+            _print_lint_result(recipe_path.name, errors)
+            sys.stderr.write(
+                f"\n{_RED}Lint failed{_RESET} — fix the recipe or pass --no-lint to bypass.\n"
+            )
+            return 2
 
     repo_root = recipe_path.parent.parent
     recipe = load_recipe(recipe_path)
