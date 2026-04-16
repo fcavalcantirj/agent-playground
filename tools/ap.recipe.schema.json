@@ -85,6 +85,16 @@
         "notes": {
           "type": "string",
           "description": "Free-form build gotchas."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max wall time for docker build (upstream_dockerfile mode) or docker pull (image_pull mode). Default 900 seconds when absent. Per D-03."
+        },
+        "clone_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max wall time for git clone + checkout in upstream_dockerfile mode. Default 300 seconds when absent. Per D-03."
         }
       }
     },
@@ -319,6 +329,27 @@
               "notes": {
                 "type": "string",
                 "description": "Observations about this cell."
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "PASS",
+                  "ASSERT_FAIL",
+                  "INVOKE_FAIL",
+                  "BUILD_FAIL",
+                  "PULL_FAIL",
+                  "CLONE_FAIL",
+                  "TIMEOUT",
+                  "LINT_FAIL",
+                  "INFRA_FAIL",
+                  "STOCHASTIC",
+                  "SKIP"
+                ],
+                "description": "Authoritative failure category (per D-01). 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
+              },
+              "detail": {
+                "type": "string",
+                "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
               }
             }
           }
@@ -341,6 +372,27 @@
               },
               "notes": {
                 "type": "string"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "PASS",
+                  "ASSERT_FAIL",
+                  "INVOKE_FAIL",
+                  "BUILD_FAIL",
+                  "PULL_FAIL",
+                  "CLONE_FAIL",
+                  "TIMEOUT",
+                  "LINT_FAIL",
+                  "INFRA_FAIL",
+                  "STOCHASTIC",
+                  "SKIP"
+                ],
+                "description": "Authoritative failure category (per D-01). 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
+              },
+              "detail": {
+                "type": "string",
+                "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
               }
             }
           }
