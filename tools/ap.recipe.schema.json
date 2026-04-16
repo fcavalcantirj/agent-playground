@@ -1,562 +1,623 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentplayground.dev/schemas/ap.recipe.v0.1.json",
-  "title": "Agent Playground Recipe — ap.recipe/v0.1",
-  "description": "Schema for Agent Playground recipe YAML files consumed by tools/run_recipe.py. See docs/RECIPE-SCHEMA.md for the canonical specification.",
+  "title": "Agent Playground Recipe — ap.recipe/v0.1.1",
+  "description": "Schema for Agent Playground recipe YAML files consumed by tools/run_recipe.py. See docs/RECIPE-SCHEMA.md for the canonical specification. v0.1.1 adds $defs extraction (v0_1 body + category enum), a oneOf discriminator seam on apiVersion for future v0.2 wire-compat, tightened bounds (source.ref pattern, name maxLength, timeout maxima, owner_uid uid_t range), the known_incompatible_cells verdict enum (WR-05), an annotations open-object escape valve on 7 subschemas, and optional metadata.license + metadata.maintainer — all additive over v0.1.",
   "type": "object",
-  "required": [
-    "apiVersion",
-    "name",
-    "display_name",
-    "description",
-    "build",
-    "runtime",
-    "invoke",
-    "smoke",
-    "metadata"
+  "oneOf": [
+    { "$ref": "#/$defs/v0_1" }
   ],
-  "additionalProperties": false,
-  "properties": {
-    "apiVersion": {
-      "const": "ap.recipe/v0.1"
-    },
-    "name": {
+  "$defs": {
+    "category": {
       "type": "string",
-      "pattern": "^[a-z0-9_-]+$",
-      "description": "Short slug used to tag the built image (ap-recipe-<name>) and as the default needle for response_contains_name."
+      "enum": [
+        "PASS",
+        "ASSERT_FAIL",
+        "INVOKE_FAIL",
+        "BUILD_FAIL",
+        "PULL_FAIL",
+        "CLONE_FAIL",
+        "TIMEOUT",
+        "LINT_FAIL",
+        "INFRA_FAIL",
+        "STOCHASTIC",
+        "SKIP"
+      ],
+      "description": "Authoritative failure category. 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
     },
-    "display_name": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Human-readable name shown in logs and future UI."
-    },
-    "description": {
-      "type": "string",
-      "minLength": 1,
-      "description": "What the agent is and which invocation path this recipe covers."
-    },
-    "source": {
+    "v0_1": {
       "type": "object",
+      "required": [
+        "apiVersion",
+        "name",
+        "display_name",
+        "description",
+        "build",
+        "runtime",
+        "invoke",
+        "smoke",
+        "metadata"
+      ],
       "additionalProperties": false,
       "properties": {
-        "repo": {
-          "type": "string",
-          "description": "HTTPS clone URL."
+        "apiVersion": {
+          "const": "ap.recipe/v0.1"
         },
-        "ref": {
+        "name": {
           "type": "string",
-          "description": "Git ref — SHA (preferred), tag, or branch name."
+          "pattern": "^[a-z0-9_-]+$",
+          "maxLength": 64,
+          "description": "Short slug used to tag the built image (ap-recipe-<name>) and as the default needle for response_contains_name."
         },
-        "ref_note": {
+        "display_name": {
           "type": "string",
-          "description": "Free-form explanation of what the ref points at and why."
+          "minLength": 1,
+          "description": "Human-readable name shown in logs and future UI."
         },
-        "upstream_version": {
+        "description": {
           "type": "string",
-          "description": "The upstream's self-declared version at recon time. Documentation only."
-        }
-      }
-    },
-    "build": {
-      "type": "object",
-      "required": ["mode"],
-      "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["upstream_dockerfile", "image_pull"]
+          "minLength": 1,
+          "description": "What the agent is and which invocation path this recipe covers."
         },
-        "dockerfile": {
-          "type": "string",
-          "description": "Path to Dockerfile relative to clone root. Defaults to Dockerfile."
-        },
-        "context": {
-          "type": "string",
-          "description": "Path to build context relative to clone root. Defaults to '.'."
-        },
-        "image": {
-          "type": "string",
-          "description": "Full registry reference for image_pull mode."
-        },
-        "observed": {
+        "source": {
           "type": "object",
-          "description": "Documentation-only record of what the recipe author saw at recon time."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Free-form build gotchas."
-        },
-        "timeout_s": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Max wall time for docker build (upstream_dockerfile mode) or docker pull (image_pull mode). Default 900 seconds when absent. Per D-03."
-        },
-        "clone_timeout_s": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Max wall time for git clone + checkout in upstream_dockerfile mode. Default 300 seconds when absent. Per D-03."
-        }
-      }
-    },
-    "runtime": {
-      "type": "object",
-      "required": ["provider", "process_env", "volumes"],
-      "additionalProperties": false,
-      "properties": {
-        "provider": {
-          "type": "string",
-          "description": "Which LLM gateway the recipe plumbs (e.g. openrouter, anthropic, openai)."
-        },
-        "process_env": {
-          "type": "object",
-          "required": ["api_key", "base_url", "model"],
           "additionalProperties": false,
           "properties": {
-            "api_key": {
+            "repo": {
               "type": "string",
-              "description": "Canonical env var name the agent reads (e.g. OPENROUTER_API_KEY)."
+              "description": "HTTPS clone URL."
             },
-            "api_key_fallback": {
-              "type": ["string", "null"],
-              "description": "Documentation only. An alternate env var name the agent's own code accepts internally."
+            "ref": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._/-]{1,255}$",
+              "description": "Git ref — SHA (preferred), tag, or branch name. Allowlisted charset defends against `git fetch` option-as-value injection (e.g. `--upload-pack=<cmd>`) by rejecting anything outside plain ref characters."
             },
-            "base_url": {
-              "type": ["string", "null"],
-              "description": "Override for the provider base URL. null means agent's default is fine."
+            "ref_note": {
+              "type": "string",
+              "description": "Free-form explanation of what the ref points at and why."
             },
-            "model": {
-              "type": ["string", "null"],
-              "description": "Default model. null means set per-call."
+            "upstream_version": {
+              "type": "string",
+              "description": "The upstream's self-declared version at recon time. Documentation only."
             }
           }
         },
-        "volumes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name", "host", "container"],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Identifier for logs and future orchestrator use."
-              },
-              "host": {
-                "type": "string",
-                "description": "Host path or the sentinel per_session_tmpdir."
-              },
-              "container": {
-                "type": "string",
-                "description": "Mount point inside the container."
-              },
-              "mode": {
-                "type": "string",
-                "enum": ["rw", "ro"],
-                "description": "Mount mode. Defaults to rw."
-              },
-              "ephemeral": {
-                "type": "boolean",
-                "description": "Documentation flag — true means volume is thrown away at teardown."
-              },
-              "owner_uid": {
-                "type": "integer",
-                "description": "UID the container runs as."
-              },
-              "notes": {
-                "type": "string",
-                "description": "Free-form notes about what the agent writes here."
-              }
-            }
-          }
-        },
-        "warnings": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["id", "rule", "reason"],
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Short identifier, unique within the recipe."
-              },
-              "rule": {
-                "type": "string",
-                "description": "One-line prescriptive rule."
-              },
-              "reason": {
-                "type": "string",
-                "description": "Evidence: file paths, line numbers, empirical observations."
-              }
-            }
-          }
-        }
-      }
-    },
-    "invoke": {
-      "type": "object",
-      "required": ["mode", "spec"],
-      "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["cli-passthrough"],
-          "description": "Only cli-passthrough is implemented in v0.1."
-        },
-        "spec": {
+        "build": {
           "type": "object",
-          "required": ["argv"],
+          "required": ["mode"],
           "additionalProperties": false,
           "properties": {
-            "entrypoint": {
+            "mode": {
               "type": "string",
-              "description": "Value passed to docker run --entrypoint. Omit to use image's baked entrypoint."
+              "enum": ["upstream_dockerfile", "image_pull"]
             },
-            "argv": {
+            "dockerfile": {
+              "type": "string",
+              "description": "Path to Dockerfile relative to clone root. Defaults to Dockerfile."
+            },
+            "context": {
+              "type": "string",
+              "description": "Path to build context relative to clone root. Defaults to '.'."
+            },
+            "image": {
+              "type": "string",
+              "description": "Full registry reference for image_pull mode."
+            },
+            "observed": {
+              "type": "object",
+              "description": "Documentation-only record of what the recipe author saw at recon time."
+            },
+            "notes": {
+              "type": "string",
+              "description": "Free-form build gotchas."
+            },
+            "timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10800,
+              "description": "Max wall time for docker build (upstream_dockerfile mode) or docker pull (image_pull mode). Default 900 seconds when absent. Capped at 10800 (3h) — accommodates hermes + openclaw cold builds."
+            },
+            "clone_timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1800,
+              "description": "Max wall time for git clone + checkout in upstream_dockerfile mode. Default 300 seconds when absent. Capped at 1800 (30min) — accommodates large repos."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "required": ["provider", "process_env", "volumes"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "Which LLM gateway the recipe plumbs (e.g. openrouter, anthropic, openai)."
+            },
+            "process_env": {
+              "type": "object",
+              "required": ["api_key", "base_url", "model"],
+              "additionalProperties": false,
+              "properties": {
+                "api_key": {
+                  "type": "string",
+                  "description": "Canonical env var name the agent reads (e.g. OPENROUTER_API_KEY)."
+                },
+                "api_key_fallback": {
+                  "type": ["string", "null"],
+                  "description": "Documentation only. An alternate env var name the agent's own code accepts internally."
+                },
+                "base_url": {
+                  "type": ["string", "null"],
+                  "description": "Override for the provider base URL. null means agent's default is fine."
+                },
+                "model": {
+                  "type": ["string", "null"],
+                  "description": "Default model. null means set per-call."
+                }
+              }
+            },
+            "volumes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "host", "container"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Identifier for logs and future orchestrator use."
+                  },
+                  "host": {
+                    "type": "string",
+                    "description": "Host path or the sentinel per_session_tmpdir."
+                  },
+                  "container": {
+                    "type": "string",
+                    "description": "Mount point inside the container."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["rw", "ro"],
+                    "description": "Mount mode. Defaults to rw."
+                  },
+                  "ephemeral": {
+                    "type": "boolean",
+                    "description": "Documentation flag — true means volume is thrown away at teardown."
+                  },
+                  "owner_uid": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "UID the container runs as. Full Linux uid_t range (32-bit unsigned); values > 65535 typically indicate userns-remap."
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "Free-form notes about what the agent writes here."
+                  }
+                }
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "rule", "reason"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Short identifier, unique within the recipe."
+                  },
+                  "rule": {
+                    "type": "string",
+                    "description": "One-line prescriptive rule."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Evidence: file paths, line numbers, empirical observations."
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+            }
+          }
+        },
+        "invoke": {
+          "type": "object",
+          "required": ["mode", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["cli-passthrough"],
+              "description": "Only cli-passthrough is implemented in v0.1."
+            },
+            "spec": {
+              "type": "object",
+              "required": ["argv"],
+              "additionalProperties": false,
+              "properties": {
+                "entrypoint": {
+                  "type": "string",
+                  "description": "Value passed to docker run --entrypoint. Omit to use image's baked entrypoint."
+                },
+                "argv": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "description": "Ordered argv passed after the entrypoint. Runner substitutes $PROMPT and $MODEL."
+                },
+                "argv_note": {
+                  "type": "string",
+                  "description": "Free-form explanation of why the argv is shaped the way it is."
+                },
+                "stdout_filter": {
+                  "type": "object",
+                  "required": ["engine", "program"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "engine": {
+                      "type": "string",
+                      "enum": ["awk"],
+                      "description": "Only awk is implemented in v0.1."
+                    },
+                    "program": {
+                      "type": "string",
+                      "description": "For engine awk, a valid awk program."
+                    },
+                    "notes": {
+                      "type": "string",
+                      "description": "What the filter does and why."
+                    }
+                  }
+                },
+                "session_id_capture": {
+                  "type": "object",
+                  "required": ["engine"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "engine": {
+                      "type": "string",
+                      "enum": ["awk", "none"],
+                      "description": "awk or none."
+                    },
+                    "program": {
+                      "type": "string",
+                      "description": "Awk program that prints the session ID on one line."
+                    },
+                    "notes": {
+                      "type": "string",
+                      "description": "How the resulting ID can be reused."
+                    }
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+            }
+          }
+        },
+        "smoke": {
+          "type": "object",
+          "required": ["prompt", "pass_if", "verified_cells"],
+          "additionalProperties": false,
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "Default prompt sent to the agent."
+            },
+            "pass_if": {
+              "type": "string",
+              "enum": [
+                "response_contains_name",
+                "response_contains_string",
+                "response_regex",
+                "response_not_contains",
+                "exit_zero"
+              ],
+              "description": "Verdict verb."
+            },
+            "needle": {
+              "type": "string",
+              "description": "Literal substring to search for. Required for response_contains_string and response_not_contains."
+            },
+            "regex": {
+              "type": "string",
+              "description": "Python regex pattern. Required for response_regex."
+            },
+            "case_insensitive": {
+              "type": "boolean",
+              "description": "Default false. Applies to response_contains_name, response_contains_string, response_not_contains."
+            },
+            "timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600,
+              "description": "Max wall time for the container run. Default 180. Capped at 3600 (1h) — smoke should not run longer than a human attention span."
+            },
+            "verified_cells": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["model", "verdict", "category", "detail"],
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "description": "Model identifier (e.g. anthropic/claude-haiku-4-5)."
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": ["PASS", "FAIL"],
+                    "description": "Documented verdict."
+                  },
+                  "wall_time_s": {
+                    "type": "number",
+                    "description": "Observed wall time in seconds."
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "Observations about this cell."
+                  },
+                  "category": {
+                    "$ref": "#/$defs/category"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
+                  },
+                  "annotations": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+                  }
+                }
+              }
+            },
+            "known_incompatible_cells": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["model", "verdict", "category", "detail"],
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": ["PASS", "FAIL"],
+                    "description": "Documented verdict."
+                  },
+                  "wall_time_s": {
+                    "type": "number"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "$ref": "#/$defs/category"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
+                  },
+                  "annotations": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+                  }
+                }
+              }
+            },
+            "known_weak_probes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["prompt", "problem"],
+                "additionalProperties": false,
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "problem": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "known_quirks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["quirk", "impact"],
+                "additionalProperties": false,
+                "properties": {
+                  "quirk": {
+                    "type": "string"
+                  },
+                  "impact": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
+            }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["recon_date", "recon_by", "source_citations"],
+          "additionalProperties": false,
+          "properties": {
+            "recon_date": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "description": "When the recipe was researched (YYYY-MM-DD)."
+            },
+            "recon_by": {
+              "type": "string",
+              "description": "Who/what produced it."
+            },
+            "source_citations": {
               "type": "array",
               "items": {
                 "type": "string"
               },
               "minItems": 1,
-              "description": "Ordered argv passed after the entrypoint. Runner substitutes $PROMPT and $MODEL."
+              "description": "Specific evidence used to write the recipe."
             },
-            "argv_note": {
+            "license": {
               "type": "string",
-              "description": "Free-form explanation of why the argv is shaped the way it is."
+              "description": "SPDX identifier convention (e.g. 'MIT', 'Apache-2.0'). Optional in v0.1.1; required before external contribution lands (phase 19+)."
             },
-            "stdout_filter": {
+            "maintainer": {
               "type": "object",
-              "required": ["engine", "program"],
               "additionalProperties": false,
               "properties": {
-                "engine": {
+                "name": {
                   "type": "string",
-                  "enum": ["awk"],
-                  "description": "Only awk is implemented in v0.1."
+                  "description": "Maintainer name or handle."
                 },
-                "program": {
+                "url": {
                   "type": "string",
-                  "description": "For engine awk, a valid awk program."
-                },
-                "notes": {
-                  "type": "string",
-                  "description": "What the filter does and why."
+                  "format": "uri",
+                  "description": "Maintainer homepage or contact URL."
                 }
-              }
+              },
+              "description": "Optional in v0.1.1; required before external contribution lands (phase 19+)."
             },
-            "session_id_capture": {
+            "annotations": {
               "type": "object",
-              "required": ["engine"],
-              "additionalProperties": false,
-              "properties": {
-                "engine": {
-                  "type": "string",
-                  "enum": ["awk", "none"],
-                  "description": "awk or none."
-                },
-                "program": {
-                  "type": "string",
-                  "description": "Awk program that prints the session ID on one line."
-                },
-                "notes": {
-                  "type": "string",
-                  "description": "How the resulting ID can be reused."
-                }
-              }
+              "additionalProperties": true,
+              "description": "Open extension point for recon fields, tool-specific metadata, and forward-compatible annotations. Reserved for future use per the OpenAPI x-* / Kubernetes annotations pattern."
             }
           }
         }
-      }
-    },
-    "smoke": {
-      "type": "object",
-      "required": ["prompt", "pass_if", "verified_cells"],
-      "additionalProperties": false,
-      "properties": {
-        "prompt": {
-          "type": "string",
-          "description": "Default prompt sent to the agent."
-        },
-        "pass_if": {
-          "type": "string",
-          "enum": [
-            "response_contains_name",
-            "response_contains_string",
-            "response_regex",
-            "response_not_contains",
-            "exit_zero"
-          ],
-          "description": "Verdict verb."
-        },
-        "needle": {
-          "type": "string",
-          "description": "Literal substring to search for. Required for response_contains_string and response_not_contains."
-        },
-        "regex": {
-          "type": "string",
-          "description": "Python regex pattern. Required for response_regex."
-        },
-        "case_insensitive": {
-          "type": "boolean",
-          "description": "Default false. Applies to response_contains_name, response_contains_string, response_not_contains."
-        },
-        "timeout_s": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Max wall time for the container run. Default 180."
-        },
-        "verified_cells": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "required": ["model", "verdict", "category", "detail"],
-            "additionalProperties": false,
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["smoke"],
             "properties": {
-              "model": {
-                "type": "string",
-                "description": "Model identifier (e.g. anthropic/claude-haiku-4-5)."
-              },
-              "verdict": {
-                "type": "string",
-                "enum": ["PASS", "FAIL"],
-                "description": "Documented verdict."
-              },
-              "wall_time_s": {
-                "type": "number",
-                "description": "Observed wall time in seconds."
-              },
-              "notes": {
-                "type": "string",
-                "description": "Observations about this cell."
-              },
-              "category": {
-                "type": "string",
-                "enum": [
-                  "PASS",
-                  "ASSERT_FAIL",
-                  "INVOKE_FAIL",
-                  "BUILD_FAIL",
-                  "PULL_FAIL",
-                  "CLONE_FAIL",
-                  "TIMEOUT",
-                  "LINT_FAIL",
-                  "INFRA_FAIL",
-                  "STOCHASTIC",
-                  "SKIP"
-                ],
-                "description": "Authoritative failure category (per D-01). 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
-              },
-              "detail": {
-                "type": "string",
-                "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_contains_string" }
+                }
               }
             }
-          }
-        },
-        "known_incompatible_cells": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["model", "verdict", "category", "detail"],
-            "additionalProperties": false,
-            "properties": {
-              "model": {
-                "type": "string"
-              },
-              "verdict": {
-                "type": "string"
-              },
-              "wall_time_s": {
-                "type": "number"
-              },
-              "notes": {
-                "type": "string"
-              },
-              "category": {
-                "type": "string",
-                "enum": [
-                  "PASS",
-                  "ASSERT_FAIL",
-                  "INVOKE_FAIL",
-                  "BUILD_FAIL",
-                  "PULL_FAIL",
-                  "CLONE_FAIL",
-                  "TIMEOUT",
-                  "LINT_FAIL",
-                  "INFRA_FAIL",
-                  "STOCHASTIC",
-                  "SKIP"
-                ],
-                "description": "Authoritative failure category (per D-01). 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
-              },
-              "detail": {
-                "type": "string",
-                "description": "Single-line reason string. Empty string is the convention when category=PASS. Free-form; typically the subprocess stderr tail or a one-line summary."
-              }
-            }
-          }
-        },
-        "known_weak_probes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["prompt", "problem"],
-            "additionalProperties": false,
-            "properties": {
-              "prompt": {
-                "type": "string"
-              },
-              "problem": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "known_quirks": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["quirk", "impact"],
-            "additionalProperties": false,
-            "properties": {
-              "quirk": {
-                "type": "string"
-              },
-              "impact": {
-                "type": "string"
-              }
-            }
-          }
-        }
-      }
-    },
-    "metadata": {
-      "type": "object",
-      "required": ["recon_date", "recon_by", "source_citations"],
-      "additionalProperties": false,
-      "properties": {
-        "recon_date": {
-          "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-          "description": "When the recipe was researched (YYYY-MM-DD)."
-        },
-        "recon_by": {
-          "type": "string",
-          "description": "Who/what produced it."
-        },
-        "source_citations": {
-          "type": "array",
-          "items": {
-            "type": "string"
           },
-          "minItems": 1,
-          "description": "Specific evidence used to write the recipe."
+          "then": {
+            "properties": {
+              "smoke": {
+                "required": ["needle"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_not_contains" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "smoke": {
+                "required": ["needle"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_regex" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "smoke": {
+                "required": ["regex"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["build"],
+            "properties": {
+              "build": {
+                "required": ["mode"],
+                "properties": {
+                  "mode": { "const": "upstream_dockerfile" }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["source"],
+            "properties": {
+              "source": {
+                "required": ["repo", "ref"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["build"],
+            "properties": {
+              "build": {
+                "required": ["mode"],
+                "properties": {
+                  "mode": { "const": "image_pull" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "build": {
+                "required": ["image"]
+              }
+            }
+          }
         }
-      }
+      ]
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "required": ["smoke"],
-        "properties": {
-          "smoke": {
-            "required": ["pass_if"],
-            "properties": {
-              "pass_if": { "const": "response_contains_string" }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "smoke": {
-            "required": ["needle"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "required": ["smoke"],
-        "properties": {
-          "smoke": {
-            "required": ["pass_if"],
-            "properties": {
-              "pass_if": { "const": "response_not_contains" }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "smoke": {
-            "required": ["needle"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "required": ["smoke"],
-        "properties": {
-          "smoke": {
-            "required": ["pass_if"],
-            "properties": {
-              "pass_if": { "const": "response_regex" }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "smoke": {
-            "required": ["regex"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "required": ["build"],
-        "properties": {
-          "build": {
-            "required": ["mode"],
-            "properties": {
-              "mode": { "const": "upstream_dockerfile" }
-            }
-          }
-        }
-      },
-      "then": {
-        "required": ["source"],
-        "properties": {
-          "source": {
-            "required": ["repo", "ref"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "required": ["build"],
-        "properties": {
-          "build": {
-            "required": ["mode"],
-            "properties": {
-              "mode": { "const": "image_pull" }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "build": {
-            "required": ["image"]
-          }
-        }
-      }
-    }
-  ]
+  }
 }
