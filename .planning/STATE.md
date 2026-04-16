@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
-last_updated: "2026-04-16T22:57:04.342Z"
+stopped_at: Phase 19 context gathered
+last_updated: "2026-04-16T23:56:10.332Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -287,9 +287,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-14T23:58:57.619Z
+Last session: 2026-04-16T23:56:10.326Z
 
-Stopped at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
+Stopped at: Phase 19 context gathered
 
 **Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
 
@@ -313,4 +313,4 @@ Stopped at: Phase 02.5 context gathered — matrix test locked as acceptance gat
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: .planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md
+Resume file: .planning/phases/19-api-foundation/19-CONTEXT.md
