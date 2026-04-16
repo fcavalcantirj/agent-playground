@@ -4,7 +4,7 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Phase 02.5 context gathered — matrix test locked as acceptance gate, scope trimmed (no UI, no Temporal)
-last_updated: "2026-04-16T22:30:39.444Z"
+last_updated: "2026-04-16T22:57:04.342Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 18 (schema-maturity) — EXECUTING
-Plan: 1 of 3
+Phase: 18
+Plan: Not started
 Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
 Status: Executing Phase 18
@@ -116,7 +116,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 
 **Velocity:**
 
-- Total plans completed: 17
+- Total plans completed: 20
 - Average duration: ~25 min/plan (parallel waves; wall clock ~3h45m total)
 - Total execution time: ~4 hours wall clock for Phase 01 end-to-end
 
