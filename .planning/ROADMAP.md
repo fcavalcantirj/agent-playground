@@ -237,8 +237,8 @@ Plans:
 **Plans:** 4 plans
 Plans:
 - [x] 09-01-PLAN.md — JSON Schema + pyproject.toml + recipe v0->v0.1 bump + function extraction [Wave 1]
-- [ ] 09-02-PLAN.md — --lint / --lint-all / --no-lint CLI integration + colored output + exit code 2 [Wave 2]
-- [ ] 09-03-PLAN.md — pytest suite: pass_if verbs + lint negatives (12 fragments) + YAML round-trip + regression [Wave 2]
+- [x] 09-02-PLAN.md — --lint / --lint-all / --no-lint CLI integration + colored output + exit code 2 [Wave 2]
+- [x] 09-03-PLAN.md — pytest suite: pass_if verbs + lint negatives (12 fragments) + YAML round-trip + regression [Wave 2]
 - [ ] 09-04-PLAN.md — Makefile targets (install-tools, test, lint-recipes, check) + GitHub Actions CI [Wave 3]
 
 ### Phase 10: Error taxonomy + timeout enforcement
