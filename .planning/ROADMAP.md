@@ -239,7 +239,7 @@ Plans:
 - [x] 09-01-PLAN.md — JSON Schema + pyproject.toml + recipe v0->v0.1 bump + function extraction [Wave 1]
 - [x] 09-02-PLAN.md — --lint / --lint-all / --no-lint CLI integration + colored output + exit code 2 [Wave 2]
 - [x] 09-03-PLAN.md — pytest suite: pass_if verbs + lint negatives (12 fragments) + YAML round-trip + regression [Wave 2]
-- [ ] 09-04-PLAN.md — Makefile targets (install-tools, test, lint-recipes, check) + GitHub Actions CI [Wave 3]
+- [x] 09-04-PLAN.md — Makefile targets (install-tools, test, lint-recipes, check) + GitHub Actions CI [Wave 3]
 
 ### Phase 10: Error taxonomy + timeout enforcement
 **Goal:** Replace single `PASS|FAIL` verdict with category-aware verdicts (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`). Wire `smoke.timeout_s` to `subprocess.run(timeout=)` + `docker kill`. Add `build.timeout_s`, `build.clone_timeout_s`, `--global-timeout`. Steal from Inspect AI (5-layer timeout) and SWE-bench (`ResolvedStatus` enum).
