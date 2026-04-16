@@ -85,19 +85,19 @@ Plans:
   8. `GET /api/recipes` + `GET /api/recipes/:id` serve public-metadata views only (no lifecycle/install/auth/isolation leaks), support filter params (?family=, ?tier=, ?license=, ?provider=). `POST /api/sessions` accepts the new `provider` field and rejects invalid combinations with specific error codes (`recipe_not_found`, `provider_not_supported`, `model_not_supported`, `secret_missing`, `template_render_failed`, `lifecycle_hook_failed`, `chat_bridge_unsupported_mode`).
   9. **Gate A passes** (prerequisite): `make smoke-test-matrix` runs up to 4 cells {aider, picoclaw} × {anthropic, openrouter}, each sends literal `whoareyou` and asserts HTTP 200 + non-empty reply + no dangling `playground-*` container + no top-level error envelope. D-47 criteria: each recipe passes on ≥1 provider; ≥1 recipe passes on BOTH providers (OpenRouter wire proven); zero non-SKIP failures.
   10. **Gate B passes** (acceptance gate per D-01b): `make test-architectural-drop-in` — operator writes a third agent recipe (openclaw/plandex/synthetic null-echo fallback per D-50d) as a pure `agents/<target>/` directory drop, restarts the API server (SIGHUP reload), and the new cells pass the same `whoareyou` assertion as Gate A. `git diff api/ deploy/ Makefile agents/schemas/` is empty throughout the exercise per D-50c (only allowed substrate addition: a new `deploy/ap-runtime-<family>/Dockerfile` for an unbuilt runtime family). Passing Gate B closes Phase 02.5.
-**Plans:** 11 plans
+**Plans:** 11/11 plans complete
 Plans:
-- [ ] 02.5-01-PLAN.md — Recipe YAML schema v0.1.0 + JSON Schema Draft 2019-09 + loader + validator + SIGHUP reload [Wave 1]
-- [ ] 02.5-02-PLAN.md — Filesystem template registry + renderer + security hardening (closed FuncMap, path allowlist, symlink rejection, timeout, size cap) [Wave 2]
-- [ ] 02.5-03-PLAN.md — `Runner.RunWithLifecycle` + all 6 Dev Containers hooks + `waitFor` gating + errgroup parallel groups + per-hook timeouts [Wave 2]
-- [ ] 02.5-04-PLAN.md — `ChatBridge` interface + `FIFOBridge` + `ExecBridge` (lifted verbatim from Phase 2) + `BridgeRegistry` [Wave 2]
-- [ ] 02.5-05-PLAN.md — `SecretSource` extended with `Resolve` + `DevEnvSecretSource` (Anthropic + OpenRouter + extras) + `Materialize` pipeline + log redaction + server options wiring [Wave 2]
-- [ ] 02.5-06-PLAN.md — Runtime base images `ap-runtime-python` (Python 3.13 + uv) + `ap-runtime-node` (Node 22 Debian-slim) + Makefile `build-runtimes` target [Wave 2]
-- [ ] 02.5-07-PLAN.md — `aider` reference recipe (python / pip / exec_per_message / env_var / anthropic+openrouter) with L2 eager verification resolving Assumption A3 [Wave 3]
-- [ ] 02.5-08-PLAN.md — `picoclaw` reference recipe (node / git_build / fifo / secret_file_mount) + `templates/security.yml.tmpl` + rebuilt `Dockerfile` FROM `ap-runtime-node` + L2 verification resolving Assumption A7 [Wave 3]
-- [ ] 02.5-09-PLAN.md — `GET /api/recipes` + `GET /api/recipes/:id` + `POST /api/sessions` provider-field extension + new error codes + legacy recipe struct removal + migration `0003_sessions_provider.sql` [Wave 3]
-- [ ] 02.5-10-PLAN.md — **Gate A**: `make smoke-test-matrix` (4 cells, `whoareyou` probe, D-47 enforcement) [Wave 4]
-- [ ] 02.5-11-PLAN.md — **Gate B**: `make test-architectural-drop-in` (architectural acceptance gate per D-01b; operator-driven drop-in of a third recipe with zero substrate edits; passing closes Phase 02.5) [Wave 5]
+- [x] 02.5-01-PLAN.md — Recipe YAML schema v0.1.0 + JSON Schema Draft 2019-09 + loader + validator + SIGHUP reload [Wave 1]
+- [x] 02.5-02-PLAN.md — Filesystem template registry + renderer + security hardening (closed FuncMap, path allowlist, symlink rejection, timeout, size cap) [Wave 2]
+- [x] 02.5-03-PLAN.md — `Runner.RunWithLifecycle` + all 6 Dev Containers hooks + `waitFor` gating + errgroup parallel groups + per-hook timeouts [Wave 2]
+- [x] 02.5-04-PLAN.md — `ChatBridge` interface + `FIFOBridge` + `ExecBridge` (lifted verbatim from Phase 2) + `BridgeRegistry` [Wave 2]
+- [x] 02.5-05-PLAN.md — `SecretSource` extended with `Resolve` + `DevEnvSecretSource` (Anthropic + OpenRouter + extras) + `Materialize` pipeline + log redaction + server options wiring [Wave 2]
+- [x] 02.5-06-PLAN.md — Runtime base images `ap-runtime-python` (Python 3.13 + uv) + `ap-runtime-node` (Node 22 Debian-slim) + Makefile `build-runtimes` target [Wave 2]
+- [x] 02.5-07-PLAN.md — `aider` reference recipe (python / pip / exec_per_message / env_var / anthropic+openrouter) with L2 eager verification resolving Assumption A3 [Wave 3]
+- [x] 02.5-08-PLAN.md — `picoclaw` reference recipe (node / git_build / fifo / secret_file_mount) + `templates/security.yml.tmpl` + rebuilt `Dockerfile` FROM `ap-runtime-node` + L2 verification resolving Assumption A7 [Wave 3]
+- [x] 02.5-09-PLAN.md — `GET /api/recipes` + `GET /api/recipes/:id` + `POST /api/sessions` provider-field extension + new error codes + legacy recipe struct removal + migration `0003_sessions_provider.sql` [Wave 3]
+- [x] 02.5-10-PLAN.md — **Gate A**: `make smoke-test-matrix` (4 cells, `whoareyou` probe, D-47 enforcement) [Wave 4]
+- [x] 02.5-11-PLAN.md — **Gate B**: `make test-architectural-drop-in` (architectural acceptance gate per D-01b; operator-driven drop-in of a third recipe with zero substrate edits; passing closes Phase 02.5) [Wave 5]
 **UI hint**: no (API-only; Phase 5 consumes `GET /api/recipes` from the browser)
 **Reshape note**: REC-01/02/06/07 moved from Phase 4 to Phase 02.5 as substrate. REC-03/04/05/08 (full)/09/10/11/12 remain in Phase 4. See `.planning/REQUIREMENTS.md` updated traceability.
 
@@ -230,6 +230,64 @@ Plans:
 | CRIT-4 (cross-tenant kernel escape) | Phase 1 (userns-remap active) + Phase 2 (cap-drop/read-only/no-new-privs defaults) + Phase 7.5 (custom seccomp + Falco) | Layered: the cheap defense-in-depth lands as Phase 2 runner.go defaults; the custom seccomp profile + anomaly detection land in 7.5 |
 | CRIT-5 (Stripe webhook race) | Phase 6 | Idempotent ledger + BIL-02/03/04 land with the first Stripe call |
 | CRIT-6 (dangling containers) | Phase 5 | Reconciliation loop (SES-05) + Temporal workflow (SES-07) + heartbeat (SES-08) land with the lifecycle manager. Phase 2's stub session API is explicitly non-durable -- Phase 5 upgrades it. |
+
+### Phase 9: Spec lint + test harness foundations
+**Goal:** JSON Schema-based `--lint` gate (`ap.recipe.schema.json`) + `pytest` suite with mocked-docker fixtures for every `pass_if` verb, lint negative tests, ruamel write-back round-trip. Lint runs as mandatory pre-step (`--no-lint` to bypass). Gates all subsequent framework phases.
+**Depends on:** Phase 3 (v0.1 consolidation)
+**Plans:** 4 plans
+Plans:
+- [ ] 09-01-PLAN.md — JSON Schema + pyproject.toml + recipe v0->v0.1 bump + function extraction [Wave 1]
+- [ ] 09-02-PLAN.md — --lint / --lint-all / --no-lint CLI integration + colored output + exit code 2 [Wave 2]
+- [ ] 09-03-PLAN.md — pytest suite: pass_if verbs + lint negatives (12 fragments) + YAML round-trip + regression [Wave 2]
+- [ ] 09-04-PLAN.md — Makefile targets (install-tools, test, lint-recipes, check) + GitHub Actions CI [Wave 3]
+
+### Phase 10: Error taxonomy + timeout enforcement
+**Goal:** Replace single `PASS|FAIL` verdict with category-aware verdicts (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`). Wire `smoke.timeout_s` to `subprocess.run(timeout=)` + `docker kill`. Add `build.timeout_s`, `build.clone_timeout_s`, `--global-timeout`. Steal from Inspect AI (5-layer timeout) and SWE-bench (`ResolvedStatus` enum).
+**Depends on:** Phase 9
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 10 to break down)
+
+### Phase 11: Linux host owner_uid correctness
+**Goal:** All 5 recipes run cleanly on a Linux host. Pick approach: chown tmpdir to `volumes[].owner_uid` before mount, OR `docker cp` instead of bind mount (SWE-bench pattern), OR `docker run --user`. Hard fail on permission mismatch. CI fixture against distinct UIDs (0, 1000, 10000, 65534).
+**Depends on:** Phase 9
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 11 to break down)
+
+### Phase 12: Provenance + output bounds
+**Goal:** Verdict JSON carries `recipe_sha256`, `resolved_upstream_ref`, `image_digest`, `runner_version`, `run_started_at`, `host_os`. Add `smoke.stdout_max_bytes` (default 1 MiB) with stream-and-truncate + `TRUNCATED` verdict. Steal from Cog (Docker labels with git SHA) and Inspect AI (`MAX_EXEC_OUTPUT_SIZE`).
+**Depends on:** Phase 10 (`TRUNCATED` is a category)
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 12 to break down)
+
+### Phase 13: Determinism — SHA pinning + ap.recipe v0.2
+**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR (`standard_version` semver) and SWE-bench (tag-pinned-not-digest-pinned gap).
+**Depends on:** Phase 12 (uses provenance field)
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 13 to break down)
+
+### Phase 14: Isolation limits + default-deny
+**Goal:** Schema adds `runtime.limits.{memory_mb, cpus, pids, network}` + `runtime.isolation.{cap_drop, read_only_rootfs, no_new_privileges}` — mandatory for v0.2, default-deny. Runner applies all via Docker flags. All 5 recipes audited + given explicit limits. Escape-attempt fixture. Steal from METR (`manifest.yaml` resource declarations + iptables network control).
+**Depends on:** Phase 9, Phase 11
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 14 to break down)
+
+### Phase 15: Stochasticity — multi-run determinism
+**Goal:** Schema adds `smoke.determinism: {runs: N, require: unanimous|majority|at_least(K)|pass_at(K)}`. Runner retries cells N times with aggregation. New `STOCHASTIC` category. Retrofit hermes × gemini as multi-run probe. Steal from Inspect AI (`multi_scorer` with `at_least(k)` / `pass_at(k)` reducers).
+**Depends on:** Phase 10 (`STOCHASTIC` is a category)
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 15 to break down)
+
+### Phase 16: Dead verb coverage — fake-agent fixture
+**Goal:** `recipes/_fake-agent.yaml` (busybox/alpine, controlled output) exercises every `pass_if` verb with ≥1 PASS + ≥1 FAIL fixture each. Runs in `pytest` in <10s, no LLM. Consider promptfoo's `not-` prefix pattern for v0.3. Steal from promptfoo (`assert-set` with fractional threshold for composition).
+**Depends on:** Phase 9, Phase 10
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 16 to break down)
+
+### Phase 17: Doc-runner sync check
+**Goal:** `tests/test_schema_sync.py` parses `ap.recipe.schema.json` (from P09) and asserts `pass_if` enum, `build.mode` enum, required fields, and CLI flags match the runner's argparse + `evaluate_pass_if` branches. Deliberate desync = pytest failure. Steal from Cog (schema IS the single source of truth).
+**Depends on:** Phase 9
+**Plans:** 0 plans
+- [ ] TBD (run /gsd-plan-phase 17 to break down)
 
 ---
 *Roadmap created: 2026-04-11*
