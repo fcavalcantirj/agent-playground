@@ -92,7 +92,12 @@ def minimal_valid_recipe():
             "prompt": "hello",
             "pass_if": "exit_zero",
             "verified_cells": [
-                {"model": "test/model", "verdict": "PASS"},
+                {
+                    "model": "test/model",
+                    "verdict": "PASS",
+                    "category": "PASS",
+                    "detail": "",
+                },
             ],
         },
         "metadata": {

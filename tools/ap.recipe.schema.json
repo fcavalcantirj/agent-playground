@@ -310,7 +310,7 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["model", "verdict"],
+            "required": ["model", "verdict", "category", "detail"],
             "additionalProperties": false,
             "properties": {
               "model": {
@@ -358,7 +358,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["model", "verdict"],
+            "required": ["model", "verdict", "category", "detail"],
             "additionalProperties": false,
             "properties": {
               "model": {
