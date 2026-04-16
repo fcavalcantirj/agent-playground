@@ -1,4 +1,4 @@
-# Agent Playground Recipe Schema — `ap.recipe/v0.1`
+# Agent Playground Recipe Schema — `ap.recipe/v0.1.1`
 
 Canonical specification for the recipe format consumed by `tools/run_recipe.py`.
 
@@ -9,6 +9,8 @@ This document is the contract between:
 - **The (future) Go orchestrator** — the platform service that will consume these recipes to spin up per-user sessions.
 
 If a field is in use by a committed recipe in `recipes/` or a verb is implemented by the runner, it is documented here. If it is not, it does not exist.
+
+> **Version policy.** `ap.recipe/v0.1.1` is additive over `ap.recipe/v0.1`: every field in a valid v0.1 recipe remains valid, and new recipe authors see tightened bounds (ref allowlist, name length, timeout maxima), an `annotations` escape valve on every section, optional `metadata.license` and `metadata.maintainer`, and a `$defs`-based versioning seam (§10.1). **The JSON Schema at `tools/ap.recipe.schema.json` is authoritative.** When this markdown and the schema disagree, the schema wins and this document is the bug.
 
 ---
 
@@ -26,10 +28,12 @@ build:    { mode, ... }              # shape depends on mode
 runtime:  { provider, process_env, volumes, warnings? }
 invoke:   { mode, spec }
 smoke:    { prompt, pass_if, ..., verified_cells[], known_*[] }
-metadata: { recon_date, recon_by, source_citations[] }
+metadata: { recon_date, recon_by, source_citations[], license?, maintainer? }
 ```
 
 All top-level keys are required except where noted.
+
+Each major section (`build`, `runtime`, `invoke`, `smoke`, `metadata`) may also carry an optional `annotations: { ... }` escape-valve block — see §11.
 
 ---
 
@@ -37,8 +41,8 @@ All top-level keys are required except where noted.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `apiVersion` | string | yes | Must be exactly `ap.recipe/v0.1` for this schema. Older `ap.recipe/v0` recipes are still accepted by the runner but treated as v0.1-compatible (all new fields optional). |
-| `name` | string | yes | Short slug. Lowercase, `[a-z0-9_-]`. Used to tag the built image (`ap-recipe-<name>`) and as the default needle for `response_contains_name`. |
+| `apiVersion` | string | yes | Must be exactly `ap.recipe/v0.1`. The JSON Schema uses a `$defs.v0_1` discriminator branch to enforce this (see §10.1 "Versioning seam"). Older `ap.recipe/v0` recipes are accepted by the runner but treated as v0.1-compatible. |
+| `name` | string | yes | Short slug. Lowercase, `[a-z0-9_-]`. Used to tag the built image (`ap-recipe-<name>`) and as the default needle for `response_contains_name`. Maximum length 64 characters; used as the image-tag suffix (`ap-recipe-<name>`) where the Docker tag limit of 128 leaves headroom for the `ap-recipe-` prefix (D-05). |
 | `display_name` | string | yes | Human-readable name shown in logs and future UI. |
 | `description` | string (multi-line) | yes | What the agent is and which invocation path this recipe covers. Free-form. |
 
@@ -49,7 +53,7 @@ All top-level keys are required except where noted.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `source.repo` | string (URL) | yes if `build.mode == upstream_dockerfile` | HTTPS clone URL. |
-| `source.ref` | string | yes if `build.mode == upstream_dockerfile` | Git ref — SHA (preferred, reproducible), tag, or branch name. Shallow-clone friendly: the runner `git clone --depth=1`, then attempts a pinned fetch; if the fetch fails it falls back to shallow HEAD with a warning. |
+| `source.ref` | string | yes if `build.mode == upstream_dockerfile` | Git ref — SHA (preferred, reproducible), tag, or branch name. Must match the allowlist pattern `^[a-zA-Z0-9._/-]{1,255}$` (D-04). The pattern admits plain ref characters including `/` (for `refs/heads/main`) and `.` (for `v1.2.3`) but rejects shell metacharacters and `--upload-pack=<cmd>`-style option-as-value injections that `git fetch` would otherwise accept. Shallow-clone friendly: the runner `git clone --depth=1`, then attempts a pinned fetch; if the fetch fails it falls back to shallow HEAD with a warning. |
 | `source.ref_note` | string | no | Free-form explanation of what the ref points at and why (e.g. "main branch head at recon date, pinned for reproducibility"). |
 | `source.upstream_version` | string | no | The upstream's self-declared version at recon time (e.g. `v0.9.0`, `2026.4.15-beta.1`). Documentation only — not consumed by the runner. |
 
@@ -72,6 +76,8 @@ Clone the upstream repo and build its Dockerfile in place. This is the default a
 | `build.context` | string | no | Path to the build context relative to the clone root. Defaults to `.`. |
 | `build.observed` | map | no | Documentation-only record of what the recipe author saw at recon time. Suggested keys: `image_size_gb` (float), `wall_time_s` (int), `host_os` (string). |
 | `build.notes` | string (multi-line) | no | Free-form build gotchas: multi-stage details, apt mirrors, .dockerignore traps, expected cold-build wall time. |
+| `build.timeout_s` | int | no | Max wall time for `docker build` (upstream_dockerfile) or `docker pull` (image_pull). Range `[1, 10800]` seconds (3h ceiling — cold builds for image-heavy agents like hermes or openclaw routinely exceed 15min; 3h is ample). Default 900 when absent. |
+| `build.clone_timeout_s` | int | no | Max wall time for git clone + checkout in upstream_dockerfile mode. Range `[1, 1800]` seconds (30min ceiling for large repos). Default 300 when absent. |
 
 ### 3.2 `build.mode: image_pull`
 
@@ -84,6 +90,8 @@ Pull a prebuilt image from a registry and retag it.
 | `build.notes` | string | no | Same semantics as above. |
 
 The runner will `docker image inspect ap-recipe-<name>` first; if present, pull is skipped. `--no-cache` (see runner flags) forces removal and repull.
+
+> Each `build:` block may carry an optional `annotations: { ... }` object — see §11. New recipes should prefer `annotations` over `observed` for recon metadata; `observed` remains accepted for back-compat.
 
 ---
 
@@ -117,7 +125,7 @@ One or more bind mounts from host to container. The recipes committed today use 
 | `volumes[].container` | string | yes | Mount point inside the container (e.g. `/opt/data`, `/home/node/.openclaw`, `/nullclaw-data`). |
 | `volumes[].mode` | enum | no | `rw` (default) or `ro`. |
 | `volumes[].ephemeral` | bool | no | Documentation flag — `true` means the volume is expected to be thrown away at container teardown. Defaults to `true`. |
-| `volumes[].owner_uid` | int | no | UID the container runs as, documented so operators know what the bind mount must be writable for. 0 (alpine root), 1000 (node/nanobot), 10000 (hermes), 65534 (nullclaw `release` target). |
+| `volumes[].owner_uid` | int | no | UID the container runs as, documented so operators know what the bind mount must be writable for. Range `[0, 4294967295]` — full Linux `uid_t`. Values greater than 65535 typically indicate a userns-remapped container. Values seen in the committed catalog: 0 (alpine root), 1000 (node/nanobot), 10000 (hermes), 65534 (nullclaw release target) (D-07). |
 | `volumes[].notes` | string | no | Free-form: what the agent writes here, first-run bootstrap behavior, persistence implications. |
 
 ### 4.4 `runtime.warnings[]`
@@ -129,6 +137,8 @@ Per-recipe footgun log. Consumed by humans and by the future orchestrator's lint
 | `warnings[].id` | string (slug) | yes | Short identifier, e.g. `sh_entrypoint_override`, `no_touch_env_file`. Unique within the recipe. |
 | `warnings[].rule` | string | yes | One-line prescriptive rule. "Do NOT write to /opt/data/.env", "Override `--entrypoint sh` to bypass upstream entrypoint.sh", etc. |
 | `warnings[].reason` | string (multi-line) | yes | The evidence: file paths, line numbers, empirical observations from recon. |
+
+> Each `runtime:` block may carry an optional `annotations: { ... }` object — see §11.
 
 ---
 
@@ -170,6 +180,8 @@ If `stdout_filter` is absent, the runner treats the payload as the raw stdout.
 
 Not consumed by the runner today; reserved for multi-turn orchestration.
 
+> Each `invoke:` block may carry an optional `annotations: { ... }` object — see §11.
+
 ---
 
 ## 6. `smoke` — how to verify the recipe works
@@ -183,7 +195,7 @@ Not consumed by the runner today; reserved for multi-turn orchestration.
 | `smoke.needle` | string | required for `response_contains_string` | Literal substring to search for. |
 | `smoke.regex` | string | required for `response_regex` | Python regex pattern. Matched with `re.search` over the filtered payload. |
 | `smoke.case_insensitive` | bool | no | Default `false`. Applies to `response_contains_name`, `response_contains_string`, `response_not_contains`. |
-| `smoke.timeout_s` | int | no | Max wall time for the container run. Default 180. |
+| `smoke.timeout_s` | int | no | Max wall time for the container run. Range `[1, 3600]` seconds (1h ceiling — smoke probes should not run longer than a human attention span). Default 180 (D-06). |
 
 ### 6.2 `smoke.pass_if` verbs
 
@@ -203,12 +215,14 @@ A "cell" is one `(recipe × model)` execution. Recipes document which cells they
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `smoke.verified_cells[]` | list of maps | yes | At least one cell must be present. Keys: `model` (required), `verdict` (required, `PASS` or `FAIL`), `wall_time_s` (optional float), `notes` (optional, multi-line). Cells with `verdict: PASS` are the canonical "this works" matrix. |
-| `smoke.known_incompatible_cells[]` | list of maps | no | Cells that have been tried and found to fail for model-specific reasons (not recipe bugs). Same key shape as `verified_cells[]`, plus `notes` explaining the failure mode. |
+| `smoke.verified_cells[]` | list of maps | yes | At least one cell must be present. Required keys per cell: `model` (string), `verdict` (enum `{PASS, FAIL}`), `category` (enum from `$defs.category`, 11 values — see §10.1), `detail` (string; empty string is the convention when `category: PASS`). Optional keys: `wall_time_s` (float), `notes` (multi-line). Cells with `verdict: PASS` are the canonical "this works" matrix. |
+| `smoke.known_incompatible_cells[]` | list of maps | no | Cells that have been tried and found to fail for model-specific reasons (not recipe bugs). Same required key shape as `verified_cells[]` — `model`, `verdict`, `category`, `detail`. The `verdict` field is now constrained to the same enum as `verified_cells[].verdict` (`{PASS, FAIL}`); previously unconstrained, this closed-form enum was the Phase 10 WR-05 silent-typo gap (D-03). |
 | `smoke.known_weak_probes[]` | list of maps | no | Prompts that look reasonable but don't exercise `pass_if` correctly for this agent. Keys: `prompt` (required), `problem` (required, multi-line). |
 | `smoke.known_quirks[]` | list of maps | no | Non-blocking oddities worth knowing. Keys: `quirk` (required), `impact` (required, multi-line). Example: nanobot's Rich streaming UI injecting ANSI codes even with `--no-markdown`. |
 
 The runner's `--all-cells` sweep mode iterates `verified_cells[]` and re-runs each one. `known_*` lists are documentation only — the runner does not attempt to run them.
+
+> Each `smoke:` block, and each item in `verified_cells[]` and `known_incompatible_cells[]`, may carry an optional `annotations: { ... }` object — see §11.
 
 ---
 
@@ -219,6 +233,10 @@ The runner's `--all-cells` sweep mode iterates `verified_cells[]` and re-runs ea
 | `metadata.recon_date` | string (YYYY-MM-DD) | yes | When the recipe was researched and verified. |
 | `metadata.recon_by` | string | yes | Who/what produced it — human name, agent name, "main-conversation", "subagent", or a combination with tools. |
 | `metadata.source_citations[]` | list of strings | yes | Specific evidence used to write the recipe: file paths with line numbers, doc URLs, empirical observations. The point is that a reviewer can verify each claim without running the agent. |
+| `metadata.license` | string | no (today) | SPDX identifier (e.g. `MIT`, `Apache-2.0`). **Optional in v0.1.1; required before external contribution lands in phase 19+.** Documented here as the optional-today-required-later pattern (D-09). |
+| `metadata.maintainer` | object `{ name, url? }` | no (today) | `name` is a string (maintainer handle or full name). `url` is an optional string (maintainer homepage or contact URL, `format: uri`). **Optional in v0.1.1; required before external contribution lands in phase 19+.** (D-09) |
+
+> Each `metadata:` block may also carry an optional `annotations: { ... }` object — see §11.
 
 ---
 
@@ -262,15 +280,15 @@ Built/pulled images are retagged `ap-recipe-<name>` and retained across runs. Su
 
 ## 9. Compatibility with `ap.recipe/v0`
 
-All 5 recipes committed at the v0.1 freeze (`hermes`, `openclaw`, `picoclaw`, `nullclaw`, `nanobot`) declare `apiVersion: ap.recipe/v0`. The runner accepts both `v0` and `v0.1` and applies identical validation — every field added in v0.1 (`smoke.needle`, `smoke.regex`, the new `pass_if` verbs, `--all-cells` write-back) is optional. An unmodified v0 recipe will sweep green against the v0.1 runner; this is the regression gate enforced by the format-v0.1 consolidation phase.
+All 5 recipes committed at the v0.1 freeze (`hermes`, `openclaw`, `picoclaw`, `nullclaw`, `nanobot`) declare `apiVersion: ap.recipe/v0.1`. v0.1.1 is additive over v0.1: every v0.1 recipe remains a valid v0.1.1 recipe. The runner accepts both `v0` and `v0.1`/`v0.1.1` and applies identical validation — fields added in v0.1.1 (bounds, `annotations`, optional `license`/`maintainer`) are all optional, so an unmodified v0 or v0.1 recipe sweeps green against the v0.1.1 schema. This is the regression gate enforced by `tools/tests/test_schema_selfcheck.py` (Phase 18 D-10).
 
-New recipes should declare `apiVersion: ap.recipe/v0.1`.
+New recipes should declare `apiVersion: ap.recipe/v0.1`. The minor-version bump to v0.1.1 reflects schema maturation, not a wire-format change.
 
 ---
 
-## 10. Out of scope for v0.1
+## 10. Out of scope for v0.1.1
 
-Explicitly deferred to a future `ap.recipe/v1`:
+Deferred to a future `ap.recipe/v0.2` or later:
 
 - `runtime.external_services[]` — sidecar containers a recipe depends on (needed for NanoClaw's OneCLI Agent Vault pattern).
 - `setup.interactive: true` — AI-native fork-and-customize install flow.
@@ -280,5 +298,38 @@ Explicitly deferred to a future `ap.recipe/v1`:
 - Compound `pass_if` logic (AND/OR of multiple verbs).
 - `stdout_filter.engine` values other than `awk`.
 - Multi-host orchestration fields.
+- **Capability advertisement block** (MCP-style `capabilities.{streaming, trajectories, multi_turn}`) — deferred to Phase 22 or later.
+- **`runtime.limits`** with token/turn/cost budgets (currently smuggled into `argv`) — deferred to Phase 23.
+- **GPU / hardware declaration** (`build.gpu`, `build.cuda`) — deferred until the first GPU-requiring backlog agent triggers it.
+- **Collapse of the 3 `known_*` arrays into `known_issues[]` with a typed discriminator** — shape change, deferred to `v0.2`.
+- **Richer `verified_cells[]`** with `probe_id`, typed metrics (`tokens_in/out`, `cost_usd`), env fingerprint — deferred to Phase 24.
+- **Making `metadata.license` + `metadata.maintainer` required** — flips when external contribution lands, not today.
 
-If a new agent needs one of these, it is **blocked by format** until `v1` — not a v0.1 patch.
+If a new agent needs one of these, it is **blocked by format** until the relevant phase — not a v0.1.1 patch.
+
+---
+
+## 10.1 Versioning seam
+
+> The JSON Schema's root uses `oneOf: [ { "$ref": "#/$defs/v0_1" } ]` as a discriminator branch keyed on `apiVersion`. The full v0.1/v0.1.1 body lives under `$defs.v0_1`. Adding `ap.recipe/v0.2` will append a second `$defs.v0_2` branch and extend the `oneOf` array — a purely additive schema change that does not break v0.1 recipes. Recipes declaring `apiVersion: ap.recipe/v0.1` continue to match the `v0_1` branch exactly because each branch body carries its own `apiVersion: { "const": "ap.recipe/v0.N" }` constraint. This is the Kubernetes CRD versioning idiom applied to recipes.
+>
+> The 11-value category enum (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`, `STOCHASTIC` reserved, `SKIP` reserved) lives once at `$defs.category` and is referenced via `$ref` from both `verified_cells[].category` and `known_incompatible_cells[].category` (D-02). Adding a category is a one-line edit in a single place.
+
+---
+
+## 11. Annotations escape valve
+
+> Every major section — `build`, `runtime`, `invoke`, `smoke`, `metadata` — and every item in `verified_cells[]` and `known_incompatible_cells[]` may carry an optional `annotations: { ... }` object. Keys inside `annotations` are open (`additionalProperties: true`); keys at any other level remain strictly enumerated (`additionalProperties: false`). This pattern matches OpenAPI's `x-*` extensions and Kubernetes' `annotations` field: a strict known shape with an explicit extension point.
+>
+> Use `annotations` for recon observations, tool-specific metadata, experimental fields that might become first-class in a future version, and anything that would otherwise fight the schema's strict-by-default stance. Example:
+>
+> ```yaml
+> build:
+>   mode: upstream_dockerfile
+>   annotations:
+>     recon.image_size_gb: 5.19
+>     recon.wall_time_s: 451
+>     recon.host_os: darwin 25.3.0 arm64
+> ```
+>
+> The legacy `build.observed` object is preserved for back-compat with the 5 committed recipes but is **deprecated in favor of `build.annotations` for new recipes**.
