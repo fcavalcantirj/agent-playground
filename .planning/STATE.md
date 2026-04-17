@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Completed 19-04-PLAN.md (POST /v1/runs with Pattern 2 concurrency + BYOK data-side defense)
-last_updated: "2026-04-17T02:13:06.647Z"
+stopped_at: Completed 19-05-PLAN.md (rate-limit + idempotency middleware — SC-06, SC-09 green)
+last_updated: "2026-04-17T02:37:07.574Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 ## Current Position
 
 Phase: 19 (api-foundation) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Next:  `/gsd-plan-phase 02.5`
 Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
 Status: Ready to execute
@@ -130,6 +130,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase Phase 19 P02 PP02 | 7min | 2 tasks | 12 files |
 | Phase 19 P03 | 8min | 2 tasks | 11 files |
 | Phase 19-api-foundation P04 | 8m | 2 tasks | 8 files |
+| Phase 19-api-foundation P05 | 17min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -292,9 +293,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-17T02:13:06.642Z
+Last session: 2026-04-17T02:37:07.570Z
 
-Stopped at: Completed 19-04-PLAN.md (POST /v1/runs with Pattern 2 concurrency + BYOK data-side defense)
+Stopped at: Completed 19-05-PLAN.md (rate-limit + idempotency middleware — SC-06, SC-09 green)
 
 **Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
 
