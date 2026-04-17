@@ -331,8 +331,8 @@ Plans:
 Plans:
 - [x] 20-01-PLAN.md — Extend frontend/lib/api.ts (ApiError.headers + apiPost headers param) + new frontend/lib/api-types.ts (TS mirrors + UiError union + parseApiError + useRetryCountdown) [Wave 1]
 - [x] 20-02-PLAN.md — Delete mock tree (agent-configurator + 4 import-only peers + playground-section) and neutralize /playground + homepage references [Wave 1]
-- [ ] 20-03-PLAN.md — New <PlaygroundForm> client component: recipe fetch, 4 fields, BYOK hardening, 6 error states [Wave 2]
-- [ ] 20-04-PLAN.md — New <RunResultCard> pure display: verdict badge map (11 categories), metadata grid, stderr accordion [Wave 2]
+- [x] 20-03-PLAN.md — New <PlaygroundForm> client component: recipe fetch, 4 fields, BYOK hardening, 6 error states [Wave 2]
+- [x] 20-04-PLAN.md — New <RunResultCard> pure display: verdict badge map (11 categories), metadata grid, stderr accordion [Wave 2]
 - [ ] 20-05-PLAN.md — Mount <PlaygroundForm> on /playground + manual SC-11 smoke gate + STATE.md update (unblocks Hetzner deploy) [Wave 3]
 
 ### Phase 21: SSE Streaming Upgrade
