@@ -24,34 +24,32 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 19 (api-foundation) — EXECUTING
-Plan: 7 of 7
-Next:  `/gsd-plan-phase 02.5`
-Plans complete: 12 of 12 (Phase 1 + Phase 2, both complete)
-Status: Ready to execute
+Phase: 19 (api-foundation) — EXECUTING (paused 2026-04-17)
+Plan: 7 of 7 — 19-07 at human-verify checkpoint
+Next:  resume Plan 19-07 Task 3 (Hetzner SSH deploy + TLS verify + TS client compile), then phase verify + update_roadmap
+Plans complete: 6 of 7 fully; 0.5 of 1 remaining (19-07 Task 3 only)
+Status: Paused at human-verify checkpoint — user deferred live deploy to tomorrow
 
-Progress: [██░░░░░░░░] 20% (2/10 phases)
+Progress: Phase 19 — 6.5/7 plans shipped; full api_server stack locally validated
 
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
-**Primary resume file:** `.planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md`
+**Primary resume file:** `.planning/phases/19-api-foundation/RESUME-TOMORROW.md`
 
-It captures: all 54 Phase 02.5 decisions (D-01..D-54), the matrix acceptance gate (`whoareyou` probe, ≥2 providers, ≥36 green cells), the filesystem template registry contract, the cut-to-4 chat_io mode decision, the Temporal-stays-in-Phase-5 call, and every deferred idea.
+It captures: what's already shipped (commits 1832efd..0bf9e71), what remains (7 operator steps for the Hetzner push), the exact command to paste to resume, and the carryover test-PATH bug noted but not fixed.
 
-**The next command is:** `/gsd-plan-phase 02.5`
+**The next command is:** paste the kickoff block from `RESUME-TOMORROW.md` (or `/gsd-execute-phase 19 --wave 4` then respond to the 19-07 checkpoint).
 
 Read files in this order after /clear:
 
-1. `.planning/phases/02.5-recipe-manifest-reshape/02.5-CONTEXT.md` (anchor — read first)
-2. `.planning/phases/02.5-recipe-manifest-reshape/02.5-DISCUSSION-LOG.md` (audit trail if you need the rationale)
+1. `.planning/phases/19-api-foundation/RESUME-TOMORROW.md` (anchor — read first)
+2. `.planning/phases/19-api-foundation/19-07-SUMMARY.md` (what Task 1+2 shipped; §"How to Verify" has the 7 operator steps)
 3. `.planning/STATE.md` (this file)
 4. `.planning/PROJECT.md`
-5. `./CLAUDE.md`
-6. `.planning/research/PHASE-02.5-PREP.md` (recon anchor — locked decisions before discuss)
-7. `.planning/research/RECIPE-SCHEMA-DRAFT.md` (the schema spec Phase 02.5 implements)
-8. `.planning/research/SCHEMA-PRIOR-ART.md` (12-project schema research)
-9. `.planning/research/AGENT-MATRIX.md` (40-agent sweep)
-10. `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` (Phase 2 substrate 02.5 extends)
+5. `./CLAUDE.md` (banner: api/ Go substrate abandoned; recipe v0.1 is v0)
+6. `.planning/phases/19-api-foundation/19-CONTEXT.md` (D-01..D-10 locked decisions, SC-01..SC-13)
+7. `deploy/README.md` (D-08 trust-boundary + operator checklist)
+8. `test/smoke-api.sh` (SC-01..SC-09 runner — use `--live` flag against the Hetzner URL)
 
 ## Quick Tasks Completed
 
