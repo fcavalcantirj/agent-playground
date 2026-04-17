@@ -311,7 +311,7 @@ Plans:
 **Goal:** Ship `api_server/` — a FastAPI service wrapping `tools/run_recipe.py` as the public HTTP API. Postgres-backed runs + agent_instances + idempotency_keys + rate_limit_counters + users from day 1 (per the "no mocks, no stubs" directive). Endpoints: `GET /healthz` (thin) + `GET /readyz` (rich) + `GET /v1/schemas` + `GET /v1/schemas/{version}` + `GET /v1/recipes` + `GET /v1/recipes/{name}` + `POST /v1/lint` (256 KiB cap) + `POST /v1/runs` (load-bearing; per-image-tag asyncio.Lock + global Semaphore concurrency primitives) + `GET /v1/runs/{id}`. BYOK via `Authorization: Bearer <provider-key>` — never persisted, never logged. Stripe-shape error envelope + ULID run_id + allowlist-based log redaction + `_redact_api_key` widening. Full Hetzner deployment with Caddy-managed TLS at `api.agentplayground.dev`.
 **Requirements**: Bound to CONTEXT.md §Success Criteria SC-01..SC-13 (REQUIREMENTS.md has no phase_req_ids for Phase 19 — the CONTEXT.md list is the effective requirement set).
 **Depends on:** Phase 18 (schema v0.1.1 maturity)
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans complete
 Plans:
 - [x] 19-01-PLAN.md — Alembic baseline migration + api_server/ package skeleton + pyproject.toml + migration test [Wave 1]
 - [x] 19-02-PLAN.md — FastAPI skeleton + lifespan + /healthz + /readyz + conftest fixtures + docs gating [Wave 2]
@@ -319,7 +319,7 @@ Plans:
 - [x] 19-04-PLAN.md — POST /v1/runs + GET /v1/runs/{id} + runner_bridge (Pattern 2) + run_store (asyncpg) [Wave 3]
 - [x] 19-05-PLAN.md — Rate limit middleware (advisory lock) + idempotency middleware (body-hash) [Wave 3]
 - [x] 19-06-PLAN.md — Log redaction middleware + correlation-id + widen tools/run_recipe.py::_redact_api_key [Wave 1]
-- [ ] 19-07-PLAN.md — Hetzner deployment: Dockerfile + docker-compose.prod + Caddyfile + deploy.sh + smoke-api.sh [Wave 4]
+- [x] 19-07-PLAN.md — Hetzner deployment: Dockerfile + docker-compose.prod + Caddyfile + deploy.sh + smoke-api.sh [Wave 4]
 
 ### Phase 20: Frontend Alicerce
 
