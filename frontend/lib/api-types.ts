@@ -16,12 +16,25 @@ import { ApiError } from "@/lib/api";
 export type RecipeSummary = {
   name: string;
   apiVersion?: string;
+  display_name?: string | null;
+  description?: string | null;
+  upstream_version?: string | null;
+  image_size_gb?: number | null;
+  expected_runtime_seconds?: number | null;
   source_repo?: string | null;
   source_ref?: string | null;
   provider?: string | null;
   pass_if?: string | null;
   license?: string | null;
   maintainer?: string | null;
+};
+
+export type OpenRouterModel = {
+  id: string;
+  name: string;
+  context_length?: number;
+  pricing?: { prompt?: string; completion?: string };
+  description?: string;
 };
 
 export type RunRequest = {

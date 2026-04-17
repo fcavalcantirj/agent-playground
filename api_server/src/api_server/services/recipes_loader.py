@@ -98,9 +98,17 @@ def to_summary(recipe: dict) -> RecipeSummary:
     elif pass_if_val is not None:
         pass_if_val = str(pass_if_val)
 
+    build = recipe.get("build") or {}
+    observed = build.get("observed") or {}
+
     return RecipeSummary(
         name=recipe["name"],
         apiVersion=recipe.get("apiVersion", "ap.recipe/v0.1"),
+        display_name=recipe.get("display_name"),
+        description=str(recipe["description"]).strip() if recipe.get("description") else None,
+        upstream_version=str(source["upstream_version"]).strip() if source.get("upstream_version") else None,
+        image_size_gb=float(observed["image_size_gb"]) if observed.get("image_size_gb") is not None else None,
+        expected_runtime_seconds=float(observed["wall_time_s"]) if observed.get("wall_time_s") is not None else None,
         source_repo=source.get("repo"),
         source_ref=str(source.get("ref")) if source.get("ref") is not None else None,
         provider=runtime.get("provider"),

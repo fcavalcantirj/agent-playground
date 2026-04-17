@@ -42,6 +42,11 @@ class RecipeSummary(BaseModel):
 
     name: str
     api_version: str = Field(..., alias="apiVersion")
+    display_name: str | None = None
+    description: str | None = None
+    upstream_version: str | None = None
+    image_size_gb: float | None = None
+    expected_runtime_seconds: float | None = None
     source_repo: str | None = None
     source_ref: str | None = None
     provider: str | None = None
