@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api_server"
+version = "0.1.0"
+description = "Agent Playground API — FastAPI wrapper around tools/run_recipe.py"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.136.0",
+  "uvicorn[standard]>=0.44.0,<0.45",
+  "asyncpg>=0.31.0,<0.32",
+  "sqlalchemy>=2.0.49,<2.1",
+  "alembic>=1.18.4,<1.19",
+  "pydantic>=2.11",
+  "pydantic-settings>=2.0",
+  "python-ulid>=3.1.0,<4",
+  "structlog>=25.5.0,<26",
+  "asgi-correlation-id>=4.3.4,<5",
+  "ruamel.yaml>=0.17.21",
+  "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "testcontainers[postgres]>=4.14.2",
+  "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "api_integration: spawn real Postgres + run real recipe; opt-in via pytest -m api_integration",
+]
