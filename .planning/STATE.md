@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
-stopped_at: Completed 19-07-PLAN.md Tasks 1+2 (artifacts + local smoke); Task 3 human-verify checkpoint PENDING — deploy to Hetzner box required
-last_updated: "2026-04-17T19:33:01.259Z"
+status: ready_for_hetzner_deploy
+stopped_at: "Phase 20 shipped (SC-11 PASSED via headless-Chromium smoke); 19-07 Task 3 Hetzner deploy is now unblocked"
+last_updated: "2026-04-17T21:05:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -38,9 +38,7 @@ Progress: Phase 20 planning artifacts complete — CONTEXT (14 decisions), RESEA
 
 It captures: 14 locked decisions (D-01..D-14), success criteria (SC-01..SC-11), user-approved ASCII UI preview, scope boundaries (what's IN and what's OUT), canonical refs, and deferred ideas.
 
-**The next command is:** `/gsd-execute-phase 20` (with a fresh `/clear` first).
-
-**DO NOT** run `/gsd-execute-phase 19 --wave 4` — that path still goes to the cancelled Hetzner deploy. **DO NOT** run `bash deploy/deploy.sh`. Both remain blocked until Phase 20 Plan 20-05's human-verify SC-11 gate returns `approved`.
+**The next command is:** `/gsd-execute-phase 19 --wave 4` — run the previously-cancelled Hetzner deploy now that the dumb playground is live.
 
 Read files in this order after /clear:
 
