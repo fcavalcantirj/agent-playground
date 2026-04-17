@@ -1,0 +1,81 @@
+# Phase 19 production stack: postgres + api_server + caddy on the Hetzner box.
+#
+# Invariants:
+#   - No public Postgres port (compose-internal only).
+#   - caddy_data named volume persists ACME certs across container restarts (Pitfall 7).
+#   - api_server mounts /var/run/docker.sock (D-08 accepted risk; see deploy/README.md).
+#   - DOCKER_GID build arg is set by deploy/deploy.sh from `stat -c %g /var/run/docker.sock`.
+#   - AP_ENV=prod gates /docs closed (D-10); AP_TRUSTED_PROXY=true because Caddy is in front.
+#
+# Deploy is via deploy/deploy.sh (pull → build → [BLOCKING] alembic upgrade head → roll).
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ap
+      POSTGRES_DB: agent_playground_api
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    secrets: [pg_password]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ap -d agent_playground_api"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api_server:
+    build:
+      context: ..
+      dockerfile: tools/Dockerfile.api
+      args:
+        DOCKER_GID: ${DOCKER_GID:-999}
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AP_ENV: prod
+      AP_TRUSTED_PROXY: "true"
+      AP_MAX_CONCURRENT_RUNS: "2"
+      AP_RECIPES_DIR: /app/recipes
+      # NOTE: password is injected via env_file (.env.prod) so the secret never
+      # appears in compose config output or `docker inspect`. deploy.sh writes
+      # .env.prod from secrets/pg_password at deploy time.
+      DATABASE_URL: postgresql+asyncpg://ap:${POSTGRES_PASSWORD}@postgres:5432/agent_playground_api
+    env_file:
+      - .env.prod
+    volumes:
+      # ACCEPTED trust boundary (D-08) — runner shells out to `docker` CLI.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../recipes:/app/recipes:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data              # Pitfall 7 — persistent ACME cert storage
+      - caddy_config:/config
+    depends_on:
+      - api_server
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+secrets:
+  pg_password:
+    file: ./secrets/pg_password

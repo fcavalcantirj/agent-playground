@@ -1,0 +1,12 @@
+{
+    email ops@agentplayground.dev
+}
+
+api.agentplayground.dev {
+    reverse_proxy api_server:8000
+    encode gzip
+    log {
+        output stdout
+        format json
+    }
+}
