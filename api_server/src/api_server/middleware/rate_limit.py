@@ -1,27 +1,159 @@
-"""Rate-limit middleware — STUB.
+"""Rate-limit middleware (Plan 19-05).
 
-Plan 19-05 implements the advisory-lock + Postgres sliding-window counter
-logic per CONTEXT.md D-05. This file exists ONLY so Plan 19-02 can wire the
-middleware into ``main.create_app`` now — Plan 05 then fills the
-``__call__`` body without touching ``main.py`` (file-ownership contract for
-Wave 3 parallel execution).
+Replaces the Plan 19-02 pass-through stub with a real ASGI body that:
 
-Pass-through behavior until Plan 05 lands: every request goes straight to
-the inner app with no inspection.
+- Maps (method, path) → bucket per CONTEXT.md §D-05:
+  ``POST /v1/runs`` → 10/min, ``POST /v1/lint`` → 120/min,
+  ``GET /v1/*`` → 300/min. All other paths pass through
+  unconditionally (health probes, docs, OpenAPI, root).
+- Derives the subject (IP or user) per the XFF-trust policy —
+  ``AP_TRUSTED_PROXY=true`` is required before we trust
+  ``X-Forwarded-For``; otherwise we use ``scope["client"]``'s peer
+  IP (T-19-05-01: the threat is an attacker spoofing XFF to bypass
+  the per-IP limit).
+- Calls :func:`services.rate_limit.check_and_increment` on the app's
+  asyncpg pool. On cap exceeded, emits a Stripe-shape error envelope
+  with status 429 + ``Retry-After`` header (SC-09).
+
+**Fail-open on backend error:** a Postgres outage causes the middleware
+to log and fall through to the handler rather than lock everyone out.
+The alternative (fail-closed) would turn a transient infra hiccup into
+a user-visible outage — deliberate tradeoff documented in the plan's
+threat register (T-19-05-06).
+
+Class name + ``__init__`` signature unchanged from Plan 19-02 so
+``main.py`` stays wired (Wave 3 file-ownership contract).
 """
 from __future__ import annotations
 
+import json
+import logging
+
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from ..models.errors import ErrorCode, make_error_envelope
+from ..services.rate_limit import check_and_increment
+
+_log = logging.getLogger("api_server.rate_limit")
+
+# (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05.
+_LIMITS: dict[str, tuple[int, int]] = {
+    "runs": (10, 60),    # POST /v1/runs
+    "lint": (120, 60),   # POST /v1/lint
+    "get":  (300, 60),   # GET /v1/*
+}
+
+
+def _bucket_for(scope: Scope) -> str | None:
+    """Return the bucket name for a request, or ``None`` to pass through.
+
+    Health probes, docs, OpenAPI, and the root path are NOT rate-limited
+    — LB probes must always succeed and docs are read-mostly. Anything
+    under ``/v1/`` that is NOT one of the POST endpoints falls into the
+    ``get`` bucket regardless of HTTP verb, so a future HEAD/OPTIONS
+    request to a GET endpoint is still bounded.
+    """
+    method = scope.get("method", "")
+    path = scope.get("path", "")
+    if method == "POST" and path == "/v1/runs":
+        return "runs"
+    if method == "POST" and path == "/v1/lint":
+        return "lint"
+    # Any GET under /v1 is the "get" bucket. POSTs we didn't map above
+    # are NOT rate-limited (there aren't any in Phase 19 — all v1 POSTs
+    # are explicitly mapped above).
+    if method == "GET" and path.startswith("/v1/"):
+        return "get"
+    return None
+
+
+def _subject_from_scope(scope: Scope, trusted_proxy: bool) -> str:
+    """Return the rate-limit subject (IP or user) for the request.
+
+    When ``trusted_proxy=True`` (Caddy in front in prod), the first IP
+    in ``X-Forwarded-For`` is used — Caddy appends the real client IP
+    to the head of the list. When ``trusted_proxy=False`` (default),
+    XFF is IGNORED entirely: an attacker can send any value they want
+    in that header and the server must not trust it (T-19-05-01).
+
+    When no peer IP is available (e.g. unix-socket client), returns
+    ``"unknown"`` so all such requests share a single bucket — preferable
+    to letting the rate limiter silently skip the check.
+    """
+    if trusted_proxy:
+        for name, value in scope.get("headers", []):
+            if name == b"x-forwarded-for":
+                first = value.decode(errors="ignore").split(",")[0].strip()
+                if first:
+                    return first
+                break
+    client = scope.get("client")
+    return client[0] if client else "unknown"
 
 
 class RateLimitMiddleware:
-    """ASGI middleware stub — no-op pass-through until Plan 19-05 fills it in."""
+    """ASGI middleware enforcing per-(subject, bucket) fixed-window limits.
+
+    Class name + signature match the Plan 19-02 stub exactly so the
+    existing ``app.add_middleware(RateLimitMiddleware)`` wiring in
+    ``main.create_app()`` works unchanged.
+    """
 
     def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        # TODO(plan 19-05): look up bucket via endpoint path, acquire the
-        # per-subject advisory lock, increment the Postgres counter, emit
-        # Retry-After + HTTP 429 when the window limit is exceeded.
-        await self.app(scope, receive, send)
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        # Lifespan / websocket / other non-HTTP messages pass through.
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        bucket = _bucket_for(scope)
+        if bucket is None:
+            await self.app(scope, receive, send)
+            return
+        limit, window_s = _LIMITS[bucket]
+
+        # Settings + DB pool live on app.state — populated by the lifespan
+        # in main.create_app(). The cast is safe: this middleware is never
+        # exercised outside a fully-constructed FastAPI app.
+        app = scope["app"]
+        trusted = bool(getattr(app.state.settings, "trusted_proxy", False))
+        subject = _subject_from_scope(scope, trusted)
+
+        try:
+            async with app.state.db.acquire() as conn:
+                allowed, retry_after = await check_and_increment(
+                    conn, subject, bucket, limit, window_s,
+                )
+        except Exception:
+            # Fail-open: a rate-limit backend failure shouldn't cascade
+            # into a site-wide outage. Log and pass through.
+            _log.exception("rate_limit backend error; failing open")
+            await self.app(scope, receive, send)
+            return
+
+        if allowed:
+            await self.app(scope, receive, send)
+            return
+
+        # Over limit — emit a Stripe-shape 429 envelope with Retry-After.
+        body = json.dumps(
+            make_error_envelope(
+                ErrorCode.RATE_LIMITED,
+                f"rate limit exceeded for bucket {bucket!r}",
+                param=bucket,
+            )
+        ).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 429,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"retry-after", str(retry_after).encode()),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})

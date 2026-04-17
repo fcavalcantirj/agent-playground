@@ -68,6 +68,16 @@ async def test_concurrency_semaphore_caps(async_client, monkeypatch):
     Requests are round-robined across all 5 committed recipes so the
     per-tag Lock doesn't serialize us down to 1 — the semaphore is then
     the effective cap, which is exactly what SC-07 is asserting.
+
+    Rate-limit bypass via distinct subjects: Plan 19-05 added a
+    Postgres-backed rate limiter (10/min for POST /v1/runs) that would
+    otherwise 429 requests 11-50 here. The app's ``trusted_proxy``
+    setting is flipped to True inside the test and a unique
+    ``X-Forwarded-For`` is sent with each request so the rate limiter
+    sees 50 distinct subjects — no 429 interference, and SC-07 remains
+    the thing under test. The rate limiter is separately exercised by
+    ``tests/test_rate_limit.py`` which is the correct place for its
+    own assertions.
     """
     in_flight = 0
     max_in_flight = 0
@@ -92,12 +102,16 @@ async def test_concurrency_semaphore_caps(async_client, monkeypatch):
 
     monkeypatch.setattr("asyncio.to_thread", instrumented_to_thread)
 
+    # Make each request a distinct rate-limit subject so the 10/min
+    # runs bucket doesn't interfere with the concurrency assertion.
+    async_client._transport.app.state.settings.trusted_proxy = True
+
     async def one(i: int):
         # Round-robin across recipes so per-tag locks don't serialize us.
         name = RECIPES[i % len(RECIPES)]
         return await async_client.post(
             "/v1/runs",
-            headers=AUTH,
+            headers={**AUTH, "X-Forwarded-For": f"10.42.0.{i}"},
             json={"recipe_name": name, "model": "m", "prompt": "p"},
         )
 
@@ -148,14 +162,19 @@ async def test_per_tag_lock_serializes_same_tag(async_client, monkeypatch):
 
     monkeypatch.setattr("asyncio.to_thread", instrumented_to_thread)
 
-    async def one():
+    # Same rate-limit bypass as the outer test — each request gets a
+    # distinct subject so the 10/min POST /v1/runs limit doesn't 429
+    # requests 2-10 of the burst.
+    async_client._transport.app.state.settings.trusted_proxy = True
+
+    async def one(i: int):
         return await async_client.post(
             "/v1/runs",
-            headers=AUTH,
+            headers={**AUTH, "X-Forwarded-For": f"10.42.1.{i}"},
             json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
         )
 
-    results = await asyncio.gather(*(one() for _ in range(10)))
+    results = await asyncio.gather(*(one(i) for i in range(10)))
     assert all(r.status_code == 200 for r in results)
     # Per-tag Lock must serialize same-tag builds to exactly 1 at a time.
     assert max_in_flight == 1, (

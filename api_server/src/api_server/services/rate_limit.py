@@ -62,20 +62,32 @@ async def check_and_increment(
         # requests under a 10/min limit. Transaction-scoped lock auto-
         # releases on COMMIT.
         await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_key)
+        # Window-start formula: ``to_timestamp(floor(epoch / W) * W)`` floors
+        # the current epoch to the nearest ``window_s``-second boundary. The
+        # RESEARCH.md sketch used ``date_trunc('second', NOW()) - (epoch::bigint
+        # % W) * 1s`` which MIS-COMPUTES when the fractional part of the epoch
+        # is ≥ 0.5 — ``::bigint`` rounds-to-nearest (not floor), so it can
+        # produce a window_start off by one second. Two consecutive requests
+        # landing either side of the round-point land on DIFFERENT counter
+        # rows and the 11th request gets count=1 instead of count=11 → SC-09
+        # silently breaks. ``floor()`` plus ``to_timestamp()`` gives a single
+        # deterministic boundary.
         row = await conn.fetchrow(
             """
             INSERT INTO rate_limit_counters (subject, bucket, window_start, count)
             VALUES (
                 $1, $2,
-                date_trunc('second', NOW())
-                    - (EXTRACT(EPOCH FROM NOW())::bigint % $3) * INTERVAL '1 second',
+                to_timestamp(floor(EXTRACT(EPOCH FROM NOW()) / $3) * $3),
                 1
             )
             ON CONFLICT (subject, bucket, window_start)
             DO UPDATE SET count = rate_limit_counters.count + 1
             RETURNING count,
                       window_start,
-                      EXTRACT(EPOCH FROM (NOW() - window_start))::int AS age_s
+                      GREATEST(
+                          0,
+                          EXTRACT(EPOCH FROM (NOW() - window_start))::int
+                      ) AS age_s
             """,
             subject, bucket, window_s,
         )
