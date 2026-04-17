@@ -15,7 +15,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-COMPOSE="docker compose -f docker-compose.prod.yml"
+# --env-file so compose interpolates ${POSTGRES_PASSWORD} from .env.prod at
+# parse time (compose only auto-reads a file named `.env`, not `.env.prod`).
+# Without this, `${POSTGRES_PASSWORD}` in DATABASE_URL silently resolves to
+# empty string and asyncpg crashes at connect time.
+COMPOSE="docker compose -f docker-compose.prod.yml --env-file .env.prod"
 
 echo "[deploy] starting"
 
@@ -27,9 +31,12 @@ fi
 echo "[deploy] ensuring secrets/pg_password exists"
 if [[ ! -s secrets/pg_password ]]; then
   mkdir -p secrets
-  head -c 32 /dev/urandom | base64 | tr -d '\n' > secrets/pg_password
+  # hex, not base64 — base64 emits `+`, `/`, `=` which break URL substitution
+  # into DATABASE_URL (asyncpg parses `+` as a space and crashes). 32 bytes
+  # of entropy → 64 hex chars, URL-safe as-is.
+  openssl rand -hex 32 > secrets/pg_password
   chmod 600 secrets/pg_password
-  echo "[deploy] generated secrets/pg_password (32 random bytes, base64)"
+  echo "[deploy] generated secrets/pg_password (32 bytes, hex)"
 fi
 
 # Compute host Docker socket GID so container user can access it (Pitfall 5).

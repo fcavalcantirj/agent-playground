@@ -30,11 +30,20 @@ COPY recipes /src/recipes
 
 FROM python:3.11-slim
 ARG DOCKER_GID=999
+# docker-cli (not docker.io) — on Debian 13 `docker.io` stopped shipping the
+# CLI binary (it only installs dockerd/docker-init/docker-proxy). The api_server
+# needs the client to talk to the host daemon via the bind-mounted socket; it
+# never runs its own daemon. Using `docker-cli` also avoids creating a docker
+# group at install time, so the GID handling below starts from a clean slate.
+#
+# GID handling: if a group with $DOCKER_GID already exists (e.g., daemon=1),
+# add apiuser to that group; otherwise create a fresh `docker` group with the
+# right GID. Either way apiuser ends up in a group that owns the host socket.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker.io curl ca-certificates \
+ && apt-get install -y --no-install-recommends docker-cli curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && (groupmod -g ${DOCKER_GID} docker 2>/dev/null || groupadd -g ${DOCKER_GID} docker) \
- && useradd -m -u 1001 -G docker apiuser
+ && if ! getent group ${DOCKER_GID} >/dev/null; then groupadd -g ${DOCKER_GID} docker; fi \
+ && useradd -m -u 1001 -G "$(getent group ${DOCKER_GID} | cut -d: -f1)" apiuser
 COPY --from=build /install /usr/local
 COPY --from=build /src /app
 WORKDIR /app/api_server

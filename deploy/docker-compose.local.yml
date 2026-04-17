@@ -1,0 +1,15 @@
+# Local-only override for prod-shaped boot on a developer laptop.
+# Adds host port mapping for api_server so we can hit it directly without Caddy
+# (Caddy needs a real DNS name + port 80/443 + Let's Encrypt; not for local).
+#
+# Use:  docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local.yml up -d postgres api_server
+# Skip the caddy service entirely.
+
+services:
+  api_server:
+    ports:
+      - "127.0.0.1:8000:8000"
+    # macOS-only workaround: Docker Desktop bind-mounts /var/run/docker.sock as root:root mode 660.
+    # On Linux Hetzner the socket is root:docker (gid 999) and apiuser (in docker group) can access it.
+    # Run as root locally only — DO NOT apply this override on the prod box.
+    user: root
