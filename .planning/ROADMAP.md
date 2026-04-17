@@ -323,8 +323,8 @@ Plans:
 
 ### Phase 20: Frontend Alicerce
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Replace the v0 mock `/playground` page with a real API-driven conversational form that round-trips a run end-to-end (pick recipe from `GET /v1/recipes`, type model + BYOK + prompt, click Deploy, see verdict card from `POST /v1/runs`). Delete `<AgentConfigurator>` and all mock client-side catalogs. Desktop-first; mobile polish deferred. No auth, no dashboard, no streaming — those are later phases. **Gates the Phase 19 Hetzner deploy**: deploy is BLOCKED until Phase 20 SC-11 passes.
+**Requirements**: Bound to `20-CONTEXT.md` §Success Criteria SC-01..SC-11 + D-01..D-14 decisions.
 **Depends on:** Phase 19
 **Plans:** 0 plans
 
