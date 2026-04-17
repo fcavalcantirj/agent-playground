@@ -1,8 +1,9 @@
 "use client"
 
+import { Footer } from "@/components/footer"
 import { Navbar } from "@/components/navbar"
 import { ParticleBackground } from "@/components/particle-background"
-import { Footer } from "@/components/footer"
+import { PlaygroundForm } from "@/components/playground-form"
 
 export default function PlaygroundPage() {
   return (
@@ -27,7 +28,7 @@ export default function PlaygroundPage() {
         </div>
         
         <div className="mx-auto max-w-2xl">
-          {/* PlaygroundForm is wired in Plan 20-05 */}
+          <PlaygroundForm />
         </div>
       </div>
       
