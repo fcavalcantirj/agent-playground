@@ -70,6 +70,17 @@ class RunRequest(BaseModel):
     no_lint: bool = False
     no_cache: bool = False
     metadata: dict[str, Any] | None = None
+    # Phase 20: agent identity. Both fields are optional on the wire so the
+    # legacy one-shot path keeps working; when supplied, the agent_instance
+    # row is keyed by (user_id, agent_name) and the smoke prompt is derived
+    # from the personality preset (server-side, not client-trusted).
+    agent_name: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9 _-]*$",
+    )
+    personality: str | None = Field(None, max_length=64)
 
 
 class RunResponse(BaseModel):

@@ -38,6 +38,8 @@ from fastapi.responses import JSONResponse
 from ..constants import ANONYMOUS_USER_ID
 from ..models.errors import ErrorCode, make_error_envelope
 from ..models.runs import RunGetResponse, RunRequest, RunResponse
+from ..services.personality import is_known as personality_is_known
+from ..services.personality import smoke_prompt_for
 from ..services.run_store import (
     fetch_run,
     insert_pending_run,
@@ -133,9 +135,32 @@ async def create_run(
             "recipe missing runtime.process_env.api_key",
         )
 
-    # --- Step 6 prep: resolve prompt (body > recipe.smoke.prompt > "") ---
-    prompt = body.prompt or recipe.get("smoke", {}).get("prompt") or ""
+    # --- Step 5b: validate personality preset if supplied ---
+    if body.personality is not None and not personality_is_known(body.personality):
+        return _err(
+            422,
+            ErrorCode.INVALID_REQUEST,
+            f"unknown personality preset {body.personality!r}",
+            param="personality",
+        )
+
+    # --- Step 6 prep: resolve smoke prompt ---
+    # Precedence: explicit body.prompt (legacy / power-user) >
+    #             personality preset's smoke prompt >
+    #             recipe.smoke.prompt > empty.
+    # The personality-derived prompt deliberately overrides recipe defaults
+    # so the agent's persona is actually exercised during the deploy smoke.
+    prompt = (
+        body.prompt
+        or smoke_prompt_for(body.personality)
+        or recipe.get("smoke", {}).get("prompt")
+        or ""
+    )
     run_id = new_run_id()
+
+    # Default agent name when caller didn't supply one (back-compat with
+    # legacy callers + smoke-tests that just want to run a recipe).
+    agent_name = body.agent_name or f"{body.recipe_name}-{body.model.replace('/', '-')}"
 
     # --- Step 3 + 4 + 5: upsert agent_instance + insert pending run ---
     # Scope 1 of 2 on the DB pool: opens + closes inside this with block
@@ -144,7 +169,12 @@ async def create_run(
     pool = request.app.state.db
     async with pool.acquire() as conn:
         agent_instance_id = await upsert_agent_instance(
-            conn, ANONYMOUS_USER_ID, body.recipe_name, body.model,
+            conn,
+            ANONYMOUS_USER_ID,
+            body.recipe_name,
+            body.model,
+            agent_name,
+            body.personality,
         )
         await insert_pending_run(conn, run_id, agent_instance_id, prompt)
 

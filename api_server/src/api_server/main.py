@@ -34,6 +34,7 @@ from .middleware.correlation_id import CorrelationIdMiddleware
 from .middleware.idempotency import IdempotencyMiddleware
 from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
+from .routes import agents as agents_route
 from .routes import health
 from .routes import recipes as recipes_route
 from .routes import runs as runs_route
@@ -110,6 +111,8 @@ def create_app() -> FastAPI:
     # endpoint that wraps tools/run_recipe.py::run_cell via the
     # per-image-tag Lock + global Semaphore in app.state.
     app.include_router(runs_route.router, prefix="/v1", tags=["runs"])
+    # Phase 20: GET /v1/agents — list user's deployed agents.
+    app.include_router(agents_route.router, prefix="/v1", tags=["agents"])
     return app
 
 

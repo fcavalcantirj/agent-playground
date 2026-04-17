@@ -44,6 +44,49 @@ export type RunRequest = {
   no_lint?: boolean;
   no_cache?: boolean;
   metadata?: Record<string, unknown> | null;
+  agent_name?: string | null;     // user-facing agent identifier
+  personality?: PersonalityId | null;
+};
+
+// Personality presets (mirrors api_server/services/personality.py)
+export type PersonalityId =
+  | "polite-thorough"
+  | "concise-neat"
+  | "skeptical-critic"
+  | "cheerful-helper"
+  | "senior-architect"
+  | "quick-prototyper";
+
+export const PERSONALITIES: Array<{
+  id: PersonalityId;
+  label: string;
+  description: string;
+  emoji: string;
+}> = [
+  { id: "polite-thorough",  label: "Polite & thorough",  emoji: "📚", description: "Patient, well-structured, explains its reasoning step by step." },
+  { id: "concise-neat",     label: "Concise & neat",     emoji: "✂️", description: "Terse, no fluff, code-first, ships the answer in one breath." },
+  { id: "skeptical-critic", label: "Skeptical critic",   emoji: "🧐", description: "Challenges assumptions, surfaces edge cases, prefers safety." },
+  { id: "cheerful-helper",  label: "Cheerful helper",    emoji: "🌞", description: "Friendly, encouraging, makes onboarding feel low-stakes." },
+  { id: "senior-architect", label: "Senior architect",   emoji: "🏛️", description: "Technical depth, considers tradeoffs, names patterns and pitfalls." },
+  { id: "quick-prototyper", label: "Quick prototyper",   emoji: "🚀", description: "Ship-fast mindset, MVP energy, willing to cut scope." },
+];
+
+export type AgentSummary = {
+  id: string;
+  name: string;
+  recipe_name: string;
+  model: string;
+  personality?: PersonalityId | null;
+  created_at: string;
+  last_run_at?: string | null;
+  total_runs: number;
+  last_verdict?: string | null;
+  last_category?: string | null;
+  last_run_id?: string | null;
+};
+
+export type AgentListResponse = {
+  agents: AgentSummary[];
 };
 
 export type RunResponse = {

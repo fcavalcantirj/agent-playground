@@ -26,6 +26,8 @@ import { apiGet, apiPost } from "@/lib/api";
 import {
   parseApiError,
   useRetryCountdown,
+  PERSONALITIES,
+  type PersonalityId,
   type RecipeSummary,
   type RunResponse,
   type UiError,
@@ -96,12 +98,17 @@ function formatContext(ctx: number | undefined): string | null {
   return String(ctx);
 }
 
-export function PlaygroundForm() {
+export function PlaygroundForm({
+  onDeployed,
+}: {
+  onDeployed?: (verdict: RunResponse) => void;
+} = {}) {
   const [recipes, setRecipes] = useState<RecipeSummary[] | null>(null);
   const [recipe, setRecipe] = useState("");
   const [model, setModel] = useState("");
   const [byok, setByok] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const [agentName, setAgentName] = useState("");
+  const [personality, setPersonality] = useState<PersonalityId>("polite-thorough");
   const [isRunning, setIsRunning] = useState(false);
   const [verdict, setVerdict] = useState<RunResponse | null>(null);
   const [uiError, setUiError] = useState<UiError | null>(null);
@@ -174,11 +181,13 @@ export function PlaygroundForm() {
     if (verdict) cardRef.current?.focus();
   }, [verdict]);
 
+  const trimmedName = agentName.trim();
+  const nameValid = /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(trimmedName);
   const canDeploy =
     recipe !== "" &&
     model.trim() !== "" &&
     byok.trim() !== "" &&
-    prompt.trim() !== "" &&
+    nameValid &&
     !isRunning &&
     (uiError?.kind !== "rate_limited" || remainingSec === 0);
 
@@ -189,10 +198,16 @@ export function PlaygroundForm() {
     try {
       const res = await apiPost<RunResponse>(
         "/api/v1/runs",
-        { recipe_name: recipe, model, prompt },
+        {
+          recipe_name: recipe,
+          model,
+          agent_name: trimmedName,
+          personality,
+        },
         { Authorization: `Bearer ${byok}` },
       );
       setVerdict(res);
+      onDeployed?.(res);
     } catch (e) {
       setUiError(parseApiError(e));
     } finally {
@@ -350,22 +365,93 @@ export function PlaygroundForm() {
         )}
       </section>
 
-      {/* ─── STEP 3 — Configure + Deploy ────────────────────────────── */}
+      {/* ─── STEP 3 — Name + Personality ────────────────────────────── */}
       <section>
         <SectionHeader
           step={3}
+          icon={<Sparkles className="size-5" />}
+          title="Name your agent & pick a personality"
+          subtitle="The personality shapes how the agent introduces itself in the deploy smoke and steers its tone in later chats."
+        />
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Name — 1/3 column */}
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="agent-name" className="flex items-center gap-2 text-base font-medium">
+              <Boxes className="size-4 text-muted-foreground" /> Agent name
+            </Label>
+            <Input
+              id="agent-name"
+              type="text"
+              autoComplete="off"
+              placeholder={selectedRecipe ? `e.g., my-${selectedRecipe.name}` : "e.g., my-helper"}
+              disabled={isRunning}
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              className="h-14 text-lg"
+              maxLength={64}
+              aria-invalid={agentName.length > 0 && !nameValid ? true : undefined}
+            />
+            <p className="text-sm text-muted-foreground">
+              Stored in your account. Letters, numbers, spaces, <code className="rounded bg-muted px-1 py-0.5">_</code> and <code className="rounded bg-muted px-1 py-0.5">-</code>. Must be unique among your agents.
+            </p>
+          </div>
+
+          {/* Personality — 2/3 column */}
+          <div className="flex flex-col gap-2 lg:col-span-2">
+            <Label className="flex items-center gap-2 text-base font-medium">
+              <MessageSquareText className="size-4 text-muted-foreground" /> Personality preset
+            </Label>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {PERSONALITIES.map((p) => {
+                const active = personality === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setPersonality(p.id)}
+                    disabled={isRunning}
+                    aria-pressed={active}
+                    className={cn(
+                      "group flex h-full items-start gap-3 rounded-xl border p-3 text-left transition-all",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                      active
+                        ? "border-primary/60 bg-primary/10 shadow-md shadow-primary/10"
+                        : "border-border/50 bg-card/30 hover:border-border/80 hover:bg-card/60",
+                      isRunning && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    <span className="text-2xl leading-none" aria-hidden>{p.emoji}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground">{p.label}</span>
+                        {active && <Check className="size-3.5 text-primary" />}
+                      </div>
+                      <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{p.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── STEP 4 — Deploy ──────────────────────────────────────── */}
+      <section>
+        <SectionHeader
+          step={4}
           icon={<Rocket className="size-5" />}
-          title="Configure & deploy"
-          subtitle="Key is sent once with this run, never stored."
+          title="Deploy"
+          subtitle="Your OpenRouter key is sent once with this deploy smoke and is never stored on our side."
         />
 
         <form
           onSubmit={(e) => { e.preventDefault(); if (canDeploy) onDeploy(); }}
           aria-busy={isRunning}
-          className="grid grid-cols-1 gap-6 lg:grid-cols-5"
+          className="grid grid-cols-1 gap-6"
         >
-          {/* API key — left column on desktop */}
-          <div className="flex flex-col gap-2 lg:col-span-2">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="byok" className="flex items-center gap-2 text-base font-medium">
               <KeyRound className="size-4 text-muted-foreground" /> OpenRouter API key
             </Label>
@@ -381,37 +467,14 @@ export function PlaygroundForm() {
               disabled={isRunning}
               value={byok}
               onChange={(e) => setByok(e.target.value)}
-              className="h-14 text-lg font-mono"
+              className="h-14 max-w-2xl text-lg font-mono"
             />
             <p className="text-sm text-muted-foreground">
               Sent as <code className="rounded bg-muted px-1 py-0.5 text-foreground/90">Authorization: Bearer</code>. Cleared from React state after submit.
             </p>
           </div>
 
-          {/* Prompt — right column on desktop, takes 3/5 */}
-          <div className="flex flex-col gap-2 lg:col-span-3">
-            <Label htmlFor="prompt" className="flex items-center gap-2 text-base font-medium">
-              <MessageSquareText className="size-4 text-muted-foreground" /> Prompt
-            </Label>
-            <Textarea
-              id="prompt"
-              required
-              disabled={isRunning}
-              placeholder="What should the agent do?"
-              className="min-h-32 text-lg leading-relaxed lg:min-h-[8.5rem]"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-            {selectedRecipe?.pass_if && (
-              <p className="text-sm text-muted-foreground">
-                <Sparkles className="mr-1 inline size-3.5 text-primary" />
-                {PASS_IF_HUMAN[selectedRecipe.pass_if] ?? `pass_if: ${selectedRecipe.pass_if}`}
-              </p>
-            )}
-          </div>
-
-          {/* Deploy button — full width */}
-          <div className="lg:col-span-5">
+          <div>
             <Button
               type="submit"
               disabled={!canDeploy}
@@ -421,21 +484,31 @@ export function PlaygroundForm() {
               {isRunning ? (
                 <>
                   <Spinner className="size-5 motion-reduce:animate-none" aria-hidden="true" />
-                  <span className="ml-2">Running {selectedRecipe?.display_name ?? recipe} on {model}…</span>
+                  <span className="ml-2">Deploying {trimmedName || "agent"} ({selectedRecipe?.display_name ?? recipe} on {model})…</span>
                 </>
               ) : uiError?.kind === "rate_limited" && remainingSec > 0 ? (
                 <span>Retry in {remainingSec}s</span>
               ) : (
                 <>
                   <Rocket className="mr-2 size-5" />
-                  <span>Deploy {selectedRecipe?.display_name ?? "agent"}</span>
+                  <span>Deploy {trimmedName ? `"${trimmedName}"` : "agent"}</span>
                 </>
               )}
             </Button>
 
             {!canDeploy && !isRunning && (
               <p className="mt-3 text-center text-sm text-muted-foreground">
-                {!recipe ? "↑ pick a recipe to begin" : !model ? "↑ pick a model" : !byok ? "↑ paste your OpenRouter key" : !prompt.trim() ? "↑ type a prompt" : ""}
+                {!recipe
+                  ? "↑ pick a recipe to begin"
+                  : !model
+                    ? "↑ pick a model"
+                    : !nameValid
+                      ? agentName.length === 0
+                        ? "↑ name your agent"
+                        : "name must start with a letter or number; letters, numbers, spaces, _ and - only"
+                      : !byok
+                        ? "↑ paste your OpenRouter key"
+                        : ""}
               </p>
             )}
 

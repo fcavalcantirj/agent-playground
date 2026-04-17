@@ -26,6 +26,7 @@ from ..constants import ANONYMOUS_USER_ID  # re-export so routes can use a singl
 __all__ = [
     "ANONYMOUS_USER_ID",
     "upsert_agent_instance",
+    "list_agents",
     "insert_pending_run",
     "write_verdict",
     "fetch_run",
@@ -37,22 +38,24 @@ async def upsert_agent_instance(
     user_id: UUID,
     recipe_name: str,
     model: str,
+    name: str,
+    personality: str | None,
 ) -> UUID:
-    """Atomic upsert on ``(user_id, recipe_name, model)`` + bump ``total_runs``.
+    """Atomic upsert on ``(user_id, name)`` + bump ``total_runs``.
 
-    Returns the ``id`` of the row (newly inserted or updated). The same
-    transaction increments ``total_runs`` so the happy path is a single
-    round-trip (no SELECT-then-INSERT race).
-
-    The ``ON CONFLICT`` target matches the unique constraint
-    ``uq_agent_instances_user_recipe_model`` from the baseline migration.
+    The unique key is the user-given agent name (migration 002). A user can
+    own many agents that share the same recipe + model with different names
+    and personas. Re-deploying with the same name is treated as "use my
+    existing agent" — recipe / model / personality are preserved (the
+    upsert leaves them untouched on conflict so a name collision can't
+    silently mutate a deployed agent's config).
     """
     row = await conn.fetchrow(
         """
-        INSERT INTO agent_instances (id, user_id, recipe_name, model,
-                                     last_run_at, total_runs)
-        VALUES (gen_random_uuid(), $1, $2, $3, NOW(), 1)
-        ON CONFLICT (user_id, recipe_name, model)
+        INSERT INTO agent_instances (id, user_id, recipe_name, model, name,
+                                     personality, last_run_at, total_runs)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), 1)
+        ON CONFLICT (user_id, name)
         DO UPDATE SET last_run_at = NOW(),
                       total_runs = agent_instances.total_runs + 1
         RETURNING id
@@ -60,8 +63,49 @@ async def upsert_agent_instance(
         user_id,
         recipe_name,
         model,
+        name,
+        personality,
     )
     return row["id"]
+
+
+async def list_agents(
+    conn: asyncpg.Connection,
+    user_id: UUID,
+) -> list[dict[str, Any]]:
+    """Return all agents owned by ``user_id``, newest first.
+
+    Includes a derived ``last_verdict`` from the most recent linked run via
+    ``LATERAL`` join — single round-trip even for users with many agents.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            ai.id,
+            ai.name,
+            ai.recipe_name,
+            ai.model,
+            ai.personality,
+            ai.created_at,
+            ai.last_run_at,
+            ai.total_runs,
+            lr.verdict AS last_verdict,
+            lr.category AS last_category,
+            lr.run_id AS last_run_id
+        FROM agent_instances ai
+        LEFT JOIN LATERAL (
+            SELECT id AS run_id, verdict, category
+            FROM runs
+            WHERE agent_instance_id = ai.id
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) lr ON TRUE
+        WHERE ai.user_id = $1
+        ORDER BY ai.created_at DESC
+        """,
+        user_id,
+    )
+    return [dict(r) for r in rows]
 
 
 async def insert_pending_run(
