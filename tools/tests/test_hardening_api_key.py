@@ -98,3 +98,35 @@ class TestResolveApiKeyOpenRouter:
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=from-file\n")
         _, val = resolve_api_key(_recipe("OPENROUTER_API_KEY"), tmp_path)
         assert val == "from-file"
+
+
+class TestRedactApiKeyWidenedPhase19:
+    """Phase 19 D-02 widening: literal-value redaction alongside VAR= pattern redaction."""
+
+    def test_redact_literal_value_when_no_var_prefix(self):
+        from run_recipe import _redact_api_key
+        text = "the key is sk-abc12345 leaked in stderr"
+        redacted = _redact_api_key(text, "FOO", "sk-abc12345")
+        assert "sk-abc12345" not in redacted
+        assert "<REDACTED>" in redacted
+
+    def test_redact_both_patterns_together(self):
+        from run_recipe import _redact_api_key
+        text = "FOO=sk-abc12345 failed; sk-abc12345 leaked in detail"
+        redacted = _redact_api_key(text, "FOO", "sk-abc12345")
+        assert "sk-abc12345" not in redacted
+        assert "FOO=<REDACTED>" in redacted
+
+    def test_redactor_backward_compatible_two_args(self):
+        from run_recipe import _redact_api_key
+        # Old signature: no api_key_val — should behave exactly as before
+        assert _redact_api_key("FOO=x", "FOO") == "FOO=<REDACTED>"
+
+    def test_redactor_ignores_short_values(self):
+        """8-char floor avoids false-positive masking of random 3-char substrings."""
+        from run_recipe import _redact_api_key
+        text = "hello world bc abc"
+        redacted = _redact_api_key(text, "FOO", "abc")   # 3 chars — too short
+        # "abc" should NOT be masked; "<REDACTED>" should NOT appear
+        assert "abc" in redacted
+        assert "<REDACTED>" not in redacted
