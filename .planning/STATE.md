@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: deploy_blocked_pending_dumb_playground
-stopped_at: "Phase 19 API is deploy-ready; Hetzner deploy CANCELLED pending a real dumb /playground page that drives /v1/runs end-to-end (golden rule #2 + #3 violation caught 2026-04-17)"
-last_updated: "2026-04-17T03:09:23.318Z"
+status: phase_20_planned_ready_for_execution
+stopped_at: "Phase 20 (Frontend Alicerce — dumb /playground) planning COMPLETE. 5 PLANs in 3 waves, plan-checker REVISE_MINOR resolved. Next: /gsd-execute-phase 20. Phase 19 Hetzner deploy remains BLOCKED until Phase 20 SC-11 passes."
+last_updated: "2026-04-17T19:00:00Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,37 +20,45 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 19 — api-foundation
+**Current focus:** Phase 20 — frontend-alicerce (dumb /playground)
 
 ## Current Position
 
-Phase: 19 (api-foundation) — API shipped; deploy BLOCKED pending dumb playground
-Plan: 6 of 7 fully shipped; 19-07 Tasks 1+2 shipped; 19-07 Task 3 (Hetzner deploy) CANCELLED
-Next:  plan a new phase (19.1-dumb-playground or Phase 20) that replaces the v0 mock /playground with a real API-driven client. Then — and only then — deploy.
-Status: Deploy blocked on golden rule #2 + #3 (dumb client / no mock to prod)
+Phase: 20 (frontend-alicerce) — PLANNED, ready for execution
+Plans: 5 of 5 created in 3 waves; plan-checker REVISE_MINOR resolved (4 fixes applied)
+Next:  `/gsd-execute-phase 20` — a fresh `/clear` is recommended first (planning consumed ~900K tokens across agent spawns)
+Status: Phase 19 API is deploy-ready; deploy remains BLOCKED until Phase 20 SC-11 passes (Plan 20-05 human-verify gate)
 
-Progress: Phase 19 API is deploy-ready in isolation. Platform is not — frontend /playground is a v0 mock with hardcoded catalogs and a Deploy button that makes zero network calls.
+Progress: Phase 20 planning artifacts complete — CONTEXT (14 decisions), RESEARCH (10 focused Qs + 8 pitfalls), UI-SPEC (30 locked copy strings + ASCII wireframes), PATTERNS (6 analogs mapped), 5 PLANs validated.
 
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
-**Primary resume file:** `.planning/phases/19-api-foundation/RESUME-TOMORROW.md`
+**Primary resume file:** `.planning/phases/20-frontend-alicerce/20-CONTEXT.md`
 
-It captures: why the Hetzner deploy is cancelled, what the dumb /playground phase must do, and the local validation gate that must pass before any deploy resumes.
+It captures: 14 locked decisions (D-01..D-14), success criteria (SC-01..SC-11), user-approved ASCII UI preview, scope boundaries (what's IN and what's OUT), canonical refs, and deferred ideas.
 
-**The next command is:** `/gsd-discuss-phase 19.1` (or `/gsd-discuss-phase 20` if folding the work there — discuss first, decide the phase number second).
+**The next command is:** `/gsd-execute-phase 20` (with a fresh `/clear` first).
 
-**DO NOT** run `/gsd-execute-phase 19 --wave 4` — that path goes to the cancelled Hetzner deploy. **DO NOT** run `bash deploy/deploy.sh`.
+**DO NOT** run `/gsd-execute-phase 19 --wave 4` — that path still goes to the cancelled Hetzner deploy. **DO NOT** run `bash deploy/deploy.sh`. Both remain blocked until Phase 20 Plan 20-05's human-verify SC-11 gate returns `approved`.
 
 Read files in this order after /clear:
 
-1. `./CLAUDE.md` (golden rules at the top — #2 "dumb client, intelligence in the API" and #3 "ship when stack works locally e2e" are load-bearing)
-2. `.planning/phases/19-api-foundation/RESUME-TOMORROW.md` (anchor — why deploy is cancelled + what the dumb playground phase must do)
-3. `memory/feedback_dumb_client_no_mocks.md` (the principle)
-4. `.planning/STATE.md` (this file)
-5. `frontend/components/agent-configurator.tsx` (the mock that must go — `defaultClones` array, `deployAllAgents` that only flips local state)
-6. `frontend/lib/api.ts` (thin fetch wrapper to reuse)
-7. `frontend/next.config.mjs` (rewrite already points /api/v1/* → api_server :8000)
-8. `.planning/PROJECT.md` (core value: any agent × any model × any user, in one click)
+1. `./CLAUDE.md` (golden rules at the top — #2 "dumb client, intelligence in the API" and #3 "ship when stack works locally e2e" are load-bearing for this phase)
+2. `.planning/phases/20-frontend-alicerce/20-CONTEXT.md` (14 decisions + SC-01..SC-11 — the exit gate)
+3. `.planning/phases/20-frontend-alicerce/20-RESEARCH.md` (concrete patterns: api.ts extension diff, parseApiError union, useRetryCountdown, BYOK hardening, 8 pitfalls)
+4. `.planning/phases/20-frontend-alicerce/20-UI-SPEC.md` (30 locked copy strings, Tailwind classes, 5-state + 6-error ASCII wireframes)
+5. `.planning/phases/20-frontend-alicerce/20-PATTERNS.md` (6 analogs — dev-login-form.tsx is the exact structural analog for playground-form.tsx)
+6. `.planning/phases/20-frontend-alicerce/20-01-PLAN.md` through `20-05-PLAN.md` (5 PLANs in 3 waves)
+7. `memory/feedback_dumb_client_no_mocks.md` (the principle that created this phase)
+8. `.planning/STATE.md` (this file)
+
+### Wave execution order (Phase 20)
+
+| Wave | Plans | Files | Summary |
+|------|-------|-------|---------|
+| 1 | 20-01, 20-02 | `frontend/lib/api.ts` + `api-types.ts` / delete mock tree (5 components + homepage section) | Parallel — no file overlap |
+| 2 | 20-03, 20-04 | `playground-form.tsx` / `run-result-card.tsx` | Parallel after Wave 1 |
+| 3 | 20-05 | `playground/page.tsx` + SUMMARY + STATE | Sequential; **human-verify SC-11 gate** (the Phase 19 deploy unblocker) |
 
 ## Quick Tasks Completed
 
