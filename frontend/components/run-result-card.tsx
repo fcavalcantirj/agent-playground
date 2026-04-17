@@ -1,0 +1,155 @@
+"use client";
+
+import { useState, type RefObject } from "react";
+import { Copy, Check } from "lucide-react";
+
+import type { RunResponse } from "@/lib/api-types";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
+
+/**
+ * Verdict-color map — keyed by RunResponse.category (the fine-grained enum from
+ * api_server/src/api_server/models/runs.py::Category).
+ *
+ * PASS       → emerald (success)
+ * FAIL-ish   → destructive (red) — 7 categories: ASSERT_FAIL, INVOKE_FAIL,
+ *              BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL
+ * INFRA_FAIL → amber (distinct from FAIL — infrastructure, not agent logic)
+ * STOCHASTIC → yellow (warning)
+ * SKIP       → slate (neutral)
+ *
+ * Unknown categories fall through to the muted default.
+ */
+const CATEGORY_BADGE_CLASS: Record<string, string> = {
+  PASS:        "bg-emerald-600 text-white border-transparent",
+  ASSERT_FAIL: "bg-destructive text-destructive-foreground border-transparent",
+  INVOKE_FAIL: "bg-destructive text-destructive-foreground border-transparent",
+  BUILD_FAIL:  "bg-destructive text-destructive-foreground border-transparent",
+  PULL_FAIL:   "bg-destructive text-destructive-foreground border-transparent",
+  CLONE_FAIL:  "bg-destructive text-destructive-foreground border-transparent",
+  TIMEOUT:     "bg-destructive text-destructive-foreground border-transparent",
+  LINT_FAIL:   "bg-destructive text-destructive-foreground border-transparent",
+  INFRA_FAIL:  "bg-amber-500 text-white border-transparent",
+  STOCHASTIC:  "bg-yellow-500 text-black border-transparent",
+  SKIP:        "bg-slate-400 text-white border-transparent",
+};
+
+/**
+ * Pure prop-driven display of a POST /v1/runs response. No network, no side-effects
+ * beyond the copy-button feedback timer.
+ *
+ * The cardRef prop is passed from the parent <PlaygroundForm> so focus can be
+ * moved to the card when a verdict renders (UI-SPEC §A11y bullet 2). It is
+ * optional so the component is also usable in isolation (e.g., future storybook).
+ */
+export function RunResultCard({
+  verdict,
+  cardRef,
+}: {
+  verdict: RunResponse;
+  cardRef?: RefObject<HTMLDivElement | null>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyRunId() {
+    try {
+      await navigator.clipboard.writeText(verdict.run_id);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API can fail on insecure contexts or when the user denies
+      // permission. Silently leave the icon as Copy — screen readers still
+      // get the "Copy run_id" aria-label. No toast (D-02: minimum decoration).
+    }
+  }
+
+  const stderrLineCount = verdict.stderr_tail?.split("\n").length ?? 0;
+  const badgeClass =
+    CATEGORY_BADGE_CLASS[verdict.category] ?? "bg-muted text-foreground border-transparent";
+  const completedAt = verdict.completed_at ?? verdict.created_at ?? null;
+
+  return (
+    <Card
+      ref={cardRef}
+      role="status"
+      aria-live="polite"
+      tabIndex={-1}
+      className="p-6"
+    >
+      <CardContent className="flex flex-col gap-4 p-0">
+        {/* Header row: verdict badge + category pill + timestamp */}
+        <div className="flex items-center gap-3">
+          <Badge className={badgeClass}>{verdict.verdict}</Badge>
+          <Badge variant="outline" className="font-mono text-xs">
+            {verdict.category}
+          </Badge>
+          {completedAt && (
+            <span className="ml-auto text-xs text-muted-foreground">
+              {new Date(completedAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+
+        {/* Metadata grid (UI-SPEC lines 337-353) */}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">exit_code</dt>
+          <dd className="font-mono">{verdict.exit_code ?? "—"}</dd>
+
+          <dt className="text-muted-foreground">wall_time</dt>
+          <dd className="font-mono">
+            {verdict.wall_time_s != null ? `${verdict.wall_time_s.toFixed(2)}s` : "—"}
+          </dd>
+
+          <dt className="text-muted-foreground">run_id</dt>
+          <dd className="flex items-center gap-2">
+            <code className="font-mono text-xs">{verdict.run_id}</code>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={copyRunId}
+              aria-label="Copy run_id"
+              className="size-7"
+            >
+              {copied ? (
+                <Check className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3.5" aria-hidden="true" />
+              )}
+            </Button>
+          </dd>
+        </dl>
+
+        {/* Optional detail line (e.g., "assertion failed on X") */}
+        {verdict.detail && (
+          <p className="text-sm text-muted-foreground">{verdict.detail}</p>
+        )}
+
+        {/* stderr accordion — UI-SPEC lines 361-380; expanded by default on non-PASS */}
+        <Accordion
+          type="single"
+          collapsible
+          defaultValue={verdict.verdict !== "PASS" ? "stderr" : undefined}
+        >
+          <AccordionItem value="stderr" className="border-t">
+            <AccordionTrigger className="text-sm">
+              stderr tail ({stderrLineCount} lines)
+            </AccordionTrigger>
+            <AccordionContent>
+              <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                {verdict.stderr_tail || "(no output)"}
+              </pre>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </CardContent>
+    </Card>
+  );
+}
