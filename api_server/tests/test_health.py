@@ -44,10 +44,10 @@ async def test_healthz_is_trivial():
 async def test_readyz_live(async_client):
     """``GET /readyz`` returns the full envelope against a real Postgres.
 
-    Asserts every key CONTEXT.md D-04 mandates. ``recipes_count`` is 0
-    because Plan 19-03 (which loads ``recipes/*.yaml`` into
-    ``app.state.recipes`` at startup) has not yet landed — Plan 03's own
-    tests will raise this expectation.
+    Asserts every key CONTEXT.md D-04 mandates. ``recipes_count`` is 5
+    after Plan 19-03 wired ``load_all_recipes(settings.recipes_dir)`` into
+    the lifespan — the 5 committed recipes (hermes, nanobot, nullclaw,
+    openclaw, picoclaw) load at startup.
     """
     response = await async_client.get("/readyz")
     assert response.status_code == 200
@@ -63,5 +63,6 @@ async def test_readyz_live(async_client):
         assert key in body, f"missing key {key}"
     assert body["schema_version"] == "ap.recipe/v0.1"
     assert body["postgres"] is True
-    assert body["recipes_count"] == 0
+    # Plan 19-03: the lifespan now loads the 5 committed recipes.
+    assert body["recipes_count"] == 5
     assert body["concurrency_in_use"] == 0

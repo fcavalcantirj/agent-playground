@@ -140,6 +140,12 @@ async def async_client(db_pool, migrated_pg, monkeypatch):
     # their own app via create_app() inside the test body.
     monkeypatch.setenv("AP_ENV", "dev")
     monkeypatch.setenv("AP_MAX_CONCURRENT_RUNS", "2")
+    # Plan 19-03 populates ``app.state.recipes`` from this directory at
+    # lifespan-startup. Tests run from ``api_server/`` (pytest testpaths)
+    # so the committed recipes live one level up.
+    monkeypatch.setenv(
+        "AP_RECIPES_DIR", str((API_SERVER_DIR.parent / "recipes").resolve())
+    )
     # DATABASE_URL must be set for Settings() to resolve. The lifespan
     # creates its own pool that we then immediately close + replace with
     # ``db_pool`` below, so this DSN only has to be reachable at startup

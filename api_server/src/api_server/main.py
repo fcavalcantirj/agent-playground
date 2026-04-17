@@ -35,6 +35,9 @@ from .middleware.idempotency import IdempotencyMiddleware
 from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .routes import health
+from .routes import recipes as recipes_route
+from .routes import schemas as schemas_route
+from .services.recipes_loader import load_all_recipes
 
 
 @asynccontextmanager
@@ -56,7 +59,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings = app.state.settings
     app.state.db = await create_pool(settings.database_url)
-    app.state.recipes = {}           # Plan 19-03 loads recipes/*.yaml into this dict
+    # Plan 19-03: populate the recipes dict from `recipes/*.yaml` at
+    # startup. Fail-loud on malformed / duplicate-named recipes so the
+    # app refuses to boot with a broken catalog rather than serving a
+    # half-loaded `/v1/recipes`.
+    app.state.recipes = load_all_recipes(settings.recipes_dir)
     app.state.image_tag_locks = {}   # Plan 19-04 runner_bridge reads/writes
     app.state.locks_mutex = asyncio.Lock()
     app.state.run_semaphore = asyncio.Semaphore(settings.max_concurrent_runs)
@@ -95,7 +102,10 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
 
     app.include_router(health.router)
-    # Plans 19-03 / 19-04 include their routers via /v1 prefix — NOT here.
+    # Plan 19-03: read-only recipe + schema + lint routes under /v1.
+    app.include_router(schemas_route.router, prefix="/v1", tags=["schemas"])
+    app.include_router(recipes_route.router, prefix="/v1", tags=["recipes"])
+    # Plan 19-04 will include routes.runs under /v1 in the next wave.
     return app
 
 
