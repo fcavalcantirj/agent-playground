@@ -18,18 +18,16 @@ export default function PlaygroundPage() {
       />
       
       <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-24 sm:px-6 sm:pb-20 sm:pt-28 lg:px-8">
-        <div className="mb-8 sm:mb-12">
-          <h1 className="text-2xl font-bold text-foreground sm:text-3xl lg:text-4xl">
-            Agent <span className="text-primary">Playground</span>
+        <div className="mb-10 sm:mb-14">
+          <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
+            Agent <span className="bg-gradient-to-r from-primary via-amber-400 to-primary bg-clip-text text-transparent">Playground</span>
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-            Configure, deploy, and manage your autonomous agents with any model from OpenRouter.
+          <p className="mt-4 max-w-3xl text-lg text-muted-foreground sm:text-xl">
+            Pick any agent, pick any model, deploy in one click. Live container, real verdict, zero lock-in.
           </p>
         </div>
-        
-        <div className="mx-auto max-w-2xl">
-          <PlaygroundForm />
-        </div>
+
+        <PlaygroundForm />
       </div>
       
       <Footer />
