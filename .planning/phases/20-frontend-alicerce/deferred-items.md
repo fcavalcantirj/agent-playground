@@ -51,3 +51,28 @@ Impact for Plan 20-04:
 
 **Recommendation for Plan 20-05 (the SC-09 gate owner):** either install `eslint` + `eslint-config-next` + create `eslint.config.mjs` with the Next/TypeScript rules, or remove the `"lint"` script entry from `package.json`. Adding ESLint is preferred since SC-09 reads "`pnpm build` passes with the new page (Turbopack production build). `pnpm lint` passes" — the current script cannot pass because it cannot run.
 
+## Untracked mock files present on main working tree (discovered during 20-05 Task 1)
+
+After the Wave 1 worktree merges landed on main (commits `376ac5a` / `48a91db`) and then Wave 2 (`96ef773` / `4f85f92`), the 6 mock files that Plan 20-02's commit `8c0c05d` `git rm`'d are **no longer tracked** in git — but their filesystem copies came back as untracked entries on the main working tree. `git ls-files` shows them absent; `ls frontend/components/` shows them present:
+
+```
+?? frontend/components/a2a-network.tsx
+?? frontend/components/agent-card.tsx          (contains defaultClones)
+?? frontend/components/agent-configurator.tsx  (references defaultClones + openRouterModels)
+?? frontend/components/model-selector.tsx      (contains openRouterModels)
+?? frontend/components/playground-section.tsx
+?? frontend/components/task-orchestrator.tsx
+```
+
+This is a merge-artifact from how `/gsd-execute-phase 20 --wave N` merged the worktree branches: the worktree's `git rm` updated the index of the merged branch, but merging into main only brought forward the modification to frontend/app/page.tsx + frontend/app/playground/page.tsx; the actual deleted paths stayed on the main working tree as untracked.
+
+**Impact on SC-07 grep during manual smoke:**
+- `grep -RE "defaultClones|openRouterModels" frontend/components/` returns 3 hits (agent-card.tsx, agent-configurator.tsx, model-selector.tsx) — all untracked.
+- SC-07 as documented in CONTEXT.md reads: "Zero hardcoded arrays of recipes, models, or channels remain in the `/playground` subtree." — The tracked /playground subtree IS clean; only untracked filesystem leftovers trip the grep.
+
+**Not fixed in Plan 20-05 Task 1** per the executor scope-boundary rule (pre-existing merge artifacts are not caused by this plan's changes). The human verifying SC-11 can either:
+1. `rm frontend/components/{a2a-network,agent-card,agent-configurator,model-selector,playground-section,task-orchestrator}.tsx` on their local tree before running the SC-07 grep (files are untracked, so rm is safe), OR
+2. Accept the grep matches as known remnants and verify SC-07 via `git ls-files | grep -E "defaultClones|openRouterModels"` returning 0 instead.
+
+Option (1) is the cleaner verification path. The files have no tracked importers so removal has no effect on build/runtime.
+
