@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: phase_20_planned_ready_for_execution
-stopped_at: "Phase 20 (Frontend Alicerce — dumb /playground) planning COMPLETE. 5 PLANs in 3 waves, plan-checker REVISE_MINOR resolved. Next: /gsd-execute-phase 20. Phase 19 Hetzner deploy remains BLOCKED until Phase 20 SC-11 passes."
-last_updated: "2026-04-17T19:00:00Z"
+status: executing
+stopped_at: Completed 19-07-PLAN.md Tasks 1+2 (artifacts + local smoke); Task 3 human-verify checkpoint PENDING — deploy to Hetzner box required
+last_updated: "2026-04-17T19:33:01.259Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,14 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 20 — frontend-alicerce (dumb /playground)
+**Current focus:** Phase 20 — frontend-alicerce
 
 ## Current Position
 
-Phase: 20 (frontend-alicerce) — PLANNED, ready for execution
+Phase: 20 (frontend-alicerce) — EXECUTING
+Plan: 1 of 5
 Plans: 5 of 5 created in 3 waves; plan-checker REVISE_MINOR resolved (4 fixes applied)
 Next:  `/gsd-execute-phase 20` — a fresh `/clear` is recommended first (planning consumed ~900K tokens across agent spawns)
-Status: Phase 19 API is deploy-ready; deploy remains BLOCKED until Phase 20 SC-11 passes (Plan 20-05 human-verify gate)
+Status: Executing Phase 20
 
 Progress: Phase 20 planning artifacts complete — CONTEXT (14 decisions), RESEARCH (10 focused Qs + 8 pitfalls), UI-SPEC (30 locked copy strings + ASCII wireframes), PATTERNS (6 analogs mapped), 5 PLANs validated.
 
