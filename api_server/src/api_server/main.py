@@ -36,6 +36,7 @@ from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .routes import health
 from .routes import recipes as recipes_route
+from .routes import runs as runs_route
 from .routes import schemas as schemas_route
 from .services.recipes_loader import load_all_recipes
 
@@ -105,7 +106,10 @@ def create_app() -> FastAPI:
     # Plan 19-03: read-only recipe + schema + lint routes under /v1.
     app.include_router(schemas_route.router, prefix="/v1", tags=["schemas"])
     app.include_router(recipes_route.router, prefix="/v1", tags=["recipes"])
-    # Plan 19-04 will include routes.runs under /v1 in the next wave.
+    # Plan 19-04: POST /v1/runs + GET /v1/runs/{id} — the load-bearing
+    # endpoint that wraps tools/run_recipe.py::run_cell via the
+    # per-image-tag Lock + global Semaphore in app.state.
+    app.include_router(runs_route.router, prefix="/v1", tags=["runs"])
     return app
 
 
