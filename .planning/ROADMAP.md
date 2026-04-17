@@ -326,10 +326,14 @@ Plans:
 **Goal:** Replace the v0 mock `/playground` page with a real API-driven conversational form that round-trips a run end-to-end (pick recipe from `GET /v1/recipes`, type model + BYOK + prompt, click Deploy, see verdict card from `POST /v1/runs`). Delete `<AgentConfigurator>` and all mock client-side catalogs. Desktop-first; mobile polish deferred. No auth, no dashboard, no streaming — those are later phases. **Gates the Phase 19 Hetzner deploy**: deploy is BLOCKED until Phase 20 SC-11 passes.
 **Requirements**: Bound to `20-CONTEXT.md` §Success Criteria SC-01..SC-11 + D-01..D-14 decisions.
 **Depends on:** Phase 19
-**Plans:** 0 plans
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 20 to break down)
+- [ ] 20-01-PLAN.md — Extend frontend/lib/api.ts (ApiError.headers + apiPost headers param) + new frontend/lib/api-types.ts (TS mirrors + UiError union + parseApiError + useRetryCountdown) [Wave 1]
+- [ ] 20-02-PLAN.md — Delete mock tree (agent-configurator + 4 import-only peers + playground-section) and neutralize /playground + homepage references [Wave 1]
+- [ ] 20-03-PLAN.md — New <PlaygroundForm> client component: recipe fetch, 4 fields, BYOK hardening, 6 error states [Wave 2]
+- [ ] 20-04-PLAN.md — New <RunResultCard> pure display: verdict badge map (11 categories), metadata grid, stderr accordion [Wave 2]
+- [ ] 20-05-PLAN.md — Mount <PlaygroundForm> on /playground + manual SC-11 smoke gate + STATE.md update (unblocks Hetzner deploy) [Wave 3]
 
 ### Phase 21: SSE Streaming Upgrade
 
@@ -347,3 +351,4 @@ Plans:
 *Phase 1 complete: 2026-04-14*
 *Phase 2 reshaped + Phase 7.5 inserted: 2026-04-14 (see `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` `<domain>` for rationale)*
 *Phase 2 plans split (W1 fix): Plan 04 split into 04 (foundations) + 05 (API surface); existing Plan 05 renumbered to 06 — 2026-04-14*
+*Phase 20 planned: 2026-04-17 — 5 plans in 3 waves; D-14 testing decision DEFERRED to Phase 20.1*
