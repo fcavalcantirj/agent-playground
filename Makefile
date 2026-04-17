@@ -226,3 +226,62 @@ generate-ts-client:
 	  && echo 'TS client valid'
 
 check-api: test-api
+
+# ---------------------------------------------------------------
+# Phase 19: production-shaped local stack (Docker compose, prod image, prod compose)
+#
+# Brings up the SAME container topology that runs on Hetzner — postgres + api_server
+# in containers, asyncpg pool over compose-internal networking, alembic migrations
+# applied inside the api_server image. Caddy is intentionally skipped (TLS needs a
+# real DNS name + ACME). Use this to catch Dockerfile / compose / env-file bugs
+# locally before pushing to the box. Frontend (`make dev-frontend`) talks to the
+# api_server through `frontend/next.config.mjs` rewrites.
+#
+#   make dev-api-local         # build + boot postgres + api_server, run alembic
+#   make dev-api-local-logs    # follow api_server stdout
+#   make dev-api-local-down    # stop + drop volume
+#
+# Tip: open a second terminal and run `make dev-frontend` so http://localhost:3000
+# proxies through to the containerized API.
+.PHONY: dev-api-local dev-api-local-logs dev-api-local-down
+
+DEPLOY_COMPOSE := docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local.yml --env-file deploy/.env.prod
+
+dev-api-local:
+	@if [ ! -s deploy/secrets/pg_password ]; then \
+	  echo "[dev-api-local] generating deploy/secrets/pg_password (32 bytes hex)"; \
+	  mkdir -p deploy/secrets; \
+	  openssl rand -hex 32 > deploy/secrets/pg_password; \
+	  chmod 600 deploy/secrets/pg_password; \
+	fi
+	@if [ ! -s deploy/.env.prod ]; then \
+	  printf "POSTGRES_PASSWORD=%s\n" "$$(cat deploy/secrets/pg_password)" > deploy/.env.prod; \
+	  chmod 600 deploy/.env.prod; \
+	fi
+	DOCKER_GID=999 $(DEPLOY_COMPOSE) build api_server
+	$(DEPLOY_COMPOSE) up -d postgres
+	@echo "[dev-api-local] waiting for postgres healthy"
+	@for i in $$(seq 1 30); do \
+	  if $(DEPLOY_COMPOSE) exec -T postgres pg_isready -U ap >/dev/null 2>&1; then break; fi; \
+	  sleep 1; \
+	done
+	$(DEPLOY_COMPOSE) run --rm api_server alembic upgrade head
+	$(DEPLOY_COMPOSE) up -d api_server
+	@echo "[dev-api-local] waiting for /healthz"
+	@for i in $$(seq 1 20); do \
+	  if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then \
+	    echo "[dev-api-local] up — http://127.0.0.1:8000/healthz responding"; \
+	    curl -s http://127.0.0.1:8000/readyz; echo; \
+	    exit 0; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	echo "[dev-api-local] FAILED — /healthz not responding"; \
+	$(DEPLOY_COMPOSE) logs --tail 50 api_server; \
+	exit 1
+
+dev-api-local-logs:
+	$(DEPLOY_COMPOSE) logs -f api_server
+
+dev-api-local-down:
+	$(DEPLOY_COMPOSE) down -v
