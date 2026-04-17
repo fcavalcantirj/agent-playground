@@ -375,19 +375,30 @@ def evaluate_pass_if(
 # ---------- phase 10 helpers ----------
 
 
-def _redact_api_key(text: str, api_key_var: str) -> str:
+def _redact_api_key(text: str, api_key_var: str, api_key_val: str | None = None) -> str:
     """Replace every <api_key_var>=<non-space-value> substring with <api_key_var>=<REDACTED>.
 
-    Applied to all `detail` strings derived from subprocess stderr per D-02 + V7/V8 of
+    When ``api_key_val`` is provided AND is at least 8 characters long, ALSO replace every
+    literal occurrence of the key value with ``<REDACTED>``. This protects against stderr
+    lines that leak the key without the ``VAR=`` prefix (e.g. API error messages that
+    echo the key, logger output from the agent that prints the token body-first).
+
+    Backward-compatible: callers that pass only two positional arguments see identical
+    behavior to the pre-widening implementation. Added 2026-04-16 per Phase 19 CONTEXT.md D-02.
+
+    Applied to all ``detail`` strings derived from subprocess stderr per D-02 + V7/V8 of
     RESEARCH.md §Security Domain.
     """
     if not text:
         return ""
-    return re.sub(
+    out = re.sub(
         rf"{re.escape(api_key_var)}=\S+",
         f"{api_key_var}=<REDACTED>",
         text,
     )
+    if api_key_val and len(api_key_val) >= 8:
+        out = out.replace(api_key_val, "<REDACTED>")
+    return out
 
 
 def _clone_dir_for(name: str, ref: str | None) -> Path:
