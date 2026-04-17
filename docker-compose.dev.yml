@@ -63,5 +63,37 @@ services:
       timeout: 5s
       retries: 5
 
+  # Phase 19 api_server — opt-in via `docker compose --profile api up`.
+  # Native dev path is `make dev-api` (uvicorn --reload against host postgres).
+  # This service is for container-mode local dev and for CI smoke tests.
+  api_server:
+    profiles: [api]
+    build:
+      context: .
+      dockerfile: tools/Dockerfile.api
+      args:
+        DOCKER_GID: ${DOCKER_GID:-999}
+    restart: unless-stopped
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      AP_ENV: dev
+      AP_TRUSTED_PROXY: "false"
+      AP_MAX_CONCURRENT_RUNS: "2"
+      AP_RECIPES_DIR: /app/recipes
+      DATABASE_URL: postgresql+asyncpg://temporal:temporal@postgresql:5432/agent_playground_api
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./recipes:/app/recipes:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   pgdata:

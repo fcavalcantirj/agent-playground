@@ -189,3 +189,40 @@ lint-recipes:
 	python3 tools/run_recipe.py --lint-all
 
 check: lint-recipes test
+
+# ---------------------------------------------------------------
+# Phase 19: API server (FastAPI at api_server/)
+# ---------------------------------------------------------------
+.PHONY: install-api test-api test-api-integration migrate-api dev-api \
+        smoke-api smoke-api-live generate-ts-client check-api
+
+install-api:
+	pip install -e "api_server/[dev]"
+
+test-api:
+	cd api_server && pytest -q -m "not api_integration"
+
+test-api-integration:
+	cd api_server && pytest -m api_integration
+
+migrate-api:
+	cd api_server && alembic upgrade head
+
+dev-api:
+	cd api_server && AP_ENV=dev \
+	  DATABASE_URL=postgresql+asyncpg://temporal:temporal@localhost:5432/agent_playground_api \
+	  AP_RECIPES_DIR=../recipes \
+	  uvicorn api_server.main:app --reload --port 8000
+
+smoke-api:
+	bash test/smoke-api.sh
+
+smoke-api-live:
+	API_BASE=https://api.agentplayground.dev bash test/smoke-api.sh --live
+
+generate-ts-client:
+	npx -y openapi-typescript "$${API_BASE:-http://localhost:8000}/openapi.json" \
+	  -o /tmp/api-client.ts && npx -y typescript tsc --noEmit /tmp/api-client.ts \
+	  && echo 'TS client valid'
+
+check-api: test-api
