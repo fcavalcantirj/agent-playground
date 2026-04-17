@@ -2,7 +2,6 @@
 
 import { Navbar } from "@/components/navbar"
 import { ParticleBackground } from "@/components/particle-background"
-import { AgentConfigurator } from "@/components/agent-configurator"
 import { Footer } from "@/components/footer"
 
 export default function PlaygroundPage() {
@@ -27,7 +26,9 @@ export default function PlaygroundPage() {
           </p>
         </div>
         
-        <AgentConfigurator />
+        <div className="mx-auto max-w-2xl">
+          {/* PlaygroundForm is wired in Plan 20-05 */}
+        </div>
       </div>
       
       <Footer />

@@ -5,7 +5,6 @@ import { Navbar } from "@/components/navbar"
 import { ParticleBackground } from "@/components/particle-background"
 import { HeroSection } from "@/components/hero-section"
 import { FeaturesSection } from "@/components/features-section"
-import { PlaygroundSection } from "@/components/playground-section"
 import { CTASection } from "@/components/cta-section"
 import { Footer } from "@/components/footer"
 
@@ -31,9 +30,6 @@ export default function Home() {
 
       {/* Features Section */}
       <FeaturesSection />
-
-      {/* Interactive Playground */}
-      <PlaygroundSection />
 
       {/* CTA Section */}
       <CTASection />
