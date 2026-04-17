@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
-stopped_at: Completed 19-07-PLAN.md Tasks 1+2 (artifacts + local smoke); Task 3 human-verify checkpoint PENDING — deploy to Hetzner box required
+status: deploy_blocked_pending_dumb_playground
+stopped_at: "Phase 19 API is deploy-ready; Hetzner deploy CANCELLED pending a real dumb /playground page that drives /v1/runs end-to-end (golden rule #2 + #3 violation caught 2026-04-17)"
 last_updated: "2026-04-17T03:09:23.318Z"
 progress:
   total_phases: 19
@@ -24,32 +24,33 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 19 (api-foundation) — EXECUTING (paused 2026-04-17)
-Plan: 7 of 7 — 19-07 at human-verify checkpoint
-Next:  resume Plan 19-07 Task 3 (Hetzner SSH deploy + TLS verify + TS client compile), then phase verify + update_roadmap
-Plans complete: 6 of 7 fully; 0.5 of 1 remaining (19-07 Task 3 only)
-Status: Paused at human-verify checkpoint — user deferred live deploy to tomorrow
+Phase: 19 (api-foundation) — API shipped; deploy BLOCKED pending dumb playground
+Plan: 6 of 7 fully shipped; 19-07 Tasks 1+2 shipped; 19-07 Task 3 (Hetzner deploy) CANCELLED
+Next:  plan a new phase (19.1-dumb-playground or Phase 20) that replaces the v0 mock /playground with a real API-driven client. Then — and only then — deploy.
+Status: Deploy blocked on golden rule #2 + #3 (dumb client / no mock to prod)
 
-Progress: Phase 19 — 6.5/7 plans shipped; full api_server stack locally validated
+Progress: Phase 19 API is deploy-ready in isolation. Platform is not — frontend /playground is a v0 mock with hardcoded catalogs and a Deploy button that makes zero network calls.
 
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
 **Primary resume file:** `.planning/phases/19-api-foundation/RESUME-TOMORROW.md`
 
-It captures: what's already shipped (commits 1832efd..0bf9e71), what remains (7 operator steps for the Hetzner push), the exact command to paste to resume, and the carryover test-PATH bug noted but not fixed.
+It captures: why the Hetzner deploy is cancelled, what the dumb /playground phase must do, and the local validation gate that must pass before any deploy resumes.
 
-**The next command is:** paste the kickoff block from `RESUME-TOMORROW.md` (or `/gsd-execute-phase 19 --wave 4` then respond to the 19-07 checkpoint).
+**The next command is:** `/gsd-discuss-phase 19.1` (or `/gsd-discuss-phase 20` if folding the work there — discuss first, decide the phase number second).
+
+**DO NOT** run `/gsd-execute-phase 19 --wave 4` — that path goes to the cancelled Hetzner deploy. **DO NOT** run `bash deploy/deploy.sh`.
 
 Read files in this order after /clear:
 
-1. `.planning/phases/19-api-foundation/RESUME-TOMORROW.md` (anchor — read first)
-2. `.planning/phases/19-api-foundation/19-07-SUMMARY.md` (what Task 1+2 shipped; §"How to Verify" has the 7 operator steps)
-3. `.planning/STATE.md` (this file)
-4. `.planning/PROJECT.md`
-5. `./CLAUDE.md` (banner: api/ Go substrate abandoned; recipe v0.1 is v0)
-6. `.planning/phases/19-api-foundation/19-CONTEXT.md` (D-01..D-10 locked decisions, SC-01..SC-13)
-7. `deploy/README.md` (D-08 trust-boundary + operator checklist)
-8. `test/smoke-api.sh` (SC-01..SC-09 runner — use `--live` flag against the Hetzner URL)
+1. `./CLAUDE.md` (golden rules at the top — #2 "dumb client, intelligence in the API" and #3 "ship when stack works locally e2e" are load-bearing)
+2. `.planning/phases/19-api-foundation/RESUME-TOMORROW.md` (anchor — why deploy is cancelled + what the dumb playground phase must do)
+3. `memory/feedback_dumb_client_no_mocks.md` (the principle)
+4. `.planning/STATE.md` (this file)
+5. `frontend/components/agent-configurator.tsx` (the mock that must go — `defaultClones` array, `deployAllAgents` that only flips local state)
+6. `frontend/lib/api.ts` (thin fetch wrapper to reuse)
+7. `frontend/next.config.mjs` (rewrite already points /api/v1/* → api_server :8000)
+8. `.planning/PROJECT.md` (core value: any agent × any model × any user, in one click)
 
 ## Quick Tasks Completed
 

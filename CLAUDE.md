@@ -1,3 +1,10 @@
+# ⚠️ Golden rules (permanent — apply every phase)
+
+1. **No mocks, no stubs.** Tests hit real infra (live Postgres, real Docker daemon via testcontainers, real recipe runs). No in-memory fakes for core substrate. See `memory/feedback_no_mocks_no_stubs.md`.
+2. **Dumb client, intelligence in the API.** The frontend is a thin terminal over the API. **No client-side catalogs** of anything the server owns — recipes come from `GET /v1/recipes`, models come from the API, no hardcoded `defaultClones`/model arrays in React state. If the page needs a list, it `fetch`es it. See `memory/feedback_dumb_client_no_mocks.md`.
+3. **Ship when the stack works locally end-to-end.** Never deploy to a production host until the same Docker topology runs locally AND a real user workflow (click → see result, not `setState(isRunning: true)` theater) completes against it. Deploying an API with a mock UI is shipping a mock to prod.
+4. **Root cause first, never fix-to-pass.** Investigate before removing code. See `memory/feedback_root_cause_first.md`.
+
 # ⚠️ Current project state as of 2026-04-15
 
 **READ THIS FIRST. The content below this banner is historical.**

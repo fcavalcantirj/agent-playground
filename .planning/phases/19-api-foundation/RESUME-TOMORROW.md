@@ -1,66 +1,80 @@
 ---
 phase: 19-api-foundation
-status: paused_at_human_verify
-paused_at: 2026-04-17T03:15:00Z
+status: deploy_blocked_pending_dumb_playground
+paused_at: 2026-04-17T18:00:00Z
 resume_on: 2026-04-18
 plan_open: 19-07
-task_open: Task 3 (Hetzner SSH deploy + TLS verify + TS client compile)
+task_open: Task 3 BLOCKED — do not deploy until /playground actually works end-to-end
 ---
 
-# Phase 19 — Resume Tomorrow
+# Phase 19 — DO NOT DEPLOY YET
 
-Phase is **6.5/7 shipped**. Everything local is green. Only the live Hetzner push + TLS verify + TypeScript client compile remains. All artifacts exist on disk and are committed.
+**STOP. The Hetzner deploy is cancelled until a real user workflow works locally end-to-end.**
 
-## What's already shipped (2026-04-16 → 2026-04-17)
+## Why (golden rule violation caught 2026-04-17 afternoon)
 
-| Plan | Title                                         | Commits                                                  |
-|------|-----------------------------------------------|----------------------------------------------------------|
-| 19-01 | Alembic + 5 tables + seeded anonymous user    | `5c14be9` `5275d08` `d8a4971` `d4a009c`                  |
-| 19-06 | BYOK leak defense + correlation-id middleware | `027ffec` `a0222de` `486d1cf` `a613eed`                  |
-| 19-02 | FastAPI skeleton + /healthz + /readyz         | `14632e7` `f244634` `77ad0d0`                            |
-| 19-03 | /v1/schemas + /v1/recipes + /v1/lint          | `5a48b7b` `689dcbd` `196ebc3`                            |
-| 19-04 | POST /v1/runs + GET /v1/runs/{id}             | `667a303` `93fcaa3` `eaa3d1d`                            |
-| 19-05 | Postgres rate-limit + idempotency             | `f8b5005` `1c4ba36` `cf2cdde`                            |
-| 19-07 | Hetzner deploy artifacts + local smoke        | `1832efd` `fbf6f31` `1b7acbb` `0bf9e71` (Task 3 pending) |
+Phase 19 shipped a working API. The frontend at `/playground` is a v0-generated mock: hardcoded `defaultClones` array, hardcoded model list, Deploy button flips `isRunning: true` in React state with zero network traffic. Clicking through the UI drives nothing real.
 
-**Local validation evidence (2026-04-17):**
-- `pytest -q -m 'not api_integration'` → 14 pass
-- `pytest -q -m api_integration` (live Postgres 17 via testcontainers + docker probe, excl. test_migration) → 27 pass
-- `pytest -q -m api_integration tests/test_migration.py` (venv on PATH) → 8 pass
-- Manual curl smoke against `uvicorn` + scratch Postgres 17 on :15432: `/healthz`, `/readyz`, `/v1/schemas`, `/v1/recipes`, `/v1/lint` (happy + malformed), `POST /v1/runs` (real runner → `verdict:FAIL category:INVOKE_FAIL`, run persisted, `agent_instances` upserted)
-- Rate-limit probe: 10 × 200 → 11th `429` + `retry-after: 32`
-- Idempotency replay: same `Idempotency-Key` → same `run_id`, no duplicate `runs` row
-- **BYOK leak audit:** `grep FAKEKEY /tmp/uvicorn-smoke.log` = **0 hits**
+Deploying the API to `api.agentplayground.dev` in this state means:
+- A user opens the URL → sees the mock playground
+- Picks a clone → pure client-side state
+- Clicks "Deploy All Agents" → **nothing happens**, no API call, no feedback
+- The deployed URL is useful only for `curl` clients
 
-## What remains — Plan 19-07 Task 3 (human-gated)
+That's shipping a mock to prod. See golden rule #3 in `CLAUDE.md`.
 
-Per `19-07-SUMMARY.md` §"How to Verify", execute these 7 steps against the real Hetzner box + `api.agentplayground.dev`:
+## What's still valid from Phase 19
 
-1. `dig +short api.agentplayground.dev` — must resolve to the Hetzner IPv4
-2. `ssh $HETZNER_HOST -- docker version` — must be 27+
-3. On the box: `git pull && cd deploy && bash deploy.sh` — expect `[deploy] ok — api_server /healthz responding`
-4. `curl -vI https://api.agentplayground.dev 2>&1 | grep -E "subject:.*agentplayground"` — expect Let's Encrypt cert line
-5. `bash test/smoke-api.sh --live` or `make smoke-api-live` — expect `smoke: PASS (API_BASE=https://api.agentplayground.dev)`
-6. *(optional, costs cents)* `OPENROUTER_API_KEY=or-real bash test/smoke-api.sh --live` — SC-05 + SC-06 pass with real BYOK
-7. `API_BASE=https://api.agentplayground.dev make generate-ts-client` — expect `TS client valid` (SC-13, Phase 20 handoff)
+Plans 19-01 through 19-07 (Tasks 1+2) are shipped and correct. The API is genuinely solid:
+- Live Postgres + Docker integration (testcontainers): 49 tests green
+- Production-shaped Docker stack (compose + alembic + asyncpg): validated locally with `make dev-api-local`
+- `curl localhost:3000/api/v1/recipes` round-trips browser → Next → containerized API → postgres
+- 5 prod-blocking deploy bugs found and fixed locally before they could bite on Hetzner (commit `cdcc897`)
 
-Then paste **"approved"** to let the chain run: `gsd-code-review 19` → `gsd-verifier` → `update_roadmap` → phase complete → transition to Phase 19.5 / 20 / 21 planning.
+That work does not need to be redone. The **API is deploy-ready**. The platform is not.
 
-## Known carryover (don't fix without an explicit ask)
+## What must happen before the deploy
 
-`api_server/tests/test_migration.py` shells out to `alembic` directly instead of `python -m alembic`. Fails when the venv's `alembic` binary is not on `PATH`. Plans 19-02 and 19-04 worked around it by using `python -m alembic` in their own conftest/tests. This one test still has the issue. Harmless to `make test-api-live` because the Makefile activates the venv.
+New phase (tentative: **19.1-dumb-playground** or fold into Phase 20):
+- Rip out mock `defaultClones` from `frontend/components/agent-configurator.tsx` (or replace the whole `/playground` page with a thin functional shell)
+- `/playground` fetches recipes from `GET /v1/recipes` on mount
+- Model input: free-text or API-driven (not a hardcoded array)
+- Deploy button: POST `/v1/runs` with `{recipe_name, model, prompt}` + `Authorization: Bearer <BYOK>` header from a form field
+- Run result visible on the page (verdict, category, exit_code, stderr tail)
+- Run history: `GET /v1/runs/{id}` or a list endpoint (may need new API route)
+- Everything else (A2A graph, Tasks tab, Monitor tab, pricing, docs) can stay cosmetic
 
-## Paste-ready kickoff for tomorrow
+**Local validation gate** (must pass before Hetzner deploy resumes):
+1. `make dev-api-local` brings up the containerized API
+2. `make dev-frontend` brings up Next.js at :3000
+3. User opens `http://localhost:3000/playground`
+4. User configures recipe + model + prompt + BYOK key
+5. User clicks Deploy → real `POST /v1/runs` → waits → sees real verdict
+6. Run persists in postgres; confirmed via `docker compose ... exec postgres psql ...`
+
+Only after that works does `bash deploy.sh` against Hetzner become the next step.
+
+## Resume kickoff for tomorrow
 
 ```text
-/gsd-progress
+Dumb playground phase — golden rule #2 (dumb client, intelligence in the API) requires replacing the v0 mock /playground before deploying Phase 19.
 
-# Then, after confirming state:
-/gsd-execute-phase 19 --wave 4
+Please read:
+1. CLAUDE.md  (golden rules at the top — #2 and #3 are load-bearing here)
+2. .planning/phases/19-api-foundation/RESUME-TOMORROW.md  (this file)
+3. memory/feedback_dumb_client_no_mocks.md  (the principle)
+4. frontend/components/agent-configurator.tsx  (the mock that must go)
+5. frontend/lib/api.ts  (existing thin fetch wrapper to reuse)
 
-# When the executor re-enters the 19-07 human-verify checkpoint,
-# run the 7 operator steps above against the real Hetzner box,
-# then paste "approved" to advance to code-review → verify → complete.
+Then: /gsd-discuss-phase 19.1  (or propose Phase 20 scope if it fits there)
+Goal: a /playground page that drives real /v1/runs end-to-end. Nothing hardcoded client-side that the API owns.
 ```
 
-Memory pointer: `memory/project_phase_19_deploy_handoff.md`.
+## What NOT to do tomorrow
+
+- **Do NOT** run `bash deploy/deploy.sh` against Hetzner
+- **Do NOT** run `/gsd-execute-phase 19 --wave 4` — that path goes to the cancelled deploy
+- **Do NOT** mark Phase 19 complete until the playground works locally end-to-end
+- **Do NOT** introduce new client-side arrays of recipes/models/channels — if it's a list, fetch it
+
+Memory pointers: `memory/project_phase_19_deploy_handoff.md`, `memory/feedback_dumb_client_no_mocks.md`.
