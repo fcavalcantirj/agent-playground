@@ -15,3 +15,6 @@ node_modules
 .next/
 .DS_Store
 .vercel
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
