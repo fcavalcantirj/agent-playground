@@ -40,3 +40,14 @@ The plan's "no `Module not found`, `Cannot find module`, or `Type error` in the 
 - Investigating whether a global error boundary or other runtime client-only hook is being called at the module-level of these routes
 
 **Recommendation for Plan 20-05:** Investigate and resolve the prerender failure before SC-11's human-verify gate, since the Hetzner deploy cannot ship from a broken `pnpm build`.
+
+## Pre-existing ESLint binary not installed (discovered during 20-04 verify)
+
+`pnpm lint` fails with `sh: eslint: command not found` because the `frontend/package.json` `"lint"` script points at `eslint .` but ESLint is not declared as a dependency or devDependency (no `"eslint"` or `"@eslint/*"` entries). No ESLint config file (`.eslintrc*`, `eslint.config.{js,mjs,cjs}`) is present in `frontend/` either — the script was inherited from the v0 export template without ever being wired up.
+
+Impact for Plan 20-04:
+- The plan's `pnpm lint` verify step cannot produce lint findings — there is no linter to run.
+- The scope-boundary rule says pre-existing tool absence is out of scope for this plan. Plan 20-04 only introduces one pure display component which TypeChecked cleanly (`pnpm tsc --noEmit` shows only the 3 pre-existing unrelated errors from the section above — no new errors from `run-result-card.tsx`).
+
+**Recommendation for Plan 20-05 (the SC-09 gate owner):** either install `eslint` + `eslint-config-next` + create `eslint.config.mjs` with the Next/TypeScript rules, or remove the `"lint"` script entry from `package.json`. Adding ESLint is preferred since SC-09 reads "`pnpm build` passes with the new page (Turbopack production build). `pnpm lint` passes" — the current script cannot pass because it cannot run.
+
