@@ -19,6 +19,7 @@ import {
   MessageSquareText,
   Cpu,
   Boxes,
+  Search as SearchIcon,
 } from "lucide-react";
 
 import { apiGet, apiPost } from "@/lib/api";
@@ -108,6 +109,7 @@ export function PlaygroundForm() {
   const [orModels, setOrModels] = useState<OpenRouterModel[] | null>(null);
   const [orError, setOrError] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
+  const [recipeQuery, setRecipeQuery] = useState("");
 
   const onRetryExpire = useCallback(() => setUiError(null), []);
   const remainingSec = useRetryCountdown(uiError, onRetryExpire);
@@ -221,19 +223,79 @@ export function PlaygroundForm() {
           </div>
         )}
 
-        {recipes && recipes.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {recipes.map((r) => (
-              <RecipeCard
-                key={r.name}
-                recipe={r}
-                selected={recipe === r.name}
-                onSelect={() => setRecipe(r.name)}
-                disabled={isRunning}
-              />
-            ))}
-          </div>
-        )}
+        {recipes && recipes.length > 0 && (() => {
+          const q = recipeQuery.trim().toLowerCase();
+          const tokens = q.split(/\s+/).filter(Boolean);
+          const filtered = tokens.length
+            ? recipes.filter((r) => {
+                const hay = [
+                  r.name,
+                  r.display_name ?? "",
+                  RECIPE_TAGLINES[r.name] ?? "",
+                  r.description ?? "",
+                  r.source_repo ?? "",
+                  r.upstream_version ?? "",
+                ]
+                  .join(" ")
+                  .toLowerCase();
+                return tokens.every((t) => hay.includes(t));
+              })
+            : recipes;
+
+          return (
+            <>
+              <div className="mb-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative w-full sm:max-w-md">
+                  <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="search"
+                    placeholder={`Search ${recipes.length} recipe${recipes.length === 1 ? "" : "s"} — name, description, repo…`}
+                    value={recipeQuery}
+                    onChange={(e) => setRecipeQuery(e.target.value)}
+                    disabled={isRunning}
+                    className={cn(
+                      "h-11 w-full rounded-lg border border-border/60 bg-card/40 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground/70",
+                      "focus-visible:border-primary focus-visible:bg-card/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                    )}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {filtered.length === recipes.length
+                    ? `${recipes.length} recipes available`
+                    : `${filtered.length} of ${recipes.length} match`}
+                </p>
+              </div>
+
+              {filtered.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border/60 bg-card/20 p-8 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No recipe matches <span className="font-mono text-foreground">"{recipeQuery}"</span>.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setRecipeQuery("")}
+                  >
+                    Clear search
+                  </Button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  {filtered.map((r) => (
+                    <RecipeCard
+                      key={r.name}
+                      recipe={r}
+                      selected={recipe === r.name}
+                      onSelect={() => setRecipe(r.name)}
+                      disabled={isRunning}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {recipes && recipes.length === 0 && (
           <Alert className="border-amber-500 bg-amber-500/10">
@@ -554,16 +616,16 @@ function RecipeCard({
           {initials}
         </div>
         <div className="min-w-0 flex-1 pr-7">
-          <h3 className="truncate text-lg font-semibold leading-tight text-foreground">
+          <h3 className="text-lg font-semibold leading-tight text-foreground" title={recipe.display_name ?? recipe.name}>
             {recipe.display_name ?? recipe.name}
           </h3>
-          <p className="truncate font-mono text-xs text-muted-foreground/80">{recipe.name}</p>
+          <p className="font-mono text-xs text-muted-foreground/80">{recipe.name}</p>
         </div>
       </div>
 
       {/* Tagline */}
       {tagline && (
-        <p className="line-clamp-3 px-5 text-sm leading-relaxed text-foreground/75">
+        <p className="line-clamp-3 px-5 text-[15px] leading-relaxed text-foreground/85">
           {tagline}
         </p>
       )}
@@ -646,6 +708,9 @@ function ModelCombobox({
           disabled={disabled || loading}
           className={cn(
             "h-auto min-h-[4rem] w-full max-w-3xl justify-between gap-3 px-5 py-3 text-left text-base font-normal",
+            // Override the default outline-variant accent hover (--accent is bright orange + dark fg → unreadable).
+            "bg-card/40 text-foreground hover:!bg-card/70 hover:!text-foreground hover:border-primary/50",
+            "data-[state=open]:!bg-card/70 data-[state=open]:border-primary",
             value && "border-primary/40 bg-card/70",
           )}
         >
@@ -673,9 +738,11 @@ function ModelCombobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[var(--radix-popover-trigger-width)] p-0"
+        className="z-50 w-[var(--radix-popover-trigger-width)] border-border/80 bg-popover/95 p-0 shadow-2xl backdrop-blur-md"
         align="start"
-        sideOffset={6}
+        sideOffset={8}
+        side="bottom"
+        avoidCollisions={false}
       >
         <Command
           filter={(value, search) => {
