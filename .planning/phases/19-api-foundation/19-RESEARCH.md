@@ -797,32 +797,32 @@ secrets:
 | A8 | `docker.sock` mount is an acceptable trust boundary for phase 19 | Deployment | HIGH — CONTEXT.md D-08 explicitly accepts this: "Document it as a known trust boundary. Phase 19 runs on a single-tenant box; multi-tenant isolation (Sysbox, gVisor) is phase 22+." No further mitigation needed in this phase. [CITED: CONTEXT.md D-08] |
 | A9 | The 5 recipe YAML files can be loaded at server startup and cached | Performance | LOW — they're tiny (<5KB each). Reload-on-SIGHUP is a nice-to-have (matches the Go-side 02.5 pattern) but not required for phase 19. [ASSUMED] |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Python-minimum for api_server — 3.10 or 3.11?**
    - What we know: runner is pinned to `>=3.10` for recon-tool compatibility.
    - What's unclear: server can be tighter.
-   - Recommendation: **bump api_server to `>=3.11`** for TaskGroup + ExceptionGroup. Keep runner at 3.10. Documented in Pitfall 8.
+   - **RESOLVED:** Recommendation: **bump api_server to `>=3.11`** for TaskGroup + ExceptionGroup. Keep runner at 3.10. Documented in Pitfall 8.
 
 2. **Subdomain vs. path-based routing — `api.agentplayground.dev` vs. `agentplayground.dev/api/*`?**
    - What we know: CONTEXT.md leaves this to planner discretion.
-   - Recommendation: **subdomain** (`api.agentplayground.dev`). Cleaner CORS story for Phase 20 frontend at `agentplayground.dev`; API can evolve its cache/CDN policy independently; OpenAPI `servers:` block is unambiguous.
+   - **RESOLVED:** Recommendation: **subdomain** (`api.agentplayground.dev`). Cleaner CORS story for Phase 20 frontend at `agentplayground.dev`; API can evolve its cache/CDN policy independently; OpenAPI `servers:` block is unambiguous.
 
 3. **`POST /v1/lint` response shape on errors — 200 with `{errors: [...]}` or 400 with error envelope?**
    - What we know: Linting is a validation service, not a failure state.
-   - Recommendation: **200 with `{valid: bool, errors: [{path, message}]}`**. Returning 400 implies the REQUEST was malformed; 200 with errors body says "the request was fine, your recipe has issues." Matches JSON Schema validator services like ajv.dev.
+   - **RESOLVED:** Recommendation: **200 with `{valid: bool, errors: [{path, message}]}`**. Returning 400 implies the REQUEST was malformed; 200 with errors body says "the request was fine, your recipe has issues." Matches JSON Schema validator services like ajv.dev.
 
 4. **Should `GET /v1/runs/{id}` be rate-limited same as other GETs (300/min)?**
    - What we know: CONTEXT.md D-05 groups `GET /v1/*` at 300/min.
-   - Recommendation: yes, one bucket. No need for per-endpoint GET buckets.
+   - **RESOLVED:** Recommendation: yes, one bucket. No need for per-endpoint GET buckets.
 
 5. **Is there a Phase 19 frontend smoke test, or does that wait for Phase 20?**
    - What we know: Success Criterion #13 feeds `/openapi.json` into `openapi-typescript` and produces a valid TS client. That IS the frontend smoke test.
-   - Recommendation: plan 19-07 (deploy) should include a `make smoke-api` target that does the full curl sequence from Success Criteria #1–#9, once against localhost and once against the deployed domain.
+   - **RESOLVED:** Recommendation: plan 19-07 (deploy) should include a `make smoke-api` target that does the full curl sequence from Success Criteria #1–#9, once against localhost and once against the deployed domain.
 
 6. **What writes to `runs.completed_at`?**
    - What we know: schema has the column, not explicitly in D-07 flow.
-   - Recommendation: set at "Write verdict" step (9 in D-07 flow). `created_at` is on insert, `completed_at` is on verdict write. Adds observability.
+   - **RESOLVED:** Recommendation: set at "Write verdict" step (9 in D-07 flow). `created_at` is on insert, `completed_at` is on verdict write. Adds observability.
 
 ## Environment Availability
 
