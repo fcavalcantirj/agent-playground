@@ -60,11 +60,19 @@ const PASS_IF_HUMAN: Record<string, string> = {
 };
 
 const RECIPE_TAGLINES: Record<string, string> = {
-  hermes: "Self-improving TUI agent by Nous Research",
-  nanobot: "Ultra-lightweight Python agent by HKUDS",
-  nullclaw: "Minimalist coding agent",
-  openclaw: "Open-source coding gateway",
-  picoclaw: "Tiny CLI agent — fastest cold start",
+  hermes: "Self-improving TUI agent with skills system, slash-commands, and full multi-provider support.",
+  nanobot: "Ultra-lightweight Python agent — 99% fewer lines than OpenClaw, native OpenAI + Anthropic SDKs.",
+  nullclaw: "Zero-overhead Zig agent. 100% Agnostic. Static binary, no runtime, fastest cold start.",
+  openclaw: "Open-source coding gateway. TypeScript, Node 24, multi-channel, fully extensible.",
+  picoclaw: "Tiny Go CLI agent. Single binary, minimal deps, designed to be embedded anywhere.",
+};
+
+const RECIPE_ACCENTS: Record<string, { from: string; to: string; glow: string }> = {
+  hermes:   { from: "from-violet-500/30",  to: "to-purple-500/10",  glow: "shadow-violet-500/20" },
+  nanobot:  { from: "from-amber-500/30",   to: "to-yellow-500/10",  glow: "shadow-amber-500/20" },
+  nullclaw: { from: "from-indigo-500/30",  to: "to-blue-500/10",    glow: "shadow-indigo-500/20" },
+  openclaw: { from: "from-emerald-500/30", to: "to-teal-500/10",    glow: "shadow-emerald-500/20" },
+  picoclaw: { from: "from-rose-500/30",    to: "to-orange-500/10",  glow: "shadow-rose-500/20" },
 };
 
 function shortRef(ref: string | null | undefined): string {
@@ -495,9 +503,11 @@ function RecipeCard({
   onSelect: () => void;
   disabled: boolean;
 }) {
-  const tagline = recipe.description?.split("\n")[0]?.trim() || RECIPE_TAGLINES[recipe.name] || "";
-  const repoHost = recipe.source_repo?.replace(/^https?:\/\//, "").split("/")[0] ?? "";
-  const repoPath = recipe.source_repo?.replace(/^https?:\/\/[^/]+\//, "") ?? "";
+  const tagline = RECIPE_TAGLINES[recipe.name] ?? recipe.description?.split("\n")[0]?.trim() ?? "";
+  const repoOwnerRepo = recipe.source_repo?.replace(/^https?:\/\/(www\.)?github\.com\//, "") ?? "";
+  const accent = RECIPE_ACCENTS[recipe.name] ?? RECIPE_ACCENTS.hermes;
+  const initials = (recipe.display_name ?? recipe.name).slice(0, 2).toUpperCase();
+  const version = recipe.upstream_version?.split(/\s|\//)[0];
 
   return (
     <button
@@ -506,62 +516,96 @@ function RecipeCard({
       disabled={disabled}
       aria-pressed={selected}
       className={cn(
-        "group relative flex h-full flex-col rounded-xl border p-5 text-left transition-all",
+        "group relative isolate flex h-full flex-col overflow-hidden rounded-2xl border text-left transition-all duration-200",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         selected
-          ? "border-primary bg-gradient-to-br from-primary/15 via-primary/5 to-transparent shadow-lg shadow-primary/20 ring-1 ring-primary/40"
-          : "border-border/60 bg-card/40 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/70 hover:shadow-md",
+          ? cn("border-primary/70 bg-card/80 shadow-2xl ring-1 ring-primary/40", accent.glow)
+          : "border-border/40 bg-card/20 backdrop-blur-sm hover:-translate-y-1 hover:border-border/80 hover:bg-card/60 hover:shadow-xl",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
+      {/* Top gradient wash — recipe-tinted */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-0 -z-10 h-32 bg-gradient-to-b opacity-60 transition-opacity duration-300",
+          accent.from,
+          accent.to,
+          selected ? "opacity-100" : "group-hover:opacity-90",
+        )}
+      />
+
+      {/* Selected check chip */}
       {selected && (
-        <div className="absolute right-3 top-3 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Check className="size-3.5" strokeWidth={3} />
+        <div className="absolute right-4 top-4 z-10 flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/40 ring-2 ring-background">
+          <Check className="size-4" strokeWidth={3} />
         </div>
       )}
 
-      <div className="mb-2 flex items-baseline justify-between gap-2 pr-7">
-        <h3 className="text-xl font-bold text-foreground">{recipe.display_name ?? recipe.name}</h3>
+      {/* Header: avatar + title block */}
+      <div className="flex items-start gap-3 p-5 pb-3">
+        <div
+          className={cn(
+            "flex size-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br font-mono text-base font-bold text-white shadow-inner",
+            accent.from.replace("/30", "/60"),
+            accent.to.replace("/10", "/40"),
+          )}
+        >
+          {initials}
+        </div>
+        <div className="min-w-0 flex-1 pr-7">
+          <h3 className="truncate text-lg font-semibold leading-tight text-foreground">
+            {recipe.display_name ?? recipe.name}
+          </h3>
+          <p className="truncate font-mono text-xs text-muted-foreground/80">{recipe.name}</p>
+        </div>
       </div>
 
-      <p className="mb-3 font-mono text-xs text-muted-foreground">{recipe.name}</p>
-
+      {/* Tagline */}
       {tagline && (
-        <p className="mb-4 line-clamp-3 text-sm text-foreground/80">{tagline}</p>
+        <p className="line-clamp-3 px-5 text-sm leading-relaxed text-foreground/75">
+          {tagline}
+        </p>
       )}
 
-      <div className="mt-auto flex flex-wrap gap-1.5">
-        {recipe.upstream_version && (
-          <Badge variant="outline" className="font-mono text-[10px]">{recipe.upstream_version.split(/\s|\//)[0]}</Badge>
+      {/* Stats strip */}
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 text-xs text-muted-foreground">
+        {version && (
+          <span className="inline-flex items-center gap-1 font-mono">
+            <span className="text-foreground/70">{version}</span>
+          </span>
         )}
         {recipe.image_size_gb != null && (
-          <Badge variant="outline" className="gap-1 text-[10px]">
-            <HardDrive className="size-3" />
-            {recipe.image_size_gb.toFixed(1)} GB
-          </Badge>
+          <span className="inline-flex items-center gap-1">
+            <HardDrive className="size-3 opacity-60" />
+            <span className="font-mono">{recipe.image_size_gb.toFixed(1)}GB</span>
+          </span>
         )}
         {recipe.expected_runtime_seconds != null && (
-          <Badge variant="outline" className="gap-1 text-[10px]">
-            <Timer className="size-3" />
-            ~{Math.round(recipe.expected_runtime_seconds)}s
-          </Badge>
+          <span className="inline-flex items-center gap-1">
+            <Timer className="size-3 opacity-60" />
+            <span className="font-mono">~{Math.round(recipe.expected_runtime_seconds)}s</span>
+          </span>
         )}
       </div>
 
+      {/* Footer: source repo */}
       {recipe.source_repo && (
         <a
           href={recipe.source_repo}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          className="mt-auto flex items-center gap-1.5 border-t border-border/40 px-5 py-3 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:bg-muted/30 hover:text-foreground"
         >
-          <Github className="size-3" />
-          <span className="truncate">{repoHost}/{repoPath}</span>
+          <Github className="size-3.5 shrink-0" />
+          <span className="truncate">{repoOwnerRepo}</span>
           {recipe.source_ref && (
-            <code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{shortRef(recipe.source_ref)}</code>
+            <code className="ml-auto rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-foreground/80">
+              {shortRef(recipe.source_ref)}
+            </code>
           )}
-          <ExternalLink className="size-3 shrink-0" />
+          <ExternalLink className="size-3 shrink-0 opacity-50" />
         </a>
       )}
     </button>
