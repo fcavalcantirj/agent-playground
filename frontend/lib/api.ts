@@ -7,12 +7,14 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 export class ApiError extends Error {
   status: number;
   body: string;
+  headers: Headers;
 
-  constructor(status: number, body: string, message?: string) {
+  constructor(status: number, body: string, headers: Headers, message?: string) {
     super(message ?? `API error ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.headers = headers;
   }
 }
 
@@ -31,7 +33,7 @@ async function request<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text);
+    throw new ApiError(res.status, text, res.headers);
   }
 
   // Empty responses (e.g. 204) are safe to return as null.
@@ -48,11 +50,13 @@ export function apiGet<T = unknown>(path: string): Promise<T> {
 
 export function apiPost<T = unknown>(
   path: string,
-  body?: unknown
+  body?: unknown,
+  headers?: HeadersInit,
 ): Promise<T> {
   return request<T>(path, {
     method: "POST",
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers,
   });
 }
 
