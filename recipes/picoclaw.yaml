@@ -267,6 +267,25 @@ channels:
     ready_log_regex: "Telegram bot connected username="
     response_routing: per_message_origin   # bot replies in the chat the sender messaged from
     multi_user_model: allowlist
+    # Phase 22b event_log_regex — captured empirically in spike 01b-picoclaw (2026-04-18).
+    # See .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01b-picoclaw.md.
+    event_log_regex:
+      # reply_sent — fires when picoclaw's agent loop publishes the outbound response;
+      # the telego sendMessage API call fires ~300ms later at DBG level. Using the
+      # INF-level publish line because it's the authoritative "reply delivered to channel
+      # layer" event and is stable across picoclaw log-format minor versions.
+      reply_sent: "INF agent [^\\s]*loop\\.go:\\d+ > Published outbound response channel=telegram chat_id=(?P<chat_id>\\d+) content_len=(?P<chars>\\d+)"
+      # response_text — BONUS capture. picoclaw uniquely logs the full reply text at
+      # loop.go:1885 before sending. Useful for watcher-internal correlation because
+      # the reply often echoes user-sent correlation id (e.g. "ok-picoclaw-01").
+      response_text: "INF agent [^\\s]*loop\\.go:\\d+ > Response: (?P<reply_text>.+?) agent_id=\\S+ final_length=(?P<chars>\\d+)"
+      # inbound_message — structured eventbus entry; key=value pairs easy to pull. Note:
+      # the actual user text ISN'T on this line — it's inside a multi-line "Full LLM
+      # request" block below DBG level. Watcher captures chat/sender ids from this line
+      # and uses response_text to attach correlation_id when matching user-embedded UUIDs.
+      inbound_message: "INF eventbus [^\\s]*loop\\.go:\\d+ > Agent event: llm_request .*inbound_channel=telegram inbound_chat_id=(?P<chat_id>\\d+) inbound_sender_id=(?P<user_id>\\d+)"
+      # agent_error — generic ERROR/FATAL capture.
+      agent_error: "(?:ERR|ERROR|FATAL) [^\\s]+ [^\\s]+:\\d+ > (?P<message>.+)"
     verified_cells:
       - date: "2026-04-17"
         bot_username: "@AgentPlayground_bot"
@@ -285,6 +304,25 @@ channels:
           OpenRouter, turn_end in 1846ms (~1.8s LLM), sendMessage to
           Telegram ok=true. Round-trip ~3s wall.
         category: PASS
+      - date: "2026-04-18"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: anthropic/claude-haiku-4.5
+        boot_wall_s: 2.85
+        first_reply_wall_s: 3.2
+        reply_sample: "ok-picoclaw-01"
+        verdict: PASS
+        notes: |
+          Phase 22b spike 01b-picoclaw. Persistent /start via `/v1/agents/:id/start`
+          with TELEGRAM_ALLOWED_USERS=152099202. User sent
+          `spk01b please reply with only: ok-picoclaw-01`; picoclaw replied
+          `ok-picoclaw-01`; round-trip observed in logs at timestamps
+          21:16:22 (inbound) → 21:16:25 (response ready) → 21:16:25
+          (Published outbound) → 21:16:26 (telego sendMessage OK).
+          Captured: reply_sent regex, response_text regex (reply content in
+          log, unique to picoclaw), inbound_message regex.
+        category: PASS
+        spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01b-picoclaw.md"
 
   # Discord, Slack, WhatsApp, Matrix, Feishu, Line, QQ, OneBot, DingTalk,
   # Wecom, Weixin, VK, MaixCam, Pico — picoclaw v3 channel_list exposes

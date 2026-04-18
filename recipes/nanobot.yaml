@@ -276,6 +276,19 @@ channels:
     response_routing: per_message_origin
     multi_user_model: allowlist
     multi_account_supported: false       # nanobot channels.telegram is single-entry
+    # Phase 22b event_log_regex — captured empirically in spike 01d-nanobot (2026-04-18).
+    # nanobot has excellent structured logging: timestamp | level | module:function:line - message.
+    # See .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01d-nanobot.md.
+    event_log_regex:
+      # reply_sent — fires when agent loop writes the reply out. Contains FULL reply text.
+      reply_sent: "\\| INFO\\s+\\| nanobot\\.agent\\.loop:_process_message:\\d+ - Response to telegram:(?P<chat_id>\\d+)\\|[^:]+: (?P<reply_text>.+)"
+      # inbound_message — when the agent begins processing a user message. Full user text captured.
+      inbound_message: "\\| INFO\\s+\\| nanobot\\.agent\\.loop:_process_message:\\d+ - Processing message from telegram:(?P<chat_id>\\d+)\\|(?P<user>[^:]+): (?P<text>.+)"
+      # inbound_message_raw — DEBUG-level Telegram receiver; captures even before LLM processing.
+      # Useful for latency measurements (receive-to-reply) but not required for reply_sent/inbound_message primary path.
+      inbound_raw: "\\| DEBUG\\s+\\| nanobot\\.channels\\.telegram:_on_message:\\d+ - Telegram message from (?P<chat_id>\\d+)\\|(?P<user>[^:]+): (?P<text>.+)"
+      # agent_error — generic ERROR/WARNING capture.
+      agent_error: "\\| (?:ERROR|CRITICAL|WARNING)\\s+\\| nanobot\\.[^:]+:[^:]+:\\d+ - (?P<message>.+)"
     verified_cells:
       - date: "2026-04-17"
         bot_username: "@AgentPlayground_bot"
@@ -292,6 +305,26 @@ channels:
           startup is slower than others (~18s from docker run to ready)
           because it creates SOUL.md/USER.md/HEARTBEAT.md/memory bootstrap
           files on first run and initializes git store at ~/.nanobot/workspace.
+      - date: "2026-04-18"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: anthropic/claude-haiku-4.5
+        boot_wall_s: 23.36
+        first_reply_wall_s: ~6
+        reply_sample: "ok-nanobot-01"
+        verdict: PASS
+        notes: |
+          Phase 22b spike 01d-nanobot. Persistent /start via /v1/agents/:id/start.
+          User sent `spk01d please reply with only: ok-nanobot-01`;
+          nanobot replied `ok-nanobot-01`. Canonical 3-line sequence captured
+          in docker logs:
+            21:25:57 DEBUG nanobot.channels.telegram:_on_message:921  Telegram message from 152099202|fcavalcantirj: spk01d...
+            21:25:58 INFO  nanobot.agent.loop:_process_message:666    Processing message from telegram:152099202|fcavalcantirj: spk01d...
+            21:26:03 INFO  nanobot.agent.loop:_process_message:761    Response to telegram:152099202|fcavalcantirj: ok-nanobot-01
+          reply_sent regex captures full reply_text; correlation_id extractable
+          directly from reply (like picoclaw). 4 regexes authored.
+        category: PASS
+        spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01d-nanobot.md"
         category: PASS
 
   # Discord, Slack, WhatsApp, Email, Matrix (not installed by default,

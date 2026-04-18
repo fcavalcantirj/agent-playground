@@ -323,6 +323,40 @@ channels:
     # the API-side timeout is 90s.
     pairing:
       approve_argv: [openclaw, pairing, approve, telegram, "$CODE"]
+    # Phase 22b event_log_regex — FLAGGED. openclaw logs only boot+lifecycle events
+    # to docker stdout + its file log (/tmp/openclaw/openclaw-2026-04-18.log). Per-message
+    # activity (inbound user messages, outbound assistant replies) is NOT in either log.
+    # It lives in the session JSONL: /home/node/.openclaw/agents/main/sessions/<session_id>.jsonl
+    # Captured empirically in spike-01e-openclaw (2026-04-18) via direct docker run with
+    # ANTHROPIC_API_KEY env + dmPolicy=allowlist + allowFrom=["*"] wildcard.
+    event_log_regex:
+      reply_sent: null           # not observable via docker logs
+      inbound_message: null      # not observable via docker logs
+      agent_error: "(?:\"logLevelName\":\"(?:ERROR|FATAL)\")"   # JSON-line format
+    event_source_fallback:
+      kind: file_tail_in_container
+      spec:
+        # Session metadata resolves the per-chat session_id:
+        sessions_manifest: /home/node/.openclaw/agents/main/sessions/sessions.json
+        # Per-session JSONL — one line per turn event. role=message entries carry
+        # {role: user|assistant, content: [{type: text, text: "..."}]}. Watcher parses
+        # each appended line; when role=assistant + content[].type=text appears,
+        # emit reply_sent event with text as reply body.
+        session_log_template: "/home/node/.openclaw/agents/main/sessions/{session_id}.jsonl"
+        # Cross-reference by session_id key in sessions.json:
+        #   sessions.json["agent:main:main"].sessionId → <uuid>
+        #   sessions.json["agent:main:main"].origin.from → "telegram:<chat_id>"
+      notes: |
+        openclaw's session JSONL is authoritative. Each message-turn is a JSON line;
+        role=assistant content[type=text].text IS the full reply body, including
+        any correlation id the user sent (verified empirically — "ok-openclaw-01"
+        was captured 2× in the file: user ping + bot echo).
+
+        Watcher design: `docker exec <cid> tail -f /home/node/.openclaw/agents/main/sessions/<session_id>.jsonl`
+        with a JSON parser on each line. chat_id resolved from sessions.json origin.from.
+        Compare to nullclaw's event_source_fallback which uses a CLI-poll path instead —
+        both are valid `file_tail_in_container` / `docker_exec_poll` fallback kinds that
+        the log-watcher service must support (see CONTEXT.md D-23 proposal).
     known_quirks:
       - id: openrouter_provider_plugin_silent_fail
         severity: blocks_llm_reply_with_openrouter
@@ -475,6 +509,42 @@ channels:
           The pairing-approve step is platform-executable post-deploy
           (no TTY required). This is the v0.2 canonical openclaw flow.
         category: PASS
+      - date: "2026-04-18"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        provider: anthropic
+        model: anthropic/claude-haiku-4-5
+        env_var: ANTHROPIC_API_KEY
+        boot_wall_s: 100
+        first_reply_wall_s: ~6
+        reply_sample: "ok-openclaw-01"
+        verdict: PASS_WITH_FLAG
+        notes: |
+          Phase 22b spike 01e-openclaw (second run, direct docker run).
+          Bypassed API server's start endpoint (which stores bearer as
+          OPENROUTER_API_KEY regardless of provider) via:
+            docker run -d -e ANTHROPIC_API_KEY=... -e TELEGRAM_BOT_TOKEN=...
+              ap-recipe-openclaw sh -c '<config with dmPolicy=allowlist +
+              allowFrom=["*"] + model=anthropic/claude-haiku-4-5> &&
+              exec openclaw gateway --allow-unconfigured'
+          With ANTHROPIC_API_KEY in env at boot, openclaw auto-enabled the
+          ANTHROPIC plugin (not openrouter) AND migrator left values clean
+          (no `tg:` or `openrouter/` wrapping).
+
+          User sent two DMs: "Hi" → bot replied with identity-discovery
+          greeting; "spk01e please reply with only: ok-openclaw-01" → bot
+          replied with echoed correlation id. PASS.
+
+          FLAG: reply_sent is NOT observable via docker logs OR the file log
+          at /tmp/openclaw/openclaw-2026-04-18.log (both carry only boot +
+          lifecycle events). The per-turn activity lives in session JSONL:
+            /home/node/.openclaw/agents/main/sessions/<session_id>.jsonl
+          Watcher must tail this file (see event_source_fallback above). 2nd
+          recipe in the catalog (after nullclaw) that cannot use docker-
+          logs-scrape; validates CONTEXT.md D-23 (per-recipe fallback sources
+          are load-bearing for the 22b architecture, not an edge case).
+        category: PASS_WITH_FLAG
+        spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01e-openclaw.md"
       - date: "2026-04-17"
         bot_username: "@AgentPlayground_bot"
         allowed_user_id: 152099202

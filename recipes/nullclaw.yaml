@@ -291,6 +291,34 @@ channels:
     response_routing: per_message_origin   # nullclaw replies in sender's DM
     multi_user_model: allowlist
     multi_account_supported: true       # channels.telegram.accounts.<name> nested
+    # Phase 22b event_log_regex — FLAGGED. nullclaw is EXTREMELY quiet on stdout/stderr:
+    # only ~13 boot lines; no per-message inbound/reply events ever hit docker logs.
+    # Captured empirically in spike 01c-nullclaw (2026-04-18). The docker-logs-scrape
+    # path (CONTEXT.md D-01) does not work for nullclaw — its activity lives in:
+    #   (a) `nullclaw history show <session_id> --json` (via docker exec)
+    #   (b) `/nullclaw-data/llm_token_usage.jsonl` (one line per LLM call)
+    # See spike artifact for the 2nd-order architecture finding: D-01 needs a per-recipe
+    # fallback path for recipes whose activity isn't in docker logs.
+    event_log_regex:
+      # FLAG: reply_sent via docker logs is NOT AVAILABLE for nullclaw.
+      # Fallback observation path (declared here so planner can wire it per-recipe):
+      reply_sent: null    # not observable via docker logs
+      inbound_message: null    # not observable via docker logs
+      agent_error: "ERROR|FATAL|panic"    # stderr-only, generic fallback
+    event_source_fallback:
+      kind: docker_exec_poll
+      spec:
+        # Poll this command every ~500ms (via docker exec); compare result to previous
+        # snapshot; emit reply_sent event when a new assistant-role message appears.
+        argv_template: ["nullclaw", "history", "show", "{session_id}", "--json"]
+        session_id_template: "agent:main:telegram:direct:{chat_id}"
+        # Alternative: tail llm_token_usage.jsonl for "something happened" signal
+        tail_file: "/nullclaw-data/llm_token_usage.jsonl"
+      notes: |
+        nullclaw's gateway HTTP surface at 127.0.0.1:3000 only exposes /health.
+        No event stream, no /messages, no /events endpoint (empirically probed
+        in spike 01c — all 404). Phase 22b watcher for nullclaw uses docker exec
+        polling as the observation path; not elegant, but correct.
     verified_cells:
       - date: "2026-04-17"
         bot_username: "@AgentPlayground_bot"
@@ -306,6 +334,27 @@ channels:
           Image-ownership bug noted in schema-from-reality (b): must run
           --user root until upstream chowns /nullclaw-data to 65534.
         category: PASS
+      - date: "2026-04-18"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: anthropic/claude-haiku-4.5
+        boot_wall_s: 2.46
+        first_reply_wall_s: ~3
+        reply_sample: "ok-nullclaw-01"
+        verdict: PASS_WITH_FLAG
+        notes: |
+          Phase 22b spike 01c-nullclaw. Persistent /start via /v1/agents/:id/start
+          with TELEGRAM_ALLOWED_USERS=152099202. User sent
+          `spk01c please reply with only: ok-nullclaw-01`; nullclaw replied
+          `ok-nullclaw-01` (confirmed via Telegram UI + `nullclaw history show`).
+          FLAG: reply_sent is NOT observable via docker logs — only 13 boot
+          lines total across stdout+stderr; nothing for per-message activity.
+          Activity must be polled via `nullclaw history show <session> --json`
+          or watched via /nullclaw-data/llm_token_usage.jsonl. This is a
+          2nd-order finding for the 22b architecture — docker-logs-only
+          watcher cannot cover nullclaw.
+        category: PASS_WITH_FLAG
+        spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01c-nullclaw.md"
 
   # Discord, Slack, Matrix, WhatsApp, IRC, Signal, Email, Line, QQ, OneBot,
   # MaixCam, iMessage, Mattermost, Lark, DingTalk, WeChat, WeCom, Weixin,
