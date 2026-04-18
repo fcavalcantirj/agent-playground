@@ -1,11 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentplayground.dev/schemas/ap.recipe.v0.1.json",
-  "title": "Agent Playground Recipe — ap.recipe/v0.1.1",
-  "description": "Schema for Agent Playground recipe YAML files consumed by tools/run_recipe.py. See docs/RECIPE-SCHEMA.md for the canonical specification. v0.1.1 adds $defs extraction (v0_1 body + category enum), a oneOf discriminator seam on apiVersion for future v0.2 wire-compat, tightened bounds (source.ref pattern, name maxLength, timeout maxima, owner_uid uid_t range), the known_incompatible_cells verdict enum (WR-05), an annotations open-object escape valve on 7 subschemas, and optional metadata.license + metadata.maintainer — all additive over v0.1.",
+  "$id": "https://agentplayground.dev/schemas/ap.recipe.v0.2.json",
+  "title": "Agent Playground Recipe — ap.recipe/v0.2",
+  "description": "Schema for Agent Playground recipe YAML files consumed by tools/run_recipe.py. See docs/RECIPE-SCHEMA.md for the canonical specification. v0.2 flips the reserved oneOf discriminator seam live (root now matches either v0_1 or v0_2 branch on apiVersion const) and adds two additive top-level blocks under v0_2: persistent: (daemon/gateway mode + health_check oneOf) and channels: (messaging platform wiring with channel_verified_cell, user_input_entry, channel_category enum). v0.1 / v0.1.1 recipes remain valid unchanged under the v0_1 branch.",
   "type": "object",
-  "$ref": "#/$defs/v0_1",
-  "$comment": "Root uses $ref to the single v0_1 branch today. When v0.2 ships (Phase 13), this becomes `oneOf: [{$ref: v0_1}, {$ref: v0_2}]` with apiVersion discriminator. Keeping $ref today preserves deep error paths from jsonschema; oneOf with a single branch collapses inner errors into an opaque top-level message (WR-01).",
+  "oneOf": [
+    { "$ref": "#/$defs/v0_1" },
+    { "$ref": "#/$defs/v0_2" }
+  ],
+  "$comment": "Root now uses oneOf with two apiVersion-discriminated branches. v0_1 matches apiVersion=ap.recipe/v0.1 exactly (via const). v0_2 matches apiVersion=ap.recipe/v0.2 exactly (via const). Each branch carries additionalProperties:false — a v0.1 recipe with a persistent/channels block will NOT cross-validate against v0_1 (correct — must opt in via apiVersion bump). Pre-existing WR-01 note (error-path opacity under oneOf) is accepted as the cost of versioning; future plans can re-route to anyOf if user-facing error messages regress.",
   "$defs": {
     "category": {
       "type": "string",
@@ -22,7 +25,327 @@
         "STOCHASTIC",
         "SKIP"
       ],
-      "description": "Authoritative failure category. 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase)."
+      "description": "Authoritative smoke-level failure category. 9 live (PASS, ASSERT_FAIL, INVOKE_FAIL, BUILD_FAIL, PULL_FAIL, CLONE_FAIL, TIMEOUT, LINT_FAIL, INFRA_FAIL) + 2 reserved: STOCHASTIC (reserved — phase 15), SKIP (reserved — later UX phase). Used by smoke.verified_cells[*].category and smoke.known_incompatible_cells[*].category. v0.2 introduces a distinct channel_category enum (below) for channel-scoped verified_cells so BLOCKED_UPSTREAM does not leak into v0.1 semantic space."
+    },
+    "channel_category": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "ASSERT_FAIL",
+        "INVOKE_FAIL",
+        "BUILD_FAIL",
+        "PULL_FAIL",
+        "CLONE_FAIL",
+        "TIMEOUT",
+        "LINT_FAIL",
+        "INFRA_FAIL",
+        "STOCHASTIC",
+        "SKIP",
+        "BLOCKED_UPSTREAM"
+      ],
+      "description": "Channel-scoped category enum (v0.2). Superset of smoke `category` enum + BLOCKED_UPSTREAM, which flags cells where channel wiring proved correct but an upstream provider bug blocks the LLM round-trip (e.g. openclaw openrouter plugin silent-fail documented in channels.telegram.known_quirks)."
+    },
+    "health_check": {
+      "type": "object",
+      "description": "Persistent-mode readiness probe. One-of discriminated on kind.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "process_alive" }
+          },
+          "description": "Runner asserts `docker inspect <cid>` reports State.Running == true. Used by recipes whose daemon has no HTTP health endpoint (hermes, nullclaw)."
+        },
+        {
+          "type": "object",
+          "required": ["kind", "port", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "http" },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "TCP port inside the container exposing the health endpoint."
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "URL path; must begin with '/'."
+            }
+          },
+          "description": "Runner GETs http://<container>:<port><path> after ready_log_regex match; first 2xx is a pass. Per spike-11: picoclaw/nanobot use /health (not /ready, which returns 503 even when Telegram is connected); openclaw uses / on port 18789."
+        }
+      ]
+    },
+    "persistent_block": {
+      "type": "object",
+      "required": ["mode", "spec"],
+      "additionalProperties": false,
+      "description": "v0.2 persistent-mode declaration. Parallel to invoke: — invoke: is the one-shot smoke path, persistent: is the live-session path driven by channels:.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["gateway-daemon"],
+          "description": "Only gateway-daemon implemented in v0.2."
+        },
+        "spec": {
+          "type": "object",
+          "required": ["argv", "ready_log_regex", "health_check", "graceful_shutdown_s"],
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "Ordered argv passed after the container entrypoint. Same $MODEL / $VAR substitution rules as invoke.spec.argv minus $PROMPT."
+            },
+            "ready_log_regex": {
+              "type": "string",
+              "description": "Python regex matched against container stdout+stderr by the runner after docker run -d. First match signals ready."
+            },
+            "health_check": {
+              "$ref": "#/$defs/health_check"
+            },
+            "graceful_shutdown_s": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 600,
+              "description": "SIGTERM → docker wait timeout before docker rm -f. Range [0, 600] seconds. The value 0 is a sentinel meaning 'skip graceful shutdown and go straight to docker rm -f' — used by recipes whose daemon ignores SIGTERM (nanobot gateway per spike-07). Pair with sigterm_handled:false for documentation clarity."
+            },
+            "entrypoint": {
+              "type": "string",
+              "description": "Docker --entrypoint override for persistent mode. Same semantics as invoke.spec.entrypoint. Absent when the image entrypoint is already correct (hermes). 'sh' for recipes that heredoc-chain config + exec (picoclaw, nullclaw, nanobot, openclaw)."
+            },
+            "user_override": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_:-]+$",
+              "description": "Docker --user override. Required when the image has ownership bugs that block the declared runtime.volumes[*] mount. nullclaw-only today ('root')."
+            },
+            "sigterm_handled": {
+              "type": "boolean",
+              "description": "Documentation flag — true asserts the agent handles SIGTERM gracefully within graceful_shutdown_s. If absent, runner still applies the graceful timeout + force-remove fallback."
+            }
+          }
+        },
+        "argv_note": {
+          "type": "string",
+          "description": "Free-form explanation of why the argv is shaped the way it is. Lives at persistent.<top-level>, parallel to invoke.spec.argv_note."
+        },
+        "lifecycle_note": {
+          "type": "string",
+          "description": "Free-form operational notes: invocation examples, shutdown signals, startup wall times."
+        }
+      }
+    },
+    "user_input_entry": {
+      "type": "object",
+      "required": ["env", "hint"],
+      "additionalProperties": false,
+      "description": "v0.2 channel user-input declaration. Drives deploy-form field rendering. Used for both required_user_input[] and optional_user_input[]. `secret` is required by convention on required_user_input entries (runner treats missing secret as false) and usually omitted on optional_user_input entries — the schema keeps it optional to accommodate the hermes optional_user_input pattern where operational-only entries (TELEGRAM_HOME_CHANNEL) have no secret flag.",
+      "properties": {
+        "env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Env var name the agent reads."
+        },
+        "secret": {
+          "type": "boolean",
+          "description": "true → treat as BYOK secret: inject via --env-file, redact from logs, UI masks input. false (or absent) → operational config."
+        },
+        "hint": {
+          "type": "string",
+          "description": "User-facing short help for the deploy form."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "telegram_numeric_id",
+            "telegram_numeric_id_csv",
+            "telegram_numeric_id_or_username"
+          ],
+          "description": "Typed hint for client-side input validation."
+        },
+        "hint_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Clickable upstream link (e.g. https://t.me/userinfobot)."
+        },
+        "prefix_required": {
+          "type": "string",
+          "maxLength": 16,
+          "description": "Runner auto-prepends this literal prefix to the value BEFORE injection into the file-transport heredoc. openclaw-only today ('tg:')."
+        }
+      }
+    },
+    "channel_verified_cell": {
+      "type": "object",
+      "required": ["date", "bot_username", "allowed_user_id", "verdict", "category", "notes"],
+      "additionalProperties": false,
+      "description": "v0.2 channel-scoped empirical evidence cell.",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "YYYY-MM-DD."
+        },
+        "bot_username": {
+          "type": "string",
+          "description": "The bot the cell was run against."
+        },
+        "allowed_user_id": {
+          "type": "integer",
+          "description": "Numeric user id that round-tripped."
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["PASS", "FULL_PASS", "CHANNEL_PASS_LLM_FAIL"],
+          "description": "Channel verdict enum. Distinct from smoke.verified_cells[*].verdict ({PASS, FAIL})."
+        },
+        "category": {
+          "$ref": "#/$defs/channel_category"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Multi-line free-form observations."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier when the cell exercised a specific LLM binding. Absent for hermes (auxiliary auto-detects)."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Which upstream LLM provider the cell used (openrouter | anthropic | openai | ...)."
+        },
+        "env_var": {
+          "type": "string",
+          "description": "Which env var supplied the provider key (disambiguates multi-provider recipes)."
+        },
+        "boot_wall_s": {
+          "type": "integer",
+          "description": "Observed wall time from docker run -d to ready_log_regex match."
+        },
+        "first_reply_wall_s": {
+          "type": "integer",
+          "description": "Observed wall time from first user message to first agent reply."
+        },
+        "reply_sample": {
+          "type": "string",
+          "description": "Verbatim or lightly redacted sample of the first reply."
+        }
+      }
+    },
+    "channel_entry": {
+      "type": "object",
+      "required": [
+        "config_transport",
+        "required_user_input",
+        "ready_log_regex",
+        "response_routing",
+        "multi_user_model",
+        "verified_cells"
+      ],
+      "additionalProperties": false,
+      "description": "v0.2 channel wiring entry. Keyed by channel id (telegram, discord, slack, ...) in channels_block.",
+      "properties": {
+        "config_transport": {
+          "type": "string",
+          "enum": ["env", "file"],
+          "description": "env → runner injects channel env vars via --env-file. file → runner writes a config file inside the container (typically via sh-heredoc in persistent.spec.argv)."
+        },
+        "required_user_input": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user_input_entry" },
+          "description": "Ordered list. Drives deploy-form field order."
+        },
+        "optional_user_input": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user_input_entry" },
+          "description": "Optional extras; same shape as required_user_input."
+        },
+        "ready_log_regex": {
+          "type": "string",
+          "description": "Per-channel ready signal pattern. May differ from persistent.spec.ready_log_regex when one gateway hosts multiple channels."
+        },
+        "response_routing": {
+          "type": "string",
+          "enum": ["per_message_origin", "fixed_home_channel"],
+          "description": "per_message_origin = reply lands in sender's chat. fixed_home_channel = reply always lands in a preconfigured chat."
+        },
+        "multi_user_model": {
+          "type": "string",
+          "enum": [
+            "allowlist",
+            "pairing_then_allowlist",
+            "allowlist_or_dm_pairing"
+          ],
+          "description": "How the agent decides which users it will serve."
+        },
+        "multi_account_supported": {
+          "type": "boolean",
+          "description": "Defaults to false. true iff the recipe can run multiple bot accounts within one container."
+        },
+        "provider_compat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "supported": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "LLM provider IDs with end-to-end empirical PASS on this channel."
+            },
+            "deferred": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "LLM provider IDs the recipe explicitly disallows until the upstream bug clears."
+            }
+          },
+          "description": "Optional. openclaw-only today: {supported:[anthropic], deferred:[openrouter]}."
+        },
+        "known_quirks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "severity", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "severity": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "description": "Channel-scoped caveats. DISTINCT shape from smoke.known_quirks ({quirk,impact}); the two are intentionally NOT unified."
+        },
+        "pairing": {
+          "type": "object",
+          "required": ["approve_argv"],
+          "additionalProperties": false,
+          "properties": {
+            "approve_argv": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "docker exec argv the runner runs to approve a pairing code. $CODE is substituted with the operator-supplied value. Example: ['openclaw','pairing','approve','telegram','$CODE']."
+            }
+          },
+          "description": "v0.2 addition for multi_user_model=pairing_then_allowlist flows."
+        },
+        "verified_cells": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/channel_verified_cell" },
+          "description": "Empirical PASS evidence."
+        }
+      }
+    },
+    "channels_block": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/channel_entry" },
+      "propertyNames": {
+        "pattern": "^[a-z0-9_-]+$"
+      },
+      "description": "v0.2 channels block. Keys are channel ids (telegram, discord, slack, ...). Each value is a channel_entry."
     },
     "v0_1": {
       "type": "object",
@@ -615,6 +938,415 @@
               "build": {
                 "required": ["image"]
               }
+            }
+          }
+        }
+      ]
+    },
+    "v0_2": {
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "name",
+        "display_name",
+        "description",
+        "build",
+        "runtime",
+        "invoke",
+        "smoke",
+        "metadata"
+      ],
+      "additionalProperties": false,
+      "description": "v0.2 branch — structural clone of v0_1 with apiVersion const bumped and two optional additive top-level properties (persistent, channels). persistent and channels are optional even under v0.2: a recipe MAY declare apiVersion=ap.recipe/v0.2 without either block (e.g. to opt in to future v0.2-only additions landing after this phase).",
+      "properties": {
+        "apiVersion": {
+          "const": "ap.recipe/v0.2"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$",
+          "maxLength": 64,
+          "description": "Short slug used to tag the built image (ap-recipe-<name>) and as the default needle for response_contains_name."
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._/-]{1,255}$"
+            },
+            "ref_note": { "type": "string" },
+            "upstream_version": { "type": "string" }
+          }
+        },
+        "build": {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["upstream_dockerfile", "image_pull"]
+            },
+            "dockerfile": { "type": "string" },
+            "context": { "type": "string" },
+            "image": { "type": "string" },
+            "observed": { "type": "object" },
+            "notes": { "type": "string" },
+            "timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10800
+            },
+            "clone_timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1800
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "required": ["provider", "process_env", "volumes"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string" },
+            "process_env": {
+              "type": "object",
+              "required": ["api_key", "base_url", "model"],
+              "additionalProperties": false,
+              "properties": {
+                "api_key": { "type": "string" },
+                "api_key_fallback": { "type": ["string", "null"] },
+                "base_url": { "type": ["string", "null"] },
+                "model": { "type": ["string", "null"] }
+              }
+            },
+            "volumes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "host", "container"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string" },
+                  "host": { "type": "string" },
+                  "container": { "type": "string" },
+                  "mode": { "type": "string", "enum": ["rw", "ro"] },
+                  "ephemeral": { "type": "boolean" },
+                  "owner_uid": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "notes": { "type": "string" }
+                }
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "rule", "reason"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "type": "string" },
+                  "rule": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "invoke": {
+          "type": "object",
+          "required": ["mode", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["cli-passthrough"]
+            },
+            "spec": {
+              "type": "object",
+              "required": ["argv"],
+              "additionalProperties": false,
+              "properties": {
+                "entrypoint": { "type": "string" },
+                "argv": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 1
+                },
+                "argv_note": { "type": "string" },
+                "stdout_filter": {
+                  "type": "object",
+                  "required": ["engine", "program"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "engine": { "type": "string", "enum": ["awk"] },
+                    "program": { "type": "string" },
+                    "notes": { "type": "string" }
+                  }
+                },
+                "session_id_capture": {
+                  "type": "object",
+                  "required": ["engine"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "engine": { "type": "string", "enum": ["awk", "none"] },
+                    "program": { "type": "string" },
+                    "notes": { "type": "string" }
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "smoke": {
+          "type": "object",
+          "required": ["prompt", "pass_if", "verified_cells"],
+          "additionalProperties": false,
+          "properties": {
+            "prompt": { "type": "string" },
+            "pass_if": {
+              "type": "string",
+              "enum": [
+                "response_contains_name",
+                "response_contains_string",
+                "response_regex",
+                "response_not_contains",
+                "exit_zero"
+              ]
+            },
+            "needle": { "type": "string" },
+            "regex": { "type": "string" },
+            "case_insensitive": { "type": "boolean" },
+            "timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "verified_cells": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["model", "verdict", "category", "detail"],
+                "additionalProperties": false,
+                "properties": {
+                  "model": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
+                  "wall_time_s": { "type": "number" },
+                  "notes": { "type": "string" },
+                  "category": { "$ref": "#/$defs/category" },
+                  "detail": { "type": "string" },
+                  "annotations": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            },
+            "known_incompatible_cells": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["model", "verdict", "category", "detail"],
+                "additionalProperties": false,
+                "properties": {
+                  "model": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
+                  "wall_time_s": { "type": "number" },
+                  "notes": { "type": "string" },
+                  "category": { "$ref": "#/$defs/category" },
+                  "detail": { "type": "string" },
+                  "annotations": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            },
+            "known_weak_probes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["prompt", "problem"],
+                "additionalProperties": false,
+                "properties": {
+                  "prompt": { "type": "string" },
+                  "problem": { "type": "string" }
+                }
+              }
+            },
+            "known_quirks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["quirk", "impact"],
+                "additionalProperties": false,
+                "properties": {
+                  "quirk": { "type": "string" },
+                  "impact": { "type": "string" }
+                }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["recon_date", "recon_by", "source_citations"],
+          "additionalProperties": false,
+          "properties": {
+            "recon_date": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "recon_by": { "type": "string" },
+            "source_citations": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1
+            },
+            "license": { "type": "string" },
+            "maintainer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "url": { "type": "string", "format": "uri" }
+              }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "persistent": {
+          "$ref": "#/$defs/persistent_block"
+        },
+        "channels": {
+          "$ref": "#/$defs/channels_block"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_contains_string" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "smoke": { "required": ["needle"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_not_contains" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "smoke": { "required": ["needle"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["pass_if"],
+                "properties": {
+                  "pass_if": { "const": "response_regex" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "smoke": { "required": ["regex"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["build"],
+            "properties": {
+              "build": {
+                "required": ["mode"],
+                "properties": {
+                  "mode": { "const": "upstream_dockerfile" }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["source"],
+            "properties": {
+              "source": { "required": ["repo", "ref"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["build"],
+            "properties": {
+              "build": {
+                "required": ["mode"],
+                "properties": {
+                  "mode": { "const": "image_pull" }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "build": { "required": ["image"] }
             }
           }
         }

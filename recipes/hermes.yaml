@@ -1,4 +1,4 @@
-apiVersion: ap.recipe/v0.1
+apiVersion: ap.recipe/v0.2
 name: hermes
 display_name: Hermes Agent
 description: |

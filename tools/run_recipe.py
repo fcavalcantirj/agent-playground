@@ -124,6 +124,12 @@ def lint_recipe(recipe: dict, schema: dict | None = None) -> list[str]:
     Normalizes the recipe through JSON round-trip before validation so that
     ruamel.yaml types (CommentedMap, datetime.date, etc.) are converted to
     plain Python dicts/strings that jsonschema can type-check correctly.
+
+    WR-01 (v0.2): the root is now `oneOf: [v0_1, v0_2]` so top-level errors
+    arrive as an opaque 'is not valid under any of the given schemas' message.
+    The deep error paths live under `e.context` — the list of sub-errors from
+    each `oneOf` branch. We walk `context` recursively to surface the deepest
+    path, preserving the pre-v0.2 error message shape (e.g. 'source.ref: ...').
     """
     if schema is None:
         schema = _load_schema()
@@ -139,11 +145,87 @@ def lint_recipe(recipe: dict, schema: dict | None = None) -> list[str]:
         validator.iter_errors(normalized),
         key=lambda e: list(e.absolute_path),
     )
-    messages = []
+    messages: list[str] = []
     for e in errors:
-        path = ".".join(str(p) for p in e.absolute_path) or "(root)"
-        messages.append(f"{path}: {e.message}")
+        if e.validator == "oneOf" and e.context:
+            # Drill into the branch sub-errors. Pick the v0_N branch that the
+            # recipe was trying to be (matched apiVersion const) so the user
+            # sees errors scoped to the right version. If apiVersion can't be
+            # resolved, surface all sub-errors — redundant but strictly more
+            # informative than the opaque top-level message.
+            api_version = normalized.get("apiVersion") if isinstance(normalized, dict) else None
+            branch_errors = _select_oneof_branch_errors(e.context, api_version)
+            for sub in sorted(branch_errors, key=lambda x: list(x.absolute_path)):
+                sub_path = ".".join(str(p) for p in sub.absolute_path) or "(root)"
+                messages.append(f"{sub_path}: {sub.message}")
+            if not branch_errors:
+                # Fallback: emit the top-level oneOf message so the consumer at
+                # least knows something failed.
+                path = ".".join(str(p) for p in e.absolute_path) or "(root)"
+                messages.append(f"{path}: {e.message}")
+        else:
+            path = ".".join(str(p) for p in e.absolute_path) or "(root)"
+            messages.append(f"{path}: {e.message}")
     return messages
+
+
+def _select_oneof_branch_errors(context_errors, api_version):
+    """Pick the oneOf sub-errors that belong to the branch the recipe was
+    trying to match (determined by its apiVersion const). Returns a flat list
+    of jsonschema ValidationError objects.
+
+    Filters out:
+    - apiVersion-const sub-errors (signal that this is the wrong branch, not
+      a substantive content error).
+    - Branch-wide 'additionalProperties' collapses for the wrong branch —
+      these are noise when the apiVersion const already identifies the right
+      branch (a v0.1 recipe hitting the v0.2 branch produces an extra
+      'additionalProperties are not allowed' at root that duplicates v0.1-
+      branch's own per-field errors).
+
+    Deduplicates by (absolute_path, message) — oneOf branches often report
+    the same per-field required/type violation once per branch; the user only
+    needs to see each real problem once.
+    """
+    # Pick the branch index whose apiVersion const matches the recipe's
+    # declared apiVersion, so we can prefer that branch's sub-errors.
+    target_branch: int | None = None
+    if isinstance(api_version, str):
+        for sub in context_errors:
+            spath = list(sub.absolute_schema_path)
+            if (
+                len(spath) >= 3
+                and spath[-1] == "const"
+                and "apiVersion" in spath
+                and len(spath) >= 2
+                and isinstance(spath[1], int)
+            ):
+                # spath looks like ['oneOf', <branch_idx>, 'properties',
+                # 'apiVersion', 'const']. The branch whose const DID NOT match
+                # is the "wrong" branch for this apiVersion; we want the OTHER.
+                wrong_branch = spath[1]
+                # If there are exactly 2 branches (v0_1, v0_2), the "right"
+                # branch is 1 - wrong_branch.
+                target_branch = 1 - wrong_branch
+
+    substantive: list = []
+    seen: set[tuple] = set()
+    for sub in context_errors:
+        spath = list(sub.absolute_schema_path)
+        # Drop apiVersion-const mismatch noise.
+        if len(spath) >= 3 and spath[-1] == "const" and "apiVersion" in spath:
+            continue
+        # Prefer the target branch's errors when resolvable. If target_branch
+        # is None, keep everything.
+        if target_branch is not None and len(spath) >= 2 and isinstance(spath[1], int):
+            if spath[1] != target_branch:
+                continue
+        key = (tuple(sub.absolute_path), sub.message)
+        if key in seen:
+            continue
+        seen.add(key)
+        substantive.append(sub)
+    return substantive
 
 
 # ---------- lint CLI helpers ----------
