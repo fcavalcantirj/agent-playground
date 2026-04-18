@@ -1,4 +1,4 @@
-# Agent Playground Recipe Schema — `ap.recipe/v0.1.1`
+# Agent Playground Recipe Schema — `ap.recipe/v0.2`
 
 Canonical specification for the recipe format consumed by `tools/run_recipe.py`.
 
@@ -10,14 +10,16 @@ This document is the contract between:
 
 If a field is in use by a committed recipe in `recipes/` or a verb is implemented by the runner, it is documented here. If it is not, it does not exist.
 
-> **Version policy.** `ap.recipe/v0.1.1` is additive over `ap.recipe/v0.1`: every field in a valid v0.1 recipe remains valid, and new recipe authors see tightened bounds (ref allowlist, name length, timeout maxima), an `annotations` escape valve on every section, optional `metadata.license` and `metadata.maintainer`, and a `$defs`-based versioning seam (§10.1). **The JSON Schema at `tools/ap.recipe.schema.json` is authoritative.** When this markdown and the schema disagree, the schema wins and this document is the bug.
+> **Version policy.** `ap.recipe/v0.2` is **additive over `ap.recipe/v0.1.1`**: every field in a valid v0.1/v0.1.1 recipe remains valid unchanged; recipes opt in to the new blocks by declaring `apiVersion: ap.recipe/v0.2` and appending the two new top-level sections — §10.2 `persistent:` and §11 `channels:` — below the existing `metadata:` block. No v0.1 content is removed. The JSON Schema at `tools/ap.recipe.schema.json` now carries the `oneOf: [{$ref: v0_1}, {$ref: v0_2}]` discriminator that was reserved in v0.1.1 §10.1. **The JSON Schema at `tools/ap.recipe.schema.json` is authoritative.** When this markdown and the schema disagree, the schema wins and this document is the bug.
+>
+> `ap.recipe/v0.1.1` additions over `ap.recipe/v0.1` are still described below: tightened bounds (ref allowlist, name length, timeout maxima), an `annotations` escape valve on every section, optional `metadata.license` and `metadata.maintainer`, and a `$defs`-based versioning seam (§10.1).
 
 ---
 
 ## File shape at a glance
 
 ```yaml
-apiVersion: ap.recipe/v0.1
+apiVersion: ap.recipe/v0.1       # or ap.recipe/v0.2
 name: <short-id>
 display_name: <Human Name>
 description: |
@@ -29,11 +31,16 @@ runtime:  { provider, process_env, volumes, warnings? }
 invoke:   { mode, spec }
 smoke:    { prompt, pass_if, ..., verified_cells[], known_*[] }
 metadata: { recon_date, recon_by, source_citations[], license?, maintainer? }
+
+# v0.2 only — optional additive blocks describing persistent daemon mode
+# and messaging channel wiring. See §10.2 and §11.
+persistent: { mode, spec: { argv, ready_log_regex, health_check, graceful_shutdown_s, ... } }
+channels:   { <channel_id>: { config_transport, required_user_input[], ..., verified_cells[] }, ... }
 ```
 
-All top-level keys are required except where noted.
+All top-level keys up to `metadata` are required except where noted. `persistent:` and `channels:` are v0.2-only and optional even under v0.2.
 
-Each major section (`build`, `runtime`, `invoke`, `smoke`, `metadata`) may also carry an optional `annotations: { ... }` escape-valve block — see §11.
+Each major section (`build`, `runtime`, `invoke`, `smoke`, `metadata`) may also carry an optional `annotations: { ... }` escape-valve block — see §11 (annotations escape valve).
 
 ---
 
@@ -41,7 +48,7 @@ Each major section (`build`, `runtime`, `invoke`, `smoke`, `metadata`) may also 
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `apiVersion` | string | yes | Must be exactly `ap.recipe/v0.1`. The JSON Schema uses a `$defs.v0_1` discriminator branch to enforce this (see §10.1 "Versioning seam"). Older `ap.recipe/v0` recipes are accepted by the runner but treated as v0.1-compatible. |
+| `apiVersion` | string | yes | Must be exactly `ap.recipe/v0.1` OR `ap.recipe/v0.2`. The JSON Schema root now uses `oneOf: [{$ref: v0_1}, {$ref: v0_2}]` — declarations dispatch to the matching `$defs.v0_N` branch via the per-branch `apiVersion: { const: "ap.recipe/v0.N" }` constraint (see §10.1 "Versioning seam"). Older `ap.recipe/v0` recipes are accepted by the runner but treated as v0.1-compatible. Recipes that declare `ap.recipe/v0.2` MAY additionally carry `persistent:` (§10.2) and `channels:` (§11). |
 | `name` | string | yes | Short slug. Lowercase, `[a-z0-9_-]`. Used to tag the built image (`ap-recipe-<name>`) and as the default needle for `response_contains_name`. Maximum length 64 characters; used as the image-tag suffix (`ap-recipe-<name>`) where the Docker tag limit of 128 leaves headroom for the `ap-recipe-` prefix (D-05). |
 | `display_name` | string | yes | Human-readable name shown in logs and future UI. |
 | `description` | string (multi-line) | yes | What the agent is and which invocation path this recipe covers. Free-form. |
@@ -278,17 +285,17 @@ Built/pulled images are retagged `ap-recipe-<name>` and retained across runs. Su
 
 ---
 
-## 9. Compatibility with `ap.recipe/v0`
+## 9. Compatibility with `ap.recipe/v0` / `v0.1` / `v0.1.1`
 
-All 5 recipes committed at the v0.1 freeze (`hermes`, `openclaw`, `picoclaw`, `nullclaw`, `nanobot`) declare `apiVersion: ap.recipe/v0.1`. v0.1.1 is additive over v0.1: every v0.1 recipe remains a valid v0.1.1 recipe. The runner accepts both `v0` and `v0.1`/`v0.1.1` and applies identical validation — fields added in v0.1.1 (bounds, `annotations`, optional `license`/`maintainer`) are all optional, so an unmodified v0 or v0.1 recipe sweeps green against the v0.1.1 schema. This is the regression gate enforced by `tools/tests/test_schema_selfcheck.py` (Phase 18 D-10).
+All 5 recipes committed at the v0.1 freeze (`hermes`, `openclaw`, `picoclaw`, `nullclaw`, `nanobot`) originally declared `apiVersion: ap.recipe/v0.1`. v0.1.1 is additive over v0.1, and v0.2 is additive over v0.1.1. The runner accepts `v0`, `v0.1`/`v0.1.1` (under the `v0_1` branch), and `v0.2` (under the `v0_2` branch). A recipe without `persistent:` / `channels:` blocks remains a valid v0.1 recipe; opting into those blocks requires declaring `apiVersion: ap.recipe/v0.2` so the oneOf root dispatches to the v0_2 branch. This is the regression gate enforced by `tools/tests/test_schema_selfcheck.py` (Phase 18 D-10).
 
-New recipes should declare `apiVersion: ap.recipe/v0.1`. The minor-version bump to v0.1.1 reflects schema maturation, not a wire-format change.
+New recipes that only need the one-shot smoke path SHOULD declare `apiVersion: ap.recipe/v0.1`. Recipes shipping a messaging gateway (persistent + channel wiring) MUST declare `apiVersion: ap.recipe/v0.2`. The minor-version bumps reflect schema maturation; v0.2 is the first wire-format-visible change (new top-level keys).
 
 ---
 
-## 10. Out of scope for v0.1.1
+## 10. Out of scope for v0.2
 
-Deferred to a future `ap.recipe/v0.2` or later:
+Deferred to `ap.recipe/v0.3` or later:
 
 - `runtime.external_services[]` — sidecar containers a recipe depends on (needed for NanoClaw's OneCLI Agent Vault pattern).
 - `setup.interactive: true` — AI-native fork-and-customize install flow.
@@ -311,13 +318,120 @@ If a new agent needs one of these, it is **blocked by format** until the relevan
 
 ## 10.1 Versioning seam
 
-> The JSON Schema's root uses `oneOf: [ { "$ref": "#/$defs/v0_1" } ]` as a discriminator branch keyed on `apiVersion`. The full v0.1/v0.1.1 body lives under `$defs.v0_1`. Adding `ap.recipe/v0.2` will append a second `$defs.v0_2` branch and extend the `oneOf` array — a purely additive schema change that does not break v0.1 recipes. Recipes declaring `apiVersion: ap.recipe/v0.1` continue to match the `v0_1` branch exactly because each branch body carries its own `apiVersion: { "const": "ap.recipe/v0.N" }` constraint. This is the Kubernetes CRD versioning idiom applied to recipes.
+> The JSON Schema's root uses `oneOf: [ { "$ref": "#/$defs/v0_1" }, { "$ref": "#/$defs/v0_2" } ]` as a discriminator branch keyed on `apiVersion`. Each branch body carries its own `apiVersion: { "const": "ap.recipe/v0.N" }` constraint so a recipe declaring `apiVersion: ap.recipe/v0.1` matches the `v0_1` branch and a recipe declaring `apiVersion: ap.recipe/v0.2` matches the `v0_2` branch exactly — no branch-cross collisions. The v0.2 branch is a structural clone of v0.1 with two additive optional top-level properties (`persistent`, `channels`). This is the Kubernetes CRD versioning idiom applied to recipes.
 >
-> The 11-value category enum (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`, `STOCHASTIC` reserved, `SKIP` reserved) lives once at `$defs.category` and is referenced via `$ref` from both `verified_cells[].category` and `known_incompatible_cells[].category` (D-02). Adding a category is a one-line edit in a single place.
+> Future `ap.recipe/v0.3` (etc.) extends the same pattern — append a `v0_3` branch, extend the root `oneOf` array. Adding a branch is a purely additive schema change.
+>
+> The 11-value category enum (`PASS`, `ASSERT_FAIL`, `INVOKE_FAIL`, `BUILD_FAIL`, `PULL_FAIL`, `CLONE_FAIL`, `TIMEOUT`, `LINT_FAIL`, `INFRA_FAIL`, `STOCHASTIC` reserved, `SKIP` reserved) lives once at `$defs.category` and is referenced via `$ref` from both `verified_cells[].category` and `known_incompatible_cells[].category` (D-02). Adding a category is a one-line edit in a single place. v0.2 introduces a distinct `$defs.channel_category` enum — the existing category enum plus `BLOCKED_UPSTREAM` — scoped to channel `verified_cells[].category` only so the `BLOCKED_UPSTREAM` value does not leak into smoke-level v0.1 semantic space (see §11).
 
 ---
 
-## 11. Annotations escape valve
+## 10.2 `persistent:` — daemon/gateway mode (v0.2)
+
+> **v0.2 only.** Declares the long-running in-container daemon that boots the agent's messaging gateway. Parallel to (not a replacement for) `invoke:` — `invoke:` is the one-shot smoke path, `persistent:` is the live-session path driven by `channels:` (§11). A recipe MAY declare both; the runner selects one at deploy time via `--mode one-shot | persistent`.
+
+### 10.2.1 `persistent.mode`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `persistent.mode` | enum | yes | `gateway-daemon` is the only mode implemented in v0.2. Future modes (`http-server`, `worker-pool`) are reserved. |
+
+### 10.2.2 `persistent.spec`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `spec.argv` | list of strings | yes | Ordered argv passed after the container entrypoint. Same `$MODEL`/`$VAR` substitution rules as `invoke.spec.argv` (§5.2), MINUS `$PROMPT` — persistent mode receives prompts via channel events, not argv. |
+| `spec.ready_log_regex` | string | yes | Python regex matched against container stderr+stdout by the runner after `docker run -d`. When the pattern matches, the container is considered ready. Example: hermes uses `"gateway\\.run: ✓ (\\w+) connected"`; picoclaw uses `"Telegram bot connected username="`. |
+| `spec.health_check` | object | yes | One of two kinds — see §10.2.3. |
+| `spec.graceful_shutdown_s` | int | yes | SIGTERM → `docker wait` timeout before `docker rm -f`. Range `[1, 600]` seconds. Recipes seen use 5-15s. |
+| `spec.entrypoint` | string | no | `docker run --entrypoint` override for persistent mode, same semantics as `invoke.spec.entrypoint` (§5.2). hermes has none; picoclaw, nullclaw, nanobot, openclaw all use `sh` to chain config-write + exec. |
+| `spec.user_override` | string | no | Docker `--user` override. Required when the image has an ownership bug that blocks the non-root UID from writing to a declared `runtime.volumes[*]` mount. nullclaw is the only recipe that declares `user_override: root` today. Charset: shell-safe identifier (`^[a-zA-Z0-9_:-]+$`). |
+| `spec.sigterm_handled` | bool | no | Documentation flag — `true` asserts the agent handles SIGTERM gracefully within `graceful_shutdown_s`. If absent the runner treats as unspecified and still applies the graceful timeout + force-remove fallback. Every v0.2-draft recipe sets `true`. |
+| `spec.argv_note` | string | no | Free-form explanation of why the argv is shaped the way it is (parallel to `invoke.spec.argv_note`). Essential for sh-heredoc config writers. |
+| `spec.lifecycle_note` | string | no | Free-form operational notes: `docker run -d` invocation examples, shutdown signal semantics, known-good startup wall times. |
+
+### 10.2.3 `persistent.spec.health_check`
+
+The health check is a strict `oneOf` union keyed on `kind`:
+
+| Kind | Extra fields | Runner semantics |
+|---|---|---|
+| `process_alive` | — | `docker inspect <cid>` asserts `State.Running == true`. Used by hermes + nullclaw. |
+| `http` | `port: int [1, 65535]`, `path: string (must start with "/")` | HTTP GET to `http://<container>:<port><path>` after ready-log match; first 2xx is a pass. Used by picoclaw (`18790/health`), nanobot (`18790/health`), openclaw (`18789/`). **Note** (per empirical spike-11): picoclaw's `/health` endpoint returns 200 when Telegram is connected; `/ready` returns 503 even when Telegram is connected, so `/health` is the correct path. |
+
+`additionalProperties: false` inside each `oneOf` branch — `kind: process_alive` recipes MUST NOT include `port` or `path`.
+
+---
+
+## 11. `channels:` — messaging platform wiring (v0.2)
+
+> **v0.2 only.** Describes how a persistent-mode agent connects to inbound/outbound messaging platforms (Telegram, Discord, Slack, WhatsApp, Matrix, Signal, …). Every entry documents which env vars / config files the channel wants, what the ready signal looks like, how replies are routed, and which model × bot combinations have been empirically verified to complete a round-trip.
+
+### 11.1 Shape
+
+`channels:` is a dict keyed by channel id (`^[a-z0-9_-]+$`). `telegram` is the only channel shipped and battle-proven in v0.2; other ids are reserved for later expansion.
+
+Each channel entry is a strict object (`additionalProperties: false`):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `config_transport` | enum | yes | `env` — runner injects the channel's required env vars via `docker run --env-file`. `file` — runner writes a config file inside the container at startup (typical pattern: sh-chained heredoc in `persistent.spec.argv`). |
+| `required_user_input` | list of `user_input_entry` | yes | Ordered list. Drives deploy-form field order. Empty list NOT allowed — if no user input is required, the channel probably doesn't need to live here. See §11.2. |
+| `optional_user_input` | list of `user_input_entry` | no | Optional extras the user MAY provide. Same shape as `required_user_input`. |
+| `ready_log_regex` | string | yes | Per-channel ready signal pattern. May differ from `persistent.spec.ready_log_regex` when multiple channels share one gateway process. |
+| `response_routing` | enum | yes | `per_message_origin` (reply lands in the chat the sender messaged from — telegram, discord DM, slack IM) or `fixed_home_channel` (reply always lands in a preconfigured chat — useful for proactive cron/alert agents). |
+| `multi_user_model` | enum | yes | `allowlist` (static list of allowed_user IDs baked into config at deploy time), `pairing_then_allowlist` (users DM the bot, get a one-time code, operator approves via an exec to grant allowlist membership), `allowlist_or_dm_pairing` (hermes' both-paths variant). |
+| `multi_account_supported` | bool | no | Defaults to `false`. `true` iff the recipe can run multiple bot accounts within one container. Today only nullclaw + nanobot + openclaw declare `true`. |
+| `provider_compat` | object | no | `{supported: [...], deferred: [...]}` listing LLM-provider IDs known to work/not-work for this channel path. Openclaw-only today: `{supported: [anthropic], deferred: [openrouter]}` because of the isolated openrouter-provider-plugin silent-fail bug (see 22-CONTEXT.md §3). When present, `supported` lists providers with end-to-end empirical PASS; `deferred` lists providers the recipe explicitly disallows until the upstream bug clears. |
+| `known_quirks` | list of `{id, severity, description}` | no | Channel-scoped caveats the runner or the deploy UI must honor. Distinct shape from `smoke.known_quirks[]` (which uses `{quirk, impact}`) — the two are NOT unified. |
+| `pairing` | object `{approve_argv: [string]}` | no | Introduced for openclaw. When `multi_user_model` is `pairing_then_allowlist`, `approve_argv` is the exec-argv the runner runs via `docker exec <cid>` to approve a pairing code (the runner substitutes `$CODE` with the operator-supplied value). Example: `["openclaw", "pairing", "approve", "telegram", "$CODE"]`. |
+| `verified_cells` | list of `channel_verified_cell` | yes | Empirical PASS evidence. Non-empty in battle-proven recipes. See §11.3. |
+
+### 11.2 `required_user_input[*]` shape
+
+Each entry:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `env` | string | yes | Env var name the agent reads. Pattern `^[A-Z][A-Z0-9_]*$`. |
+| `secret` | bool | yes | Gates UI masking + redaction semantics. `true` → treat like `runtime.process_env.api_key`: inject via `--env-file`, redact from logs. `false` → non-secret operational config (allowlist IDs, channel names). |
+| `hint` | string | yes | User-facing short help for the deploy form. Explains WHERE to get the value (usually a @BotFather-style upstream flow). |
+| `kind` | enum | no | Typed hint for input validation on the deploy form: `telegram_numeric_id`, `telegram_numeric_id_csv`, `telegram_numeric_id_or_username`. Future channels add their own values. |
+| `hint_url` | string (URI) | no | Clickable upstream link (e.g. `https://t.me/userinfobot`). When present the UI renders `hint` with the URL as a link. |
+| `prefix_required` | string (≤16 chars) | no | Runner auto-prepends this literal prefix to the value BEFORE injection into the `file`-transport heredoc. openclaw-only today (`"tg:"`) — openclaw's `channels.telegram.allowFrom` expects `["tg:<numeric-id>"]`, not the bare numeric id the user types. |
+
+`additionalProperties: false` inside the entry.
+
+### 11.3 `verified_cells[*]` shape (channel-scoped)
+
+Parallel to `smoke.verified_cells[]` (§6.3) but with **channel-specific enums**:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `date` | string `YYYY-MM-DD` | yes | When the cell was exercised. |
+| `bot_username` | string | yes | The bot the cell was run against. Usernames begin with `@` by telegram convention. |
+| `allowed_user_id` | int | yes | The numeric user id that successfully round-tripped. |
+| `verdict` | enum | yes | `PASS` (basic round-trip OK), `FULL_PASS` (end-to-end including pairing + reply), `CHANNEL_PASS_LLM_FAIL` (channel wiring proven but the LLM layer silently failed — reserved for upstream-bug documentation). This enum is **distinct** from `smoke.verified_cells[].verdict` (which is `{PASS, FAIL}`). |
+| `category` | enum | yes | `$ref: channel_category` = the 11-value smoke category enum plus `BLOCKED_UPSTREAM`. `BLOCKED_UPSTREAM` is channel-specific and MUST NOT appear in smoke-level cells. |
+| `notes` | string | yes | Multi-line free-form observations (bot state, approve flow specifics, model choice reasoning). |
+| `model` | string | no | Model identifier when the cell exercised a specific LLM binding. Absent for hermes (auxiliary auto-detects its model). |
+| `provider` | enum | no | `openrouter | anthropic | openai | ...` — which upstream provider the LLM call went to. openclaw uses this field to distinguish its anthropic-direct PASS from its openrouter-deferred BLOCKED_UPSTREAM. |
+| `env_var` | string | no | Which env var the cell used for the provider key (disambiguates when a recipe supports multiple). |
+| `boot_wall_s` | int | no | Observed wall time from `docker run -d` to `ready_log_regex` match. |
+| `first_reply_wall_s` | int | no | Observed wall time from first user message to first agent reply. |
+| `reply_sample` | string | no | Verbatim or lightly redacted sample of the agent's first reply, for reviewer sanity. |
+
+`additionalProperties: false` inside the cell.
+
+### 11.4 Cross-references
+
+- Runner: `tools/run_recipe.py --mode persistent` (Phase 22a plan 22-02) consumes `persistent.spec` + `channels.<id>`; the current runner only consumes `invoke:` + `smoke:`.
+- API surface: `GET /v1/recipes` exposes `channels_supported` + `persistent_mode_available` + `channel_provider_compat` on every recipe summary; the full channel entry is in `GET /v1/recipes/{name}` (opaque dict passthrough).
+- BYOK contract (golden rule #2): every `required_user_input[*]` with `secret: true` is BYOK — value passes through the request body only, never stored server-side.
+
+---
+
+## 12. Annotations escape valve
 
 > Every major section — `build`, `runtime`, `invoke`, `smoke`, `metadata` — and every item in `verified_cells[]` and `known_incompatible_cells[]` may carry an optional `annotations: { ... }` object. Keys inside `annotations` are open (`additionalProperties: true`); keys at any other level remain strictly enumerated (`additionalProperties: false`). This pattern matches OpenAPI's `x-*` extensions and Kubernetes' `annotations` field: a strict known shape with an explicit extension point.
 >
