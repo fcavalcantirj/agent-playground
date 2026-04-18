@@ -18,6 +18,13 @@ export class ApiError extends Error {
   }
 }
 
+// Per-call options common to every verb. Extend here when a new cross-cutting
+// option is needed (e.g. AbortSignal for timeouts) so apiGet/apiPost/apiDelete
+// all pick it up uniformly.
+export type ApiCallOptions = {
+  signal?: AbortSignal;
+};
+
 async function request<T>(
   path: string,
   init: RequestInit = {}
@@ -44,19 +51,24 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
-export function apiGet<T = unknown>(path: string): Promise<T> {
-  return request<T>(path, { method: "GET" });
+export function apiGet<T = unknown>(
+  path: string,
+  opts?: ApiCallOptions,
+): Promise<T> {
+  return request<T>(path, { method: "GET", signal: opts?.signal });
 }
 
 export function apiPost<T = unknown>(
   path: string,
   body?: unknown,
   headers?: HeadersInit,
+  opts?: ApiCallOptions,
 ): Promise<T> {
   return request<T>(path, {
     method: "POST",
     body: body !== undefined ? JSON.stringify(body) : undefined,
     headers,
+    signal: opts?.signal,
   });
 }
 
