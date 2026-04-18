@@ -1519,6 +1519,46 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_false",
         help="In --all-cells mode, do not modify the recipe file.",
     )
+    # Phase 22 persistent-mode flags (manual testing seam; API runner_bridge
+    # is the primary interface).
+    p.add_argument(
+        "--mode",
+        choices=["smoke", "persistent"],
+        default="smoke",
+        help="smoke runs the one-shot; persistent spawns a long-lived container.",
+    )
+    p.add_argument(
+        "--channel",
+        default="telegram",
+        help="channel id for --mode persistent (default: telegram).",
+    )
+    p.add_argument(
+        "--channel-creds-env-prefix",
+        default="AP_CHANNEL_",
+        help=(
+            "In --mode persistent, channel creds are read from env vars matching"
+            " this prefix (e.g. AP_CHANNEL_TELEGRAM_BOT_TOKEN -> TELEGRAM_BOT_TOKEN)."
+            " Keeps shell history free of secrets and avoids fragile quoting."
+        ),
+    )
+    p.add_argument(
+        "--run-id",
+        default=None,
+        help="Container name suffix (default: fresh uuid4 hex). Container name"
+             " becomes ap-agent-<run_id>.",
+    )
+    p.add_argument(
+        "--boot-timeout-s",
+        type=int,
+        default=180,
+        help="Seconds to wait for persistent.spec.ready_log_regex to match.",
+    )
+    p.add_argument(
+        "--stop",
+        metavar="CONTAINER_ID",
+        default=None,
+        help="Stop a persistent container gracefully (SIGTERM -> wait -> rm -f).",
+    )
     return p.parse_args(argv)
 
 
@@ -1532,6 +1572,19 @@ def main(argv: list[str] | None = None) -> int:
         if not recipes_dir.exists():
             recipes_dir = Path.cwd() / "recipes"
         return _lint_all_recipes(recipes_dir)
+
+    # Step 2.5: --stop short-circuit (Phase 22 persistent mode teardown).
+    # Does not need a recipe — the container_id is self-describing. We pass
+    # graceful_shutdown_s=10 as a safe upper bound; the runner_bridge caller
+    # in Plan 22-04 threads the recipe's actual value.
+    if args.stop:
+        infra = preflight_docker()
+        if infra is not None:
+            emit_verdict_line(infra, recipe="(pre-flight)", model="", wall_s=0.0)
+            return 1
+        verdict, details = stop_persistent(args.stop, graceful_shutdown_s=10)
+        print(json.dumps({"verdict": verdict.verdict, **details}, indent=2))
+        return 0 if verdict.verdict == "PASS" else 1
 
     # Step 3: recipe path validation
     if args.recipe is None:
@@ -1606,6 +1659,74 @@ def main(argv: list[str] | None = None) -> int:
     if image_verdict is not None:
         emit_verdict_line(image_verdict, recipe=name, model="", wall_s=0.0)
         return 1
+
+    # Step 8.5: --mode persistent dispatch (Phase 22 manual-testing seam).
+    # The API runner_bridge (Plan 22-04) is the primary caller of
+    # run_cell_persistent; this path lets developers exercise the primitive
+    # from a shell without the API in the loop.
+    if args.mode == "persistent":
+        if args.all_cells:
+            sys.stderr.write(
+                "--all-cells is incompatible with --mode persistent "
+                "(persistent is not a cell sweep)\n"
+            )
+            return 2
+        channel_id = args.channel
+        channel_block = (recipe.get("channels") or {}).get(channel_id) or {}
+        if not channel_block:
+            sys.stderr.write(
+                f"recipe {name} has no channels.{channel_id} block\n"
+            )
+            return 2
+        required = channel_block.get("required_user_input") or []
+        optional = channel_block.get("optional_user_input") or []
+        creds: dict[str, str] = {}
+        for entry in required + optional:
+            env_key = f"{args.channel_creds_env_prefix}{entry['env']}"
+            val = os.environ.get(env_key)
+            if val:
+                creds[entry["env"]] = val
+        missing = [e["env"] for e in required if e["env"] not in creds]
+        if missing:
+            sys.stderr.write(
+                f"missing required channel creds (env "
+                f"{args.channel_creds_env_prefix}*): {missing}\n"
+            )
+            return 2
+        # Model: CLI positional arg wins; else first PASS cell.
+        model = args.model or first_pass_cell_model(recipe)
+        if model is None:
+            sys.stderr.write(
+                "ERROR: no model on CLI and no PASS verified_cell to fall back on\n"
+            )
+            return 2
+        run_id = args.run_id or uuid.uuid4().hex[:12]
+        log(f"\n--- persistent: {name} × {model} × {channel_id} "
+            f"(run_id={run_id}) ---", quiet=quiet)
+        verdict_obj, details = run_cell_persistent(
+            recipe,
+            image_tag=image_tag,
+            model=model,
+            api_key_var=api_key_var,
+            api_key_val=api_key_val,
+            channel_id=channel_id,
+            channel_creds=creds,
+            run_id=run_id,
+            quiet=quiet,
+            boot_timeout_s=args.boot_timeout_s,
+        )
+        out = {
+            "verdict": verdict_obj.verdict,
+            "category": verdict_obj.category.value,
+            "detail": verdict_obj.detail,
+            **details,
+        }
+        print(json.dumps(out, indent=2))
+        if verdict_obj.verdict != "PASS":
+            return 1
+        print(f"\ncontainer is running. To stop it:")
+        print(f"  python tools/run_recipe.py --stop {details['container_id']}")
+        return 0
 
     # Step 9: cell loop — run_cell returns (Verdict, dict); honor --global-timeout
     # Determine the (model, expected_verdict) list.
