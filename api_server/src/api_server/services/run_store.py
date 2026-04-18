@@ -37,6 +37,8 @@ __all__ = [
     "mark_agent_container_stopped",
     "fetch_agent_container",
     "fetch_running_container_for_agent",
+    # Phase 22-05: agent_instance lookup by (agent_id, user_id).
+    "fetch_agent_instance",
 ]
 
 
@@ -426,3 +428,42 @@ async def fetch_running_container_for_agent(
     if d.get("boot_wall_s") is not None:
         d["boot_wall_s"] = float(d["boot_wall_s"])
     return d
+
+
+async def fetch_agent_instance(
+    conn: asyncpg.Connection,
+    agent_id: UUID,
+    user_id: UUID,
+) -> dict[str, Any] | None:
+    """Return the ``agent_instances`` row for ``(agent_id, user_id)`` or None.
+
+    The ``user_id`` parameter is the multi-tenancy seam for Phase 21+:
+    today it's always ``ANONYMOUS_USER_ID`` in the caller, but keeping
+    the signature user-scoped means the migration to real session
+    resolution is a one-line change in the route layer, not a query
+    rewrite here. Defense in depth: even if the route forgets to pass
+    the correct user_id, the query can't leak cross-user rows because
+    ``user_id`` is always in the WHERE clause.
+
+    Returns a plain dict (not an asyncpg Record) so route handlers can
+    unpack it freely. UUID ``id`` is cast to text for easy JSON
+    serialization in any downstream response model.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT id::text AS id,
+               name,
+               recipe_name,
+               model,
+               personality,
+               created_at,
+               last_run_at,
+               total_runs
+          FROM agent_instances
+         WHERE id = $1
+           AND user_id = $2
+        """,
+        agent_id,
+        user_id,
+    )
+    return dict(row) if row else None
