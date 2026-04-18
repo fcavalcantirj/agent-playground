@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 22 (channels-v0.2) — CONTEXT LOCKED, READY TO PLAN
-Next:  `/gsd-plan-phase 22a` — schema v0.2, runner --mode persistent, 3 new API endpoints, frontend Step 2.5.
+Phase: 22a (channels-v0.2) — **FULLY PLANNED, READY TO EXECUTE**
+Next:  `/gsd-execute-phase 22a` — 7 PLAN files sealed, plan-checker PASS after 2 revision waves (G1..G5 spike findings + I1..I3 contract fixes).
 
 Progress (2026-04-18):
 - All 5 recipes carry v0.2-draft `persistent:` + `channels.telegram`
@@ -73,17 +73,19 @@ agent runs history. Multi-phase work ordered after OAuth unblock.
 
 **Next commands (recommended order):**
 
-- `/gsd-plan-phase 22a` — plan channels v0.2 (schema + runner +
-  API + frontend Step 2.5). Independent of OAuth.
+- `/gsd-execute-phase 22a` — execute channels v0.2 (all 7 plans
+  sealed, spike-verified, checker-PASS). Independent of OAuth.
 - In parallel: `/gsd-spec-phase 22b-oauth` — spec OAuth (Google +
   GitHub), `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
 - Quick cleanup wins (can ship anytime): GET /v1/personalities +
   drop frontend PERSONALITIES catalog; add tagline/accent fields
   to RecipeSummary + drop frontend maps; fix pass_if NULL bug (B1).
 
-**The next command is:** `/gsd-plan-phase 22a` — produce PLAN
-breakdown (schema formalization, runner persistent mode, API
-endpoints, frontend Step 2.5).
+**The next command is:** `/gsd-execute-phase 22a` — execute 7
+PLAN files already sealed under `.planning/phases/22-channels-v0.2/`
+(schema formalization, runner persistent mode, API endpoints,
+frontend Step 2.5, E2E smoke). All spike-verified (G1..G5 findings
+absorbed), plan-checker PASS after I1..I3 contract revisions.
 
 Read files in this order after /clear:
 
