@@ -96,6 +96,139 @@ export type AgentListResponse = {
   agents: AgentSummary[];
 };
 
+// ============================================================================
+// Phase 22a — Agent lifecycle + channels v0.2 (mirrors api_server shapes)
+//
+// Server-side reference:
+//   api_server/src/api_server/routes/agent_lifecycle.py
+//   api_server/src/api_server/models/agents.py
+//
+// CLAUDE.md Rule 2 (dumb client, no client-side catalogs): channel input
+// metadata (required_user_input / optional_user_input) flows from
+// GET /v1/recipes/:name → RecipeDetail.channels. Never hardcode channel
+// field lists in React.
+// ============================================================================
+
+// Per-channel user-input metadata — mirrors
+//   channels.<cid>.required_user_input[] + optional_user_input[]
+// in the recipe YAML (see docs/RECIPE-SCHEMA v0.2, spike-02/03 for the
+// empirical field set across hermes / picoclaw / nullclaw / nanobot / openclaw).
+export type ChannelUserInput = {
+  env: string;                  // e.g. "TELEGRAM_BOT_TOKEN"
+  secret: boolean;              // gates masking + redaction + autoComplete
+  hint: string;
+  kind?: string;                // "telegram_numeric_id" | "telegram_numeric_id_csv" | ...
+  hint_url?: string;
+  prefix_required?: string;     // runner auto-prepends before injection (openclaw "tg:")
+};
+
+export type ChannelEntry = {
+  config_transport: "env" | "file";
+  required_user_input: ChannelUserInput[];
+  optional_user_input?: ChannelUserInput[];
+  ready_log_regex: string;
+  response_routing: "per_message_origin" | "fixed_home_channel";
+  multi_user_model:
+    | "allowlist"
+    | "pairing_then_allowlist"
+    | "allowlist_or_dm_pairing";
+  multi_account_supported?: boolean;
+  provider_compat?: { supported?: string[]; deferred?: string[] };
+  known_quirks?: Array<{ id: string; severity: string; description: string }>;
+  pairing?: { approve_argv: string[] };
+  verified_cells?: Array<{
+    date: string;
+    bot_username?: string;
+    allowed_user_id?: number;
+    verdict: string;
+    [k: string]: unknown;
+  }>;
+};
+
+// Full recipe detail (from GET /v1/recipes/:name). The server returns the
+// raw YAML dict as `recipe`; we declare only the v0.2 fields the frontend
+// consumes and let everything else pass through as unknown.
+export type RecipeDetail = {
+  name: string;
+  apiVersion?: string;
+  persistent?: {
+    mode: string;
+    spec: {
+      argv: string[];
+      ready_log_regex: string;
+      health_check: { kind: string; port?: number; path?: string };
+      graceful_shutdown_s: number;
+      entrypoint?: string;
+      user_override?: string;
+    };
+  };
+  channels?: Record<string, ChannelEntry>;
+  [k: string]: unknown;
+};
+
+// POST /v1/agents/:id/start
+export type AgentStartRequest = {
+  channel: string;                         // matches /^[a-z0-9_-]+$/ — e.g. "telegram"
+  channel_inputs: Record<string, string>;  // {env_var: value} — secrets flow through here
+  boot_timeout_s?: number | null;
+};
+
+export type AgentStartResponse = {
+  agent_id: string;
+  container_row_id: string;
+  container_id: string;
+  container_status: string;                // "running"
+  channel: string;
+  ready_at: string;                        // ISO-8601
+  boot_wall_s: number;
+  health_check_ok: boolean;
+  health_check_kind: string;
+};
+
+// GET /v1/agents/:id/status — no Bearer required (degenerate 200 allowed)
+export type AgentStatusResponse = {
+  agent_id: string;
+  container_row_id?: string | null;
+  container_id?: string | null;
+  container_status?: string | null;
+  channel?: string | null;
+  ready_at?: string | null;
+  boot_wall_s?: number | null;
+  runtime_running: boolean;
+  runtime_exit_code?: number | null;
+  log_tail: string[];
+  last_error?: string | null;
+};
+
+// POST /v1/agents/:id/stop
+export type AgentStopResponse = {
+  agent_id: string;
+  container_row_id: string;
+  container_id: string;
+  stopped_gracefully: boolean;
+  exit_code: number;
+  stop_wall_s: number;
+  // G3 (spike-07): true for nanobot (ignores SIGTERM) and for any recipe
+  // whose graceful window expired before a clean exit.
+  force_killed: boolean;
+};
+
+// POST /v1/agents/:id/channels/:cid/pair
+export type AgentChannelPairRequest = {
+  code: string;                            // /^[A-Za-z0-9]+$/ enforced server-side
+};
+
+export type AgentChannelPairResponse = {
+  agent_id: string;
+  channel: string;
+  exit_code: number;
+  stdout_tail: string;
+  stderr_tail: string;
+  wall_time_s: number;
+  // G4 (spike-10): alias of wall_time_s exposed for elapsed-time UI readout
+  wall_s: number;
+};
+
 export type RunResponse = {
   run_id: string;
   agent_instance_id: string;
