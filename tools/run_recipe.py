@@ -790,9 +790,20 @@ def run_cell(
         filtered = ""
         pass_if_str = smoke.get("pass_if", "")
     elif rc != 0:
-        tail = (stderr or "").strip().splitlines()[-1:] or [""]
+        # Fix B (debug `hermes-invoke-fail-silent-stderr`, 2026-04-17):
+        # Some agent CLIs suppress upstream-error output at their default log
+        # level. If stderr is empty on a non-zero exit, fall back to the tail
+        # of stdout so the user sees *something* instead of "docker run exit 1: ".
+        stderr_stripped = (stderr or "").strip()
+        if stderr_stripped:
+            tail_line = stderr_stripped.splitlines()[-1]
+            source = "stderr"
+        else:
+            stdout_lines = (stdout or "").strip().splitlines()
+            tail_line = stdout_lines[-1] if stdout_lines else ""
+            source = "stdout(tail)" if tail_line else "no output"
         detail = _redact_api_key(
-            f"docker run exit {rc}: {tail[0][:200]}",
+            f"docker run exit {rc} [{source}]: {tail_line[:200]}",
             api_key_var,
         )
         verdict_obj = Verdict(Category.INVOKE_FAIL, detail)
@@ -818,6 +829,17 @@ def run_cell(
                 f"pass_if evaluated {pass_if_result}",
             )
 
+    # Fix B: if stderr is empty and we failed, surface stdout tail instead so
+    # the RunResultCard accordion shows something useful to the user.
+    if rc != 0 and not (stderr or "").strip():
+        stderr_tail_src = (stdout or "")
+        stderr_tail_prefix = "[stdout tail — stderr was empty]\n"
+    else:
+        stderr_tail_src = (stderr or "")
+        stderr_tail_prefix = ""
+    stderr_tail_lines = _redact_api_key(stderr_tail_src, api_key_var).splitlines()[-20:]
+    stderr_tail_out = (stderr_tail_prefix + "\n".join(stderr_tail_lines)) or None
+
     details = {
         "recipe": recipe["name"],
         "model": model,
@@ -829,9 +851,7 @@ def run_cell(
         "exit_code": rc,
         "wall_time_s": round(wall, 2),
         "filtered_payload": filtered,
-        "stderr_tail": "\n".join(
-            _redact_api_key(stderr, api_key_var).splitlines()[-20:]
-        ) or None,
+        "stderr_tail": stderr_tail_out,
     }
     return verdict_obj, details
 
