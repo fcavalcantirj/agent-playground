@@ -166,3 +166,150 @@ metadata:
     - "docs/en/commands.md:43 - `nullclaw onboard --api-key sk-... --provider openrouter` is documented non-interactive setup"
     - "docs/en/usage.md:236-246 - First-Run Flow verbatim: onboard then agent -m"
     - "build.zig.zon - version 2026.4.9, minimum_zig_version 0.15.2"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 DRAFT — persistent-mode gateway + channels (battle-proven 2026-04-17)
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical docs (user-provided, load-bearing — keep in sync when recipe
+# is updated):
+#   https://nullclaw.io/nullclaw/docs/channels
+#     Channels index — 20 known keys, start-behavior rules, web-channel
+#     schema example. Page explicitly points source code as canonical.
+#   https://nullclaw.io/nullclaw/docs/configuration
+#     Confirms `~/.nullclaw/config.json` is the config path.
+#
+# Upstream source-of-truth (docs site is thin on Telegram specifics):
+#   https://github.com/nullclaw/nullclaw/blob/main/src/channel_catalog.zig
+#     known_channels[] — telegram listener_mode = .polling, configured_message = "Telegram configured"
+#   https://github.com/nullclaw/nullclaw/blob/main/src/channels/telegram.zig
+#     isAuthorizedIdentity() — allow_from matches EITHER Telegram username
+#     (leading @ stripped, case-insensitive) OR numeric user_id.
+#     "*" = allow-all with warning. Empty list = deny all.
+#   https://github.com/nullclaw/nullclaw/blob/main/src/config_types.zig
+#     TelegramConfig struct — bot_token (required), allow_from (default []),
+#     group_allow_from, group_policy (default "allowlist"),
+#     reply_in_private (default true), proxy, interactive, streaming,
+#     draft_previews, status_reactions, reaction_emojis, binding_commands_enabled,
+#     topic_commands_enabled, commands_menu_mode.
+#
+# SCHEMA-FROM-REALITY NOTES (empirical, 2026-04-17):
+#
+#   a) JSON shape for the channels block is nested-by-account:
+#        channels.telegram.accounts.<account_name>.{bot_token, allow_from, ...}
+#      Internal Zig representation is a flat array (cfg.channels.telegram.len),
+#      parser normalizes named-key dict → array with account_id=<name>.
+#   b) Image ownership bug: /nullclaw-data is root:root 0755 but default
+#      container user is nobody (uid 65534). `nullclaw onboard` fails with
+#      KeyWriteFailed. Workaround: `docker run --user root` so writes work.
+#      Long-term: have runner chown the mount.
+#   c) `nullclaw onboard` BAKES a fresh config.json with empty `channels: {}`.
+#      Our runner must EDIT that existing block (not append a new one — that
+#      yields DuplicateField at parse time). sh-awk replace pattern used
+#      below matches the first `  "channels": {` line and substitutes the
+#      full block until its matching closing brace.
+#   d) Ready-log signal: `info(channel_manager): telegram polling thread started`
+#   e) Gateway command: `nullclaw gateway` (no flags needed; listens on :::3000
+#      by default per baked config). Telegram uses polling, no public IP.
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        nullclaw onboard --api-key "${OPENROUTER_API_KEY}" --provider openrouter --model "openrouter/$MODEL" 2>&1 | tail -2
+
+        CFG=/nullclaw-data/config.json
+
+        # Replace the empty `channels: {}` block baked by onboard with our
+        # channels.telegram.accounts.main entry. Must REPLACE (not append)
+        # or nullclaw rejects DuplicateField.
+        awk -v token="${TELEGRAM_BOT_TOKEN}" -v allow="$TELEGRAM_ALLOWED_USER" "
+        BEGIN { in_ch=0; depth=0 }
+        /^  \"channels\":[[:space:]]*\\{/ {
+          printf \"  \\\"channels\\\": {\n    \\\"telegram\\\": {\n      \\\"accounts\\\": {\n        \\\"main\\\": {\n          \\\"account_id\\\": \\\"main\\\",\n          \\\"bot_token\\\": \\\"%s\\\",\n          \\\"allow_from\\\": [\\\"%s\\\"],\n          \\\"group_policy\\\": \\\"allowlist\\\",\n          \\\"reply_in_private\\\": true\n        }\n      }\n    }\n  }\", token, allow
+          in_ch=1; depth=1
+          for (i=index(\$0,\"{\")+1; i<=length(\$0); i++) {
+            c=substr(\$0,i,1)
+            if (c==\"{\") depth++
+            else if (c==\"}\") depth--
+            if (depth==0) { in_ch=0; print substr(\$0,i+1); next }
+          }
+          next
+        }
+        in_ch {
+          for (i=1; i<=length(\$0); i++) {
+            c=substr(\$0,i,1)
+            if (c==\"{\") depth++
+            else if (c==\"}\") depth--
+            if (depth==0) { in_ch=0; print substr(\$0,i+1); next }
+          }
+          next
+        }
+        { print }
+        " "$CFG" > "${CFG}.new" && mv "${CFG}.new" "$CFG"
+
+        exec nullclaw gateway
+    ready_log_regex: "channel_manager.*telegram polling thread started"
+    health_check:
+      kind: http
+      port: 3000
+      path: /
+    graceful_shutdown_s: 5
+    user_override: root      # required due to image ownership bug (note b)
+  argv_note: |
+    Three-stage bootstrap inside one container:
+      (1) `nullclaw onboard --api-key $OPENROUTER_API_KEY --provider openrouter
+          --model openrouter/$MODEL` — writes full config.json with the
+          openrouter api_key + empty `channels: {}`.
+      (2) awk replaces the `"channels": {}` block with a populated
+          `channels.telegram.accounts.main` entry using env-substituted
+          values for bot_token and allow_from (single user).
+      (3) `exec nullclaw gateway` — foreground daemon, listens on :::3000,
+          starts telegram polling thread.
+    The runner substitutes $MODEL + $TELEGRAM_ALLOWED_USER before docker run;
+    ${OPENROUTER_API_KEY} and ${TELEGRAM_BOT_TOKEN} expand in sh at container
+    runtime via docker -e injection (unquoted heredoc).
+
+channels:
+  telegram:
+    config_transport: file              # config.json (no env-var path available)
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create via @BotFather /newbot.
+      - env: TELEGRAM_ALLOWED_USER
+        secret: false
+        kind: telegram_numeric_id_or_username    # source-confirmed: either works
+        hint_url: https://t.me/userinfobot
+        hint: |
+          Either numeric Telegram user ID or @username (without @).
+          source: src/channels/telegram.zig isAuthorizedIdentity.
+    optional_user_input: []
+    ready_log_regex: "channel_manager.*telegram polling thread started"
+    response_routing: per_message_origin   # nullclaw replies in sender's DM
+    multi_user_model: allowlist
+    multi_account_supported: true       # channels.telegram.accounts.<name> nested
+    verified_cells:
+      - date: "2026-04-17"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: openrouter/anthropic/claude-haiku-4.5
+        boot_wall_s: 10
+        verdict: PASS
+        notes: |
+          `docker run -d --user root` with OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN
+          env. sh-chain: onboard → awk-edit channels block → gateway. Startup
+          log shows "Gateway listening on :::3000" + "telegram polling thread
+          started". User confirmed round-trip PASS ("worked perfect").
+          Image-ownership bug noted in schema-from-reality (b): must run
+          --user root until upstream chowns /nullclaw-data to 65534.
+        category: PASS
+
+  # Discord, Slack, Matrix, WhatsApp, IRC, Signal, Email, Line, QQ, OneBot,
+  # MaixCam, iMessage, Mattermost, Lark, DingTalk, WeChat, WeCom, Weixin,
+  # Teams, External, Nostr, Web, Max — all 23 other channels declared in
+  # src/channel_catalog.zig. NOT empirically validated; add verified_cells[]
+  # entries here after round-trip PASS per channel.

@@ -170,3 +170,319 @@ metadata:
     - "package.json - bin.openclaw points to openclaw.mjs, version 2026.4.15-beta.1"
     - .env.example - OPENROUTER_API_KEY listed under "Model provider API keys"
     - docker-compose.yml - confirms two-service deployment (gateway + cli) for full runtime
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 DRAFT — persistent-mode gateway + channels (WIP, 2026-04-17)
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical docs (user-provided, load-bearing — keep in sync when recipe
+# is updated):
+#   https://docs.openclaw.ai/cli/channels
+#     `openclaw channels` CLI surface — list/status/add/remove/login/logout/
+#     logs/capabilities/resolve. CRITICAL note from docs: "Telegram does NOT
+#     use `openclaw channels login telegram`; configure token in config/env,
+#     then start gateway." So for Telegram we write config directly.
+#   https://docs.openclaw.ai/channels/telegram.md
+#     Telegram-specific reference. Config lives in ~/.openclaw/openclaw.json5.
+#     Schema: channels.telegram.{enabled, botToken, dmPolicy, allowFrom,
+#     groupPolicy, groupAllowFrom, groups, accounts}.
+#     dmPolicy enum: pairing | allowlist | open | disabled.
+#     Env fallback: TELEGRAM_BOT_TOKEN=... (default account only).
+#   https://docs.openclaw.ai/cli/gateway.md
+#     `openclaw gateway` / `openclaw gateway run` — foreground PID 1 friendly.
+#     Default port 18789 loopback; beyond loopback without auth blocked.
+#     Flags: --port, --bind, --auth, --token, --allow-unconfigured, --dev,
+#     --force, --verbose.
+#   https://docs.openclaw.ai/help/environment.md
+#     Full env var reference. OPENCLAW_HOME, OPENCLAW_STATE_DIR,
+#     OPENCLAW_CONFIG_PATH, OPENCLAW_LOG_LEVEL, OPENCLAW_LOAD_SHELL_ENV.
+#   https://docs.openclaw.ai/channels
+#     Channels index — 20+ platforms, concurrent routing, "DM pairing
+#     and allowlists are enforced for safety" at gateway level.
+#   https://docs.openclaw.ai/gateway/configuration-reference
+#     Canonical config shape. agents.defaults.model.primary accepts
+#     either string or {primary, fallbacks} object. models.<provider/
+#     model>.{alias, params} is the per-model config block.
+#   https://docs.openclaw.ai/gateway/troubleshooting.md
+#     Troubleshooting guide — "incomplete turn" / "payloads=0" NOT
+#     documented here (bug is undocumented upstream).
+#   https://docs.openclaw.ai/concepts/agent-loop.md
+#     Agent loop internals. "0 payloads occurs when no renderable
+#     payloads remain AND a tool errored" — confirms the turn fails
+#     because a tool call or memory lookup errored silently.
+#   https://docs.openclaw.ai/llms.txt
+#     Docs sitemap (index of all .md pages).
+#
+# KEY FACTS (canonical):
+#   - schema root: `channels.telegram.{botToken, dmPolicy, allowFrom, ...}`
+#   - field names: camelCase (botToken NOT bot_token)
+#   - dmPolicy = "allowlist" required for our non-interactive flow (NOT "pairing")
+#   - allowFrom: array of numeric Telegram user IDs
+#   - Run: `openclaw gateway` or `openclaw gateway run`
+#
+# Battle-proven 2026-04-17: CHANNEL_PASS (wiring end-to-end confirmed)
+# with an UPSTREAM KNOWN BUG on the agent loop (all models tested).
+#
+# SCHEMA-FROM-REALITY NOTES (empirical, 2026-04-17):
+#
+#   a) Runtime reads `~/.openclaw/openclaw.json`, NOT `openclaw.json5`. If
+#      the runner writes only to .json5, openclaw CREATES a fresh empty
+#      .json ignoring the .json5 contents. Canonical path is the .json.
+#      (Source .json5 only matters if you pre-feed openclaw via a different
+#      code path we didn't hit.) The runner MUST write .json directly.
+#   b) `allowFrom` entries need the `"tg:"` prefix for numeric Telegram IDs
+#      — e.g. ["tg:152099202"] (NOT ["152099202"]). Empirically confirmed:
+#      without the prefix, openclaw falls back to pairing mode even with
+#      dmPolicy=allowlist and issues a pairing code instead of authorizing.
+#   c) `agents.defaults.model.primary` is the canonical path; value is
+#      `"openrouter/<model>"` (slashed). openclaw auto-enables the openrouter
+#      plugin when it sees a model prefixed with `openrouter/`.
+#      OPENROUTER_API_KEY env var is the documented fallback (not embedded
+#      in the config file needed).
+#   d) `--allow-unconfigured` flag required — without it openclaw rejects
+#      non-local `gateway.mode` and exits. Docs: cli/gateway.md.
+#   e) UPSTREAM BUG — openclaw's @agent/embedded module produces 0 payloads
+#      on every gateway+telegram+model combo we tested (haiku-4.5, sonnet-4.5).
+#      Log: `[agent/embedded] incomplete turn detected ... stopReason=stop
+#      payloads=0 — surfacing error to user`. Openclaw recovers gracefully
+#      and sends a visible "⚠️ Agent couldn't generate a response. Please
+#      try again." to the user — so the CHANNEL round-trip is empirically
+#      confirmed (provider started → inbound received → agent called →
+#      outbound sendMessage ok), but the AGENT LOOP is broken upstream in
+#      gateway mode. Tracked as an upstream issue in openclaw_known_quirks.
+#      The `infer model run --local` path (the one-shot recipe) does NOT
+#      hit this bug — it bypasses the embedded agent entirely.
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /home/node/.openclaw
+        cat > /home/node/.openclaw/openclaw.json <<EOF
+        {
+          "channels": {
+            "telegram": {
+              "enabled": true,
+              "botToken": "${TELEGRAM_BOT_TOKEN}",
+              "dmPolicy": "allowlist",
+              "allowFrom": ["tg:$TELEGRAM_ALLOWED_USER"]
+            }
+          },
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": "openrouter/$MODEL"
+              }
+            }
+          }
+        }
+        EOF
+        rm -f /home/node/.openclaw/openclaw.json5
+        exec openclaw gateway --allow-unconfigured
+    ready_log_regex: "\\[telegram\\] \\[default\\] starting provider"
+    health_check:
+      kind: http
+      port: 18789
+      path: /
+    graceful_shutdown_s: 10      # openclaw takes 45-75s to boot, SIGTERM drain is also heavier
+  argv_note: |
+    Two-stage bootstrap: (1) write openclaw.json with channels.telegram
+    (dmPolicy="allowlist" + allowFrom with "tg:" prefix) + agents.defaults.
+    model.primary=openrouter/$MODEL, (2) remove any leftover .json5 so the
+    runtime doesn't try to reconcile, (3) exec `openclaw gateway
+    --allow-unconfigured` foreground. Boot wall 45-75s (plugin loading +
+    config migrations). OPENROUTER_API_KEY env var is inherited as the
+    openrouter fallback.
+
+channels:
+  telegram:
+    config_transport: file              # openclaw.json (NOT .json5)
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create via @BotFather /newbot.
+      - env: TELEGRAM_ALLOWED_USER
+        secret: false
+        kind: telegram_numeric_id
+        prefix_required: "tg:"          # runner must auto-prefix the value in allowFrom
+        hint_url: https://t.me/userinfobot
+        hint: Numeric Telegram user ID (no @). Runner auto-prefixes "tg:".
+    optional_user_input: []
+    ready_log_regex: "\\[telegram\\] \\[default\\] starting provider"
+    response_routing: per_message_origin
+    multi_user_model: allowlist
+    multi_account_supported: true
+    known_quirks:
+      - id: openrouter_provider_plugin_silent_fail
+        severity: blocks_llm_reply_with_openrouter
+        description: |
+          ROOT CAUSE ISOLATED 2026-04-18 (via user-suggested Anthropic-
+          direct isolation test): openclaw's openrouter provider plugin
+          in this image version (2026.4.15-beta.1) silently aborts LLM
+          calls pre-flight. Every call returns `attempts: []` with
+          `content:[]` and `usage: all zero`, producing the canonical
+          "⚠️ Agent couldn't generate a response" message.
+
+          ISOLATION EVIDENCE:
+          - `openclaw models status` shows `Auth: yes` + env-var key
+            correctly detected: `source=env: OPENROUTER_API_KEY`
+          - Direct OpenRouter API call with same key WORKS: returns
+            "Hey there friend" + usage tokens (curl test passed)
+          - `openclaw config set agents.defaults.model "anthropic/
+            claude-haiku-4-5"` with ANTHROPIC_API_KEY env → agent
+            loop PRODUCES text, channel round-trip PASSES end-to-end
+          - Same recipe pattern with openrouter/ prefix + OPENROUTER_
+            API_KEY → `attempts: []` silent fail
+          - Isolated across: agent CLI, infer model run --local,
+            gateway+channel — all fail with openrouter; all work
+            with anthropic direct
+          - NOT a channel-layer bug (proven: Telegram wiring is OK)
+          - NOT an agent-embedded bug (proven: loop works with
+            anthropic)
+          - NOT an auth-registration bug (Auth: yes, config set
+            accepted, env detected)
+          - IS an openrouter-plugin-only bug — the call never leaves
+            the container
+
+          WORKAROUND: use direct provider keys (ANTHROPIC_API_KEY,
+          OPENAI_API_KEY, etc.) instead of OPENROUTER_API_KEY. This
+          bypasses the broken openrouter plugin entirely. openclaw
+          supports all these as first-class providers.
+
+          IMPACT ON PLATFORM (Agent Playground):
+          - Our BYOK flow defaults to OpenRouter. Openclaw is the
+            ONLY recipe of 5 where this matters — the other 4 all
+            work with OpenRouter through the same key.
+          - Phase 22a channel shipping decision: openclaw recipe
+            must declare provider: anthropic (or openai, etc.), and
+            the deploy form must collect the direct-provider key for
+            openclaw sessions instead of the shared OpenRouter key.
+          - OR: recipe marks openclaw as "requires direct provider
+            key" and deploy UI gates it behind a separate key input.
+
+          HYPOTHESIS (needs upstream confirmation): openclaw v2026.4.15-
+            beta.1 openrouter plugin either:
+          - reads an auth field that env-only path doesn't populate
+            (needs interactive `openclaw models auth login --provider
+            openrouter --method api-key` which requires TTY), or
+          - has a regression specifically in its openrouter HTTP
+            request layer that silently aborts.
+
+          ACTION: file upstream issue against github.com/openclaw/
+          openclaw with the isolation evidence above. Until then, the
+          recipe's OpenRouter path is NOT usable in non-interactive
+          containers.
+
+          Previous (incorrect) diagnosis left here for history:
+          > Claimed "0 payloads occurs when no renderable payloads
+          > remain AND a tool errored" (from docs/concepts/agent-
+          > loop.md). Disabling memorySearch, workspace pre-seeding,
+          > pairing approve — ALL tried, NONE fixed. Reason none
+          > fixed: tool_error narrative is wrong; ACTUAL cause is
+          > that the openrouter plugin aborts pre-flight so no LLM
+          > call ever happens, and the agent loop correctly surfaces
+          > "0 payloads" as a consequence (the turn did have a
+          > failure — just the failure was at the provider HTTP call
+          > layer, invisible to logs). Disabling
+          another tool error path still firing.
+
+          Models tested (all reproduce): anthropic/claude-haiku-4.5,
+          anthropic/claude-sonnet-4.5 (both via openrouter/).
+          One-shot via `openclaw infer model run --local` does NOT hit
+          this bug — different code path that bypasses @agent/embedded.
+
+          2026-04-18 DEEPER ROOT CAUSE FOUND: the session jsonl dump
+          revealed the LLM call itself returns empty
+          (content:[] usage.input:0 usage.output:0 totalTokens:0
+          stopReason:stop). Every model call via openrouter returns
+          a 0-token empty completion. This is NOT a tool error —
+          it's openclaw's HTTP call to OpenRouter that silently gets
+          no response body. Reproduced with both gpt-4o-mini AND
+          sonnet-4.5 (different model families). `openclaw models
+          status` shows `Auth: yes` and `source=env:OPENROUTER_API_KEY`,
+          so env-var fallback is RECOGNIZED — but the actual API call
+          returns nothing. Likely openclaw's openrouter provider plugin
+          requires interactive `openclaw models auth login --provider
+          openrouter --method api-key` to populate
+          `auth-profiles.json`, and the env-var path skips a
+          required initialization step.
+
+          `openclaw models auth login` REQUIRES interactive TTY
+          ("Error: models auth login requires an interactive TTY.")
+          so it cannot run in our recipe's non-interactive sh-chain
+          pattern. This makes openclaw FUNDAMENTALLY INCOMPATIBLE
+          with the Agent Playground recipe contract for persistent
+          channel mode.
+
+          Workaround options for Phase 22 (updated):
+          (1) Pre-bake `auth-profiles.json` at build time into the
+              image — would require reverse-engineering the file
+              format and hard-coding a dev OpenRouter key into the
+              image, which breaks BYOK;
+          (2) Switch openclaw recipe to use `openclaw infer model run
+              --local` (the one-shot path that DOES work with env
+              vars) + write a custom Python Telegram bridge that
+              proxies msgs → infer subprocess → sendMessage reply.
+              Out of scope for v0.2 channels schema — it means
+              openclaw gets its own bridge, not the generic gateway
+              pattern;
+          (3) EXCLUDE openclaw from v0.2 channels rollout. Keep the
+              one-shot recipe as-is (which works). Revisit when
+              openclaw ships a non-interactive `auth login --api-key`
+              flag, OR when we implement option (2).
+
+          RECOMMENDATION: option (3) for v0.2. Ship the other 4
+          recipes (hermes, picoclaw, nullclaw, nanobot) with full
+          channel support; mark openclaw's channels block as
+          `unsupported_in_persistent_mode: true` + keep verified_cells
+          empty; re-enable after upstream fix OR custom bridge.
+    provider_compat:
+      deferred: [openrouter]      # known bug — see openrouter_provider_plugin_silent_fail
+      supported: [anthropic]      # empirically verified end-to-end 2026-04-18
+      # other direct providers (openai, google) likely work — not tested
+    verified_cells:
+      - date: "2026-04-18"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        provider: anthropic            # DIRECT — not via openrouter
+        model: anthropic/claude-haiku-4-5
+        env_var: ANTHROPIC_API_KEY
+        boot_wall_s: 120               # 7 `config set` + gateway boot ~2min total
+        verdict: FULL_PASS
+        notes: |
+          Full end-to-end PASS with anthropic direct:
+            - `openclaw config set agents.defaults.model
+               anthropic/claude-haiku-4-5`
+            - `openclaw config set channels.telegram.{enabled,botToken,
+               dmPolicy:pairing}`
+            - `openclaw config set gateway.mode local`
+            - `exec openclaw gateway`
+            - user DMs bot → pairing code emitted
+            - `openclaw pairing approve telegram <CODE>` (non-interactive
+              via docker exec) → allowlist granted
+            - user DMs bot → agent replies with real text
+          The pairing-approve step is platform-executable post-deploy
+          (no TTY required). This is the v0.2 canonical openclaw flow.
+        category: PASS
+      - date: "2026-04-17"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        provider: openrouter           # BROKEN — retained for historical context
+        model: openrouter/anthropic/claude-sonnet-4.5
+        env_var: OPENROUTER_API_KEY
+        verdict: CHANNEL_PASS_LLM_FAIL
+        notes: |
+          Channel wiring perfect; LLM call silently aborts at openrouter
+          plugin pre-flight (`attempts: []`). See
+          known_quirks.openrouter_provider_plugin_silent_fail for full
+          isolation evidence. Reproduced across sonnet-4.5, haiku-4.5,
+          and gpt-4o-mini (different model families — bug is provider-
+          plugin, not model).
+        category: BLOCKED_UPSTREAM
+
+  # All other channels listed in docs/llms.txt — not empirically validated.
+  # Upstream agent-loop bug blocks per-model rollout of this recipe until
+  # the @agent/embedded issue is resolved or an alternative path is wired.

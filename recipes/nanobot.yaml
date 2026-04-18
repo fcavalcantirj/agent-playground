@@ -185,3 +185,114 @@ metadata:
     - "nanobot/config/schema.py:228 - _match_provider parses model prefix to select providers.<name>"
     - "nanobot/providers/openai_compat_provider.py - openrouter attribution headers baked in"
     - "2026-03-21 commit - replaced litellm with native openai + anthropic SDKs"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 DRAFT — persistent-mode gateway + channels (WIP, 2026-04-17)
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical docs (user-provided, load-bearing — keep in sync when recipe
+# is updated):
+#   https://nanobot.wiki/docs/0.1.5.post1/use-nanobot/configuration
+#     Configuration Reference. Env-var override pattern:
+#       NANOBOT_<SECTION>__<SUBSECTION>__<KEY>=value   (double underscore)
+#       e.g. NANOBOT_CHANNELS__TELEGRAM__TOKEN=xxx
+#   https://nanobot.wiki/docs/0.1.5.post1/getting-started/chat-apps
+#     Per-channel configs — Telegram schema: channels.telegram.{enabled,
+#     token, allowFrom[], groupPolicy, streaming, proxy}. `allowFrom` =
+#     numeric Telegram user IDs (without @ prefix).
+#
+# KEY FACTS (canonical Telegram section, content.js id:"telegram"):
+#   - schema: channels.telegram.{enabled, token, allowFrom, groupPolicy, streaming}
+#   - groupPolicy: "mention" (default) | "open"
+#   - allowFrom: numeric user IDs array, no @
+#   - streaming: true default
+#   - Run: `nanobot gateway` (foreground persistent)
+#
+# Battle-proven 2026-04-17: @AgentPlayground_bot round-trip PASS.
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /home/nanobot/.nanobot
+        cat > /home/nanobot/.nanobot/config.json <<EOF
+        {
+          "agents": {
+            "defaults": {
+              "provider": "openrouter",
+              "model": "$MODEL"
+            }
+          },
+          "providers": {
+            "openrouter": {
+              "api_key": "${OPENROUTER_API_KEY}",
+              "api_base": "https://openrouter.ai/api/v1"
+            }
+          },
+          "channels": {
+            "telegram": {
+              "enabled": true,
+              "token": "${TELEGRAM_BOT_TOKEN}",
+              "allowFrom": ["$TELEGRAM_ALLOWED_USER"],
+              "groupPolicy": "mention",
+              "streaming": true
+            }
+          }
+        }
+        EOF
+        exec nanobot gateway
+    ready_log_regex: "Telegram bot @\\w+ connected"
+    health_check:
+      kind: http
+      port: 18790
+      path: /health
+    graceful_shutdown_s: 5
+  argv_note: |
+    Two-stage bootstrap: (1) write full config.json with agents.defaults +
+    providers.openrouter + channels.telegram in one heredoc. (2) exec
+    `nanobot gateway` foreground persistent. OpenRouter api_key and
+    bot_token interpolated from env via unquoted heredoc sh-expansion.
+    Runner substitutes $MODEL + $TELEGRAM_ALLOWED_USER before docker run.
+    Health HTTP endpoint on 127.0.0.1:18790/health.
+
+channels:
+  telegram:
+    config_transport: file
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create via @BotFather /newbot.
+      - env: TELEGRAM_ALLOWED_USER
+        secret: false
+        kind: telegram_numeric_id
+        hint_url: https://t.me/userinfobot
+        hint: Single numeric Telegram user ID (copy from Settings, no @).
+    optional_user_input: []
+    ready_log_regex: "Telegram bot @\\w+ connected"
+    response_routing: per_message_origin
+    multi_user_model: allowlist
+    multi_account_supported: false       # nanobot channels.telegram is single-entry
+    verified_cells:
+      - date: "2026-04-17"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: anthropic/claude-haiku-4.5
+        boot_wall_s: 18
+        verdict: PASS
+        notes: |
+          `docker run -d` with OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN env.
+          sh-chain writes config.json (agents+providers+channels.telegram)
+          then `nanobot gateway`. Boot log shows "Telegram channel enabled"
+          + "Telegram bot @AgentPlayground_bot connected" + health endpoint
+          on 18790. User confirmed round-trip PASS ("worked"). Nanobot
+          startup is slower than others (~18s from docker run to ready)
+          because it creates SOUL.md/USER.md/HEARTBEAT.md/memory bootstrap
+          files on first run and initializes git store at ~/.nanobot/workspace.
+        category: PASS
+
+  # Discord, Slack, WhatsApp, Email, Matrix (not installed by default,
+  # needs pip install nanobot-ai[matrix]) — all channels nanobot supports
+  # via canonical docs channel registry. NOT empirically validated yet.

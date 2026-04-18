@@ -174,3 +174,120 @@ metadata:
     - hermes_cli/runtime_provider.py:221 - HERMES_INFERENCE_PROVIDER env read
     - hermes_cli/env_loader.py:86-88 - $HERMES_HOME/.env load with override=True
     - docker/entrypoint.sh - gosu UID remap + template bootstrap + exec hermes
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 DRAFT — persistent-mode gateway + multi-channel (hermes only, 2026-04-17)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Canonical docs (user-provided, load-bearing — keep in sync when recipe
+# is updated):
+#   https://hermes-agent.nousresearch.com/docs/user-guide/messaging
+#     Messaging gateway overview — Telegram/Discord/Slack/WhatsApp/Signal/CLI
+#     in one process; env-var-driven config story.
+#   https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram
+#     Telegram setup — TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_USERS /
+#     TELEGRAM_HOME_CHANNEL env vars; per-user DM routing.
+#   https://hermes-agent.nousresearch.com/docs/guides/team-telegram-assistant
+#     Multi-user team setup — static allowlist vs DM pairing alternatives.
+#   https://hermes-agent.nousresearch.com/docs/guides/tips
+#     Operational tips — no container-specific hot topic; uses docker as
+#     sandbox for `exec` tool; GATEWAY_ALLOW_ALL_USERS danger.
+#   https://hermes-agent.nousresearch.com/docs/getting-started/installation
+#     Install story — `messaging` extra lists Telegram/Discord/Slack;
+#     WhatsApp needs Node dep.
+#   https://hermes-agent.nousresearch.com/docs/guides/python-library
+#     Python API surface — not in scope for recipe but noted for provider-
+#     agnostic chat parameter (`platform: "telegram"`).
+#
+# The blocks below are ap.recipe/v0.2-candidate additions. The schema is NOT
+# frozen yet — it will be finalized after empirical PASS on all 5 committed
+# recipes (picoclaw/nullclaw/nanobot/openclaw pending). Until then these
+# blocks are hermes-specific and recipe-loader safe (additive fields; the
+# v0.1 RecipeSummary projection ignores unknown top-level keys).
+#
+# Runner code (tools/run_recipe.py) does not yet read `persistent:` or
+# `channels:`. Phase 22b work will wire them. For now these blocks are the
+# DECLARATION of what hermes supports; empirical evidence is captured under
+# `channels.telegram.verified_cells[]`.
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    argv:
+      - gateway
+      - run
+      - -v
+    # Regex matched against stderr to confirm the daemon is past the LLM/TLS
+    # handshake and actively listening for inbound messages. Hermes emits
+    # exactly one `connected` line per channel that attached.
+    ready_log_regex: "gateway\\.run: ✓ (\\w+) connected"
+    health_check:
+      kind: process_alive
+    graceful_shutdown_s: 5
+  argv_note: |
+    `hermes gateway run -v` is the non-interactive persistent daemon. A
+    single gateway process hosts every channel whose env vars are set
+    (confirmed by upstream docs and by the boot log `Gateway running with N
+    platform(s)` where N is the count of detected channels). -v elevates
+    stderr to the same verbosity as the one-shot fix from
+    `.planning/debug/hermes-invoke-fail-silent-stderr.md` — any upstream
+    failure (LLM 4xx, Telegram API timeout, etc.) surfaces on stderr.
+  lifecycle_note: |
+    docker run -d ap-recipe-hermes:latest gateway run -v
+    — image entrypoint still gosu-remaps the uid + execs `hermes "$@"`, so
+    the bare `gateway run -v` becomes `hermes gateway run -v` at PID 1
+    (inside the gosu-dropped user). Container-exit-zero on SIGTERM after
+    ~5s graceful (telegram.ext.Application shutdown hook).
+
+channels:
+  telegram:
+    # Transport: env-var only. No config file edit. The `.env` override
+    # path (~/.hermes/.env) exists as an alternative — the runner injects
+    # the vars at docker run time instead, which is simpler and keeps
+    # per-user secrets out of the container filesystem.
+    config_transport: env
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create the bot via @BotFather /newbot, copy the HTTP API token.
+      - env: TELEGRAM_ALLOWED_USERS
+        secret: false
+        kind: telegram_numeric_id_csv
+        hint_url: https://t.me/userinfobot
+        hint: |
+          Comma-separated numeric Telegram user IDs (NOT @usernames).
+          Get yours by DM'ing @userinfobot and reading the `Id:` line.
+    optional_user_input:
+      - env: TELEGRAM_HOME_CHANNEL
+        hint: |
+          Numeric chat ID where cron jobs and proactive messages are
+          delivered. Negative for group/supergroup chats, positive for DMs.
+      - env: TELEGRAM_HOME_CHANNEL_NAME
+        hint: Display name of the home channel — cosmetic only.
+    ready_log_regex: "\\[Telegram\\] Connected to Telegram \\(polling mode\\)"
+    response_routing: per_message_origin   # bot replies in the chat the sender messaged from
+    multi_user_model: allowlist_or_dm_pairing
+    verified_cells:
+      - date: "2026-04-17"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        boot_wall_s: 10
+        first_reply_wall_s: 1
+        verdict: PASS
+        notes: |
+          `docker run -d` with 3 env vars (OPENROUTER_API_KEY,
+          TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS) + argv `gateway run -v`.
+          User sent "oi" from @fcavalcantirj (uid 152099202), hermes called
+          OpenRouter (auxiliary auto-detected google/gemini-3-flash-preview),
+          replied in PT-BR (194 chars) within ~1s. Boot to ready ~10s.
+          Multi-account: not tested (single allowed user in allowlist).
+          Model choice: gateway mode does NOT honor -m flag — model comes
+          from hermes's auxiliary auto-detect. For production, recommend
+          sh-chaining `hermes config set model $MODEL` before `gateway run -v`.
+        category: PASS
+
+  # Discord, Slack, WhatsApp, Signal, Matrix — claimed by upstream docs
+  # (https://hermes-agent.nousresearch.com/docs/user-guide/messaging: "all
+  # from a single gateway process"). NOT empirically validated yet; no
+  # bot/webhook/test creds available. Add entries here only after a real
+  # round-trip PASS against each.

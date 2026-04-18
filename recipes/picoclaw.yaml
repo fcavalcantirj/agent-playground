@@ -160,3 +160,133 @@ metadata:
     - "picoclaw agent --help (empirical) - flags: -m/--message, --model, -s/--session, -d/--debug"
     - "config/config.example.json - agents.defaults.model_name + model_list[] schema"
     - ".env.example - OPENROUTER_API_KEY listed under LLM Provider"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 DRAFT — persistent-mode gateway + channel_list (picoclaw, 2026-04-17)
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical docs:
+#   https://github.com/sipeed/picoclaw/tree/main/docs/channels
+#   https://github.com/sipeed/picoclaw/blob/main/docs/channels/telegram/README.md
+#   https://github.com/sipeed/picoclaw/blob/main/docs/guides/configuration.md
+#   https://github.com/sipeed/picoclaw/blob/main/docs/guides/chat-apps.md
+#   https://github.com/sipeed/picoclaw/blob/main/docs/security/security_configuration.md
+#
+# SCHEMA-FROM-REALITY NOTES (empirical, 2026-04-17):
+#
+#   a) Root key is `channel_list` (NOT `channels`). Confirmed by picoclaw's
+#      migrated config.json output.
+#   b) Telegram `token` lives in `config.json.channel_list.telegram.settings.token`
+#      (NOT at channel-top-level as the docs/channels/telegram/README.md
+#      example suggests — that snippet describes a v0 shape that picoclaw
+#      migrates away from; in v3 the `token` is stripped from top level
+#      and never relocated, so top-level placement results in
+#      `enabled_channels=0` at startup).
+#   c) `.security.yml` (at ~/.picoclaw/.security.yml) holds LLM api_keys
+#      only — NOT channel tokens. docs/security/security_configuration.md
+#      shows `channels.telegram.token` in .security.yml but that path does
+#      NOT activate the token for picoclaw v3 (empirically verified:
+#      channel stays offline). Token MUST be in config.json settings.token.
+#   d) `allow_from` is an array of numeric user IDs (e.g. ["152099202"]).
+#      Empty = all users allowed (dangerous default).
+#   e) `picoclaw gateway -d` is the persistent command (-d for debug, not
+#      daemon — picoclaw is foreground blocking).
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /root/.picoclaw/workspace
+
+        # config.json — channel_list + model_list routing (no secrets here)
+        cat > /root/.picoclaw/config.json <<EOF
+        {
+          "version": 3,
+          "agents": { "defaults": { "model_name": "openrouter-default", "workspace": "/root/.picoclaw/workspace" } },
+          "model_list": [{
+            "model_name": "openrouter-default",
+            "model": "$MODEL",
+            "api_base": "https://openrouter.ai/api/v1"
+          }],
+          "channel_list": {
+            "telegram": {
+              "enabled": true,
+              "type": "telegram",
+              "allow_from": ["$TELEGRAM_ALLOWED_USER"],
+              "settings": {
+                "token": "${TELEGRAM_BOT_TOKEN}"
+              }
+            }
+          }
+        }
+        EOF
+
+        # .security.yml — LLM api_key only, referenced by model_name
+        cat > /root/.picoclaw/.security.yml <<EOF
+        model_list:
+          openrouter-default:
+            api_keys:
+              - "${OPENROUTER_API_KEY}"
+        EOF
+
+        exec picoclaw gateway -d
+    ready_log_regex: "Telegram bot connected username="
+    health_check:
+      kind: http
+      port: 18790
+      path: /ready
+    graceful_shutdown_s: 5
+  argv_note: |
+    Three-stage bootstrap inside one container: (1) write config.json with
+    channel_list + model routing (api_key intentionally omitted — lives in
+    .security.yml per v3 schema), (2) write .security.yml with OpenRouter
+    api_key keyed by model_name, (3) exec `picoclaw gateway -d` foreground.
+    The runner substitutes $MODEL and $TELEGRAM_ALLOWED_USER before docker
+    run; ${OPENROUTER_API_KEY} and ${TELEGRAM_BOT_TOKEN} expand inside sh
+    from the env vars docker -e injects (unquoted EOF delimiter).
+
+channels:
+  telegram:
+    config_transport: file              # config.json + .security.yml split
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create via @BotFather /newbot.
+      - env: TELEGRAM_ALLOWED_USER
+        secret: false
+        kind: telegram_numeric_id
+        hint_url: https://t.me/userinfobot
+        hint: |
+          Single numeric Telegram user ID. Copy from @userinfobot.
+          (picoclaw's allow_from is an array; runner wraps single value.)
+    optional_user_input: []
+    ready_log_regex: "Telegram bot connected username="
+    response_routing: per_message_origin   # bot replies in the chat the sender messaged from
+    multi_user_model: allowlist
+    verified_cells:
+      - date: "2026-04-17"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        model: anthropic/claude-haiku-4.5
+        boot_wall_s: 12
+        first_reply_wall_s: 3
+        reply_sample: "Oi Felipe! 👋 Tudo bem? Como posso te ajudar?"
+        verdict: PASS
+        notes: |
+          `docker run -d` with OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN env.
+          Hand-crafted config.json (channel_list.telegram.settings.token)
+          + .security.yml (model_list.openrouter-default.api_keys[]).
+          User sent "Oi" from @fcavalcantirj, picoclaw's main agent
+          routed via default match, llm_request to claude-haiku-4.5 over
+          OpenRouter, turn_end in 1846ms (~1.8s LLM), sendMessage to
+          Telegram ok=true. Round-trip ~3s wall.
+        category: PASS
+
+  # Discord, Slack, WhatsApp, Matrix, Feishu, Line, QQ, OneBot, DingTalk,
+  # Wecom, Weixin, VK, MaixCam, Pico — picoclaw v3 channel_list exposes
+  # all of these (empirically confirmed by its own migrated config). Each
+  # has its own settings.* shape. NOT empirically validated yet — add
+  # entries under `channels.<id>.verified_cells[]` only after round-trip PASS.
