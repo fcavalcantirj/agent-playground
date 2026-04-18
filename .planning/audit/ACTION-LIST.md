@@ -1,8 +1,10 @@
 # Action List — Remove Mocks + Real Implementation
 
 **Date:** 2026-04-18  
+**Status:** FROZEN (sealed 2026-04-18) — this is the authoritative execution list. Further changes only via `/gsd-plan-phase` for individual phases consuming this list as input.  
 **Source:** `BACKEND-DESICCATED.md` (33KB, 699 lines) + `FRONTEND-DESSICATED.md` (42KB, 842 lines)  
-**Scope:** Every page of frontend + every backend surface. What's mock, what's missing, what needs to be done.
+**Scope:** Every page of frontend + every backend surface. What's mock, what's missing, what needs to be done.  
+**Open decisions:** 1 — `/signup` route fate (decided after OAuth flow lands).
 
 ---
 

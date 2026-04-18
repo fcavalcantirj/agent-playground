@@ -4,7 +4,7 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-04-18)
-last_updated: "2026-04-18T03:45:00.000Z"
+last_updated: "2026-04-18T04:00:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -45,13 +45,41 @@ Phase 20 (frontend-alicerce) — EXECUTED separately on 2026-04-17
 (Playground UI banho de loja + inline ModelBrowser + higher-contrast
 primitives shipped in commit a3c95fe).
 
+Desiccated audit (2026-04-18) — `.planning/audit/` now holds three
+FROZEN inventory docs:
+- BACKEND-DESICCATED.md (9 routes, 7 services, 4 middleware, status
+  classified; 5 top gaps identified; production-ready foundation)
+- FRONTEND-DESSICATED.md (32 pages + 15 components; 71% real / 29%
+  mock; Rule-1/2/3 scorecard)
+- ACTION-LIST.md (consolidated execution order — per user directive
+  2026-04-18 EVERY mocked page gets real backend wiring, zero
+  deletions; /signup is the only open decision pending OAuth landing)
+
+Backend scope grew to ~14 new endpoints across OAuth, users, api-keys
+(age-encrypted), analytics aggregation, Stripe billing, notifications,
+agent runs history. Multi-phase work ordered after OAuth unblock.
+
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
-**Primary resume file:** `.planning/phases/22-channels-v0.2/22-CONTEXT.md`
+**Primary resume files (read in this order):**
 
-It captures: scope (schema v0.2 + 4/5 Telegram rail + openclaw
-Anthropic path), per-recipe evidence matrix, SC-01..SC-06 exit
-gate, canonical doc URLs, openrouter plugin deferred status.
+1. `.planning/audit/ACTION-LIST.md` — what to build (prioritized,
+   per-page with real endpoint specs; open decisions flagged)
+2. `.planning/phases/22-channels-v0.2/22-CONTEXT.md` — Phase 22a
+   scope already CONTEXT-locked (channels v0.2 schema + runner
+   persistent mode); runs in parallel with OAuth prework
+3. `.planning/audit/BACKEND-DESICCATED.md` — per-route status
+4. `.planning/audit/FRONTEND-DESSICATED.md` — per-page status
+
+**Next commands (recommended order):**
+
+- `/gsd-plan-phase 22a` — plan channels v0.2 (schema + runner +
+  API + frontend Step 2.5). Independent of OAuth.
+- In parallel: `/gsd-spec-phase 22b-oauth` — spec OAuth (Google +
+  GitHub), `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
+- Quick cleanup wins (can ship anytime): GET /v1/personalities +
+  drop frontend PERSONALITIES catalog; add tagline/accent fields
+  to RecipeSummary + drop frontend maps; fix pass_if NULL bug (B1).
 
 **The next command is:** `/gsd-plan-phase 22a` — produce PLAN
 breakdown (schema formalization, runner persistent mode, API
