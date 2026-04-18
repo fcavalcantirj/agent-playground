@@ -69,10 +69,10 @@ TELEGRAM_ALLOWED_USER="${TELEGRAM_ALLOWED_USER:-$TELEGRAM_CHAT_ID}"
 # --- recipe matrix ---
 # Each row: recipe_name|llm_provider|llm_key_env|llm_model|requires_pairing
 declare -a MATRIX=(
-  "hermes|openrouter|OPENROUTER_API_KEY|openrouter/anthropic/claude-haiku-4.5|false"
-  "picoclaw|openrouter|OPENROUTER_API_KEY|openrouter/anthropic/claude-haiku-4.5|false"
-  "nullclaw|openrouter|OPENROUTER_API_KEY|openrouter/anthropic/claude-haiku-4.5|false"
-  "nanobot|openrouter|OPENROUTER_API_KEY|openrouter/anthropic/claude-haiku-4.5|false"
+  "hermes|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
+  "picoclaw|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
+  "nullclaw|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
+  "nanobot|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
   "openclaw|anthropic|ANTHROPIC_API_KEY|anthropic/claude-haiku-4-5|true"
 )
 

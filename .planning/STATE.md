@@ -24,9 +24,9 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: 22 (channels-v0.2) — EXECUTED (6 of 7 plans fully complete; 22-07 Tasks 1+2 shipped, Task 3 CHECKPOINT_PENDING)
-Plan: 22-07 Task 3 — SC-03 live-Telegram gate awaiting user supervised run
-Next:  User runs `bash test/e2e_channels_v0_2.sh --recipe hermes --rounds 1` (supervised first round), then `bash test/e2e_channels_v0_2.sh` (full 15-round stability). Resume signal: `approved` if 15/15 PASS. Then `/gsd-verify-work 22` + ROADMAP mark.
+Phase: 22 (channels-v0.2) — EXECUTED, SC-03 BLOCKED on Plan 22-07 design flaw
+Plan: SC-03 gate re-routed to new **Phase 22b** (agent event stream)
+Next:  `/gsd-discuss-phase 22b-agent-event-stream` — see `.planning/phases/22b-agent-event-stream/CONTEXT.md`
 
 Execution summary (2026-04-18):
 - Wave 1: 22-01 (v0.2 schema + JSON Schema + RecipeSummary surface) + 22-02 (alembic 003 agent_containers + age-KEK crypto) — merged at 439d3b5
@@ -35,7 +35,37 @@ Execution summary (2026-04-18):
 - Wave 4: 22-06 (frontend Step 2.5 + PairingModal + TS types, Rule-2 dumb-client verified) — merged at d27f288
 - Wave 5: 22-07 Tasks 1+2 (test/lib/telegram_harness.py + test/e2e_channels_v0_2.sh) — merged at a38f74d
 
-SC-03 gate (live 15/15 Telegram round-trip) is the final exit criterion.
+### SC-03 blocker (2026-04-18 empirical finding)
+
+First supervised run surfaced a plan-level design flaw in Plan 22-07:
+Telegram's `getUpdates` is single-consumer, so the harness and the hermes
+container fight each other over the bot token. Bot never sees the test
+ping; harness times out. Full writeup:
+`.planning/phases/22-channels-v0.2/22-SC03-DESIGN-FLAW.md`.
+
+What's proven live against the local stack:
+- `POST /v1/runs` hermes+haiku-4.5 via OpenRouter → PASS (20.51s)
+- `POST /v1/agents/:id/start` with Telegram creds → container running, boot ~11s
+- `POST /v1/agents/:id/stop` → clean reap, no dangling containers
+- Age-KEK crypto round-trips (with `AP_CHANNEL_MASTER_KEY` set in shell env)
+- All 4 new `/v1/agents/...` routes exposed via OpenAPI
+
+What blocks: the test harness can't observe bot replies. Fix = Phase 22b
+(agent event stream via docker log parsing → Postgres → `GET /v1/agents/:id/events`).
+
+### Second bug fixed inline (2026-04-18)
+
+MATRIX in `test/e2e_channels_v0_2.sh` used `openrouter/anthropic/claude-haiku-4.5`
+as the model id — OpenRouter rejects the `openrouter/` prefix. Correct
+form is `anthropic/claude-haiku-4.5`. Fix committed.
+
+### Local-dev runtime state (for repro after /clear)
+
+- API server container: rebuilt from HEAD (Phase 22 code baked in)
+- `AP_CHANNEL_MASTER_KEY` — required in shell env before `docker compose up`
+  (NOT written to `deploy/.env.prod`; per-laptop per CLAUDE.md rule)
+- `.env.local` has `TELEGRAM_USER_CHAT_ID` — the script expects `TELEGRAM_CHAT_ID`,
+  alias with `export TELEGRAM_CHAT_ID="$TELEGRAM_USER_CHAT_ID"`
 
 Progress (2026-04-18):
 
@@ -80,23 +110,34 @@ agent runs history. Multi-phase work ordered after OAuth unblock.
 
 **Primary resume files (read in this order):**
 
-1. `.planning/audit/ACTION-LIST.md` — what to build (prioritized,
-   per-page with real endpoint specs; open decisions flagged)
+1. `.planning/phases/22-channels-v0.2/22-SC03-DESIGN-FLAW.md` — why
+   Phase 22a can't close on its own and what blocks 15/15 round-trips
+2. `.planning/phases/22b-agent-event-stream/CONTEXT.md` — proposed
+   architecture for the SC-03 fix (docker-log → Postgres → API → harness)
+3. `.planning/audit/ACTION-LIST.md` — what to build after 22b
+   (prioritized per-page with real endpoint specs; OAuth still pending)
+4. `.planning/phases/22-channels-v0.2/22-CONTEXT.md` — Phase 22a scope
+   (reference only — 6 of 7 plans already shipped)
+5. `memory/MEMORY.md` — updated with 22a-completed + 22b-proposed entries
 
-2. `.planning/phases/22-channels-v0.2/22-CONTEXT.md` — Phase 22a
-   scope already CONTEXT-locked (channels v0.2 schema + runner
-   persistent mode); runs in parallel with OAuth prework
+**Next commands:**
 
-3. `.planning/audit/BACKEND-DESICCATED.md` — per-route status
-4. `.planning/audit/FRONTEND-DESSICATED.md` — per-page status
+1. `/gsd-discuss-phase 22b-agent-event-stream` — challenge or confirm
+   the architecture in `22b/CONTEXT.md`, gather gray-area questions.
+2. `/gsd-plan-phase 22b-agent-event-stream` — produce PLAN files.
+3. `/gsd-execute-phase 22b-agent-event-stream` — ship it.
+4. Rerun `bash test/e2e_channels_v0_2.sh` — closes SC-03, unblocks Phase 22 exit.
 
-**Next commands (recommended order):**
+**Parallel (OAuth track, unchanged from previous plan):**
+- `/gsd-spec-phase 22c-oauth` — spec OAuth (Google + GitHub),
+  `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
 
-- `/gsd-execute-phase 22a` — execute channels v0.2 (all 7 plans
-  sealed, spike-verified, checker-PASS). Independent of OAuth.
-
-- In parallel: `/gsd-spec-phase 22b-oauth` — spec OAuth (Google +
-  GitHub), `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
+**Local-dev env for repro:**
+```bash
+export AP_CHANNEL_MASTER_KEY="2JAvJ9FwihbRyukvXDBnqVEK2Umf5ibHEy7KsFq5gTU="
+export TELEGRAM_CHAT_ID="$TELEGRAM_USER_CHAT_ID"
+cd deploy && docker compose -f docker-compose.prod.yml -f docker-compose.local.yml --env-file .env.prod up -d
+```
 
 - Quick cleanup wins (can ship anytime): GET /v1/personalities +
   drop frontend PERSONALITIES catalog; add tagline/accent fields
