@@ -16,6 +16,7 @@ Schema reference: ``api_server/alembic/versions/001_baseline.py``.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -30,6 +31,12 @@ __all__ = [
     "insert_pending_run",
     "write_verdict",
     "fetch_run",
+    # Phase 22-02: persistent-container audit CRUD.
+    "insert_pending_agent_container",
+    "write_agent_container_running",
+    "mark_agent_container_stopped",
+    "fetch_agent_container",
+    "fetch_running_container_for_agent",
 ]
 
 
@@ -208,4 +215,214 @@ async def fetch_run(conn: asyncpg.Connection, run_id: str) -> dict[str, Any] | N
     d = dict(row)
     if d.get("wall_time_s") is not None:
         d["wall_time_s"] = float(d["wall_time_s"])
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Phase 22-02: agent_containers CRUD
+# ---------------------------------------------------------------------------
+#
+# Schema reference: ``api_server/alembic/versions/003_agent_containers.py``.
+#
+# These helpers back Plan 22-05's ``POST /v1/agents/:id/start`` +
+# ``/stop`` + ``GET /status`` flow. Two-phase insert mirrors the
+# ``insert_pending_run`` + ``write_verdict`` shape so routes can release
+# their DB connection across the long ``execute_persistent_start`` await
+# (Pitfall 4 — DB pool exhaustion if conn held across a blocking run).
+#
+# The partial unique index
+# ``ix_agent_containers_agent_instance_running`` (WHERE
+# ``container_status='running'``) enforces at-most-one running
+# container per agent. Concurrent /start calls race on the UPDATE-to-
+# running step in ``write_agent_container_running``; the losing side
+# raises ``asyncpg.UniqueViolationError`` which the route maps to
+# 409 AGENT_ALREADY_RUNNING.
+
+
+async def insert_pending_agent_container(
+    conn: asyncpg.Connection,
+    agent_instance_id: UUID,
+    user_id: UUID,
+    recipe_name: str,
+    channel_type: str,
+    channel_config_enc: bytes,
+) -> UUID:
+    """Insert a pending agent_containers row with status='starting'.
+
+    Returns the newly-minted container row id. Encrypted channel config
+    (see ``crypto/age_cipher.py``) is written straight into the BYTEA
+    column; decrypt only happens at container-spawn time in the route
+    layer, and the plaintext is discarded immediately after the
+    ``--env-file`` has been written.
+
+    Partial unique index enforcement happens AT THE WRITE-TO-RUNNING
+    step, not here — a row in 'starting' state is fine alongside
+    another agent's running row. The route serializes by attempting
+    the UPDATE-to-'running' and treating UniqueViolation as 409.
+    """
+    row = await conn.fetchrow(
+        """
+        INSERT INTO agent_containers
+            (id, agent_instance_id, user_id, recipe_name, deploy_mode,
+             container_status, channel_type, channel_config_enc)
+        VALUES (gen_random_uuid(), $1, $2, $3, 'persistent',
+                'starting', $4, $5)
+        RETURNING id
+        """,
+        agent_instance_id,
+        user_id,
+        recipe_name,
+        channel_type,
+        channel_config_enc,
+    )
+    return row["id"]
+
+
+async def write_agent_container_running(
+    conn: asyncpg.Connection,
+    container_row_id: UUID,
+    *,
+    container_id: str,
+    boot_wall_s: float,
+    ready_at: datetime,
+) -> None:
+    """Flip a pending container row 'starting' -> 'running'.
+
+    Called from the route handler AFTER ``execute_persistent_start``
+    returns the docker container id + ready_at. The WHERE clause
+    constrains to rows currently in 'starting' so a concurrent /stop
+    cannot mark a row running out from under itself.
+
+    The partial unique index on (agent_instance_id) WHERE status='running'
+    fires here when another container for the SAME agent_instance is
+    already running — asyncpg raises ``UniqueViolationError`` which the
+    route maps to 409 AGENT_ALREADY_RUNNING. The caller is expected to
+    rollback via ``mark_agent_container_stopped(..., last_error=...)``.
+    """
+    await conn.execute(
+        """
+        UPDATE agent_containers
+           SET container_id = $2,
+               container_status = 'running',
+               boot_wall_s = $3,
+               ready_at = $4
+         WHERE id = $1
+           AND container_status = 'starting'
+        """,
+        container_row_id,
+        container_id,
+        boot_wall_s,
+        ready_at,
+    )
+
+
+async def mark_agent_container_stopped(
+    conn: asyncpg.Connection,
+    container_row_id: UUID,
+    *,
+    last_error: str | None = None,
+) -> None:
+    """Terminal-state transition. Writes stopped_at=NOW() plus status.
+
+    When ``last_error`` is None (happy-path /stop) the row flips to
+    'stopped'. When ``last_error`` is a (redacted) string the row
+    flips to 'start_failed' — callers use this from the /start error
+    path to record a durable failure trace for /status and ops review.
+
+    Caller is responsible for redacting secrets from ``last_error``
+    BEFORE calling (the runner's ``_redact_api_key`` helper handles
+    the two places — VAR= form and bare value). This function does
+    NOT redact; it only persists.
+    """
+    new_status = "start_failed" if last_error else "stopped"
+    await conn.execute(
+        """
+        UPDATE agent_containers
+           SET container_status = $2,
+               stopped_at = NOW(),
+               last_error = $3
+         WHERE id = $1
+        """,
+        container_row_id,
+        new_status,
+        last_error,
+    )
+
+
+async def fetch_agent_container(
+    conn: asyncpg.Connection,
+    container_row_id: UUID,
+) -> dict[str, Any] | None:
+    """Read a single agent_containers row by PK. Returns dict or None.
+
+    UUID columns cast to text for easy JSON serialization in the route
+    layer; NUMERIC ``boot_wall_s`` cast to float (asyncpg returns
+    ``decimal.Decimal`` otherwise). ``channel_config_enc`` stays as
+    raw bytes — decrypt is a route-layer responsibility and the CRUD
+    never touches the plaintext.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT id::text AS id,
+               agent_instance_id::text AS agent_instance_id,
+               user_id::text AS user_id,
+               recipe_name,
+               deploy_mode,
+               container_id,
+               container_status,
+               channel_type,
+               channel_config_enc,
+               boot_wall_s,
+               ready_at,
+               created_at,
+               stopped_at,
+               last_error
+          FROM agent_containers
+         WHERE id = $1
+        """,
+        container_row_id,
+    )
+    if row is None:
+        return None
+    d = dict(row)
+    if d.get("boot_wall_s") is not None:
+        d["boot_wall_s"] = float(d["boot_wall_s"])
+    return d
+
+
+async def fetch_running_container_for_agent(
+    conn: asyncpg.Connection,
+    agent_instance_id: UUID,
+) -> dict[str, Any] | None:
+    """Find the currently-running container for an agent, or None.
+
+    The partial unique index guarantees at most one such row exists;
+    LIMIT 1 is belt-and-braces so a corrupted-state DB can't return
+    multiple rows. Used by /stop and /status routes.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT id::text AS id,
+               agent_instance_id::text AS agent_instance_id,
+               user_id::text AS user_id,
+               recipe_name,
+               container_id,
+               container_status,
+               channel_type,
+               channel_config_enc,
+               boot_wall_s,
+               ready_at,
+               created_at
+          FROM agent_containers
+         WHERE agent_instance_id = $1
+           AND container_status = 'running'
+         LIMIT 1
+        """,
+        agent_instance_id,
+    )
+    if row is None:
+        return None
+    d = dict(row)
+    if d.get("boot_wall_s") is not None:
+        d["boot_wall_s"] = float(d["boot_wall_s"])
     return d
