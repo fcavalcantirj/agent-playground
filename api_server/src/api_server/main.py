@@ -34,6 +34,7 @@ from .middleware.correlation_id import CorrelationIdMiddleware
 from .middleware.idempotency import IdempotencyMiddleware
 from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
+from .routes import agent_lifecycle as agent_lifecycle_route
 from .routes import agents as agents_route
 from .routes import health
 from .routes import recipes as recipes_route
@@ -113,6 +114,13 @@ def create_app() -> FastAPI:
     app.include_router(runs_route.router, prefix="/v1", tags=["runs"])
     # Phase 20: GET /v1/agents — list user's deployed agents.
     app.include_router(agents_route.router, prefix="/v1", tags=["agents"])
+    # Phase 22-05: persistent-mode agent lifecycle (start / stop / status /
+    # channels pair). Shares the /v1/agents URL namespace with
+    # ``agents_route`` (GET list) — distinct paths so FastAPI's router
+    # matches unambiguously.
+    app.include_router(
+        agent_lifecycle_route.router, prefix="/v1", tags=["agents"]
+    )
     return app
 
 

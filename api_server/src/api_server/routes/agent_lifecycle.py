@@ -432,3 +432,336 @@ async def start_agent(
             details.get("health_check_kind") or "unknown"
         ),
     ).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/agents/:id/stop
+# ---------------------------------------------------------------------------
+
+
+@router.post("/agents/{agent_id}/stop")
+async def stop_agent(
+    request: Request,
+    agent_id: UUID,
+    authorization: str = Header(default=""),
+):
+    """Gracefully stop a running persistent container.
+
+    Bearer token required for API consistency (even though stop doesn't
+    need the LLM key to operate) — Phase 21 will use it as the session-
+    ownership gate. The header is parsed but the value is NOT read or
+    forwarded to the runner; stop is purely a docker-lifecycle operation.
+
+    G3 (spike-07): per-recipe ``sigterm_handled`` + ``graceful_shutdown_s``
+    are read from ``recipe.persistent.spec``. Nanobot sets
+    ``sigterm_handled=false`` which short-circuits the SIGTERM+poll phase
+    to an immediate force-rm; ``force_killed=true`` surfaces in the
+    response so clients can show the semantic difference.
+    """
+    if not authorization.startswith("Bearer "):
+        return _err(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            "Bearer token required",
+            param="Authorization",
+        )
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        if agent is None:
+            return _err(
+                404,
+                ErrorCode.AGENT_NOT_FOUND,
+                f"agent {agent_id} not found",
+                param="agent_id",
+            )
+        running = await fetch_running_container_for_agent(conn, agent_id)
+    if running is None:
+        return _err(
+            409,
+            ErrorCode.AGENT_NOT_RUNNING,
+            f"agent {agent_id} has no running container",
+            param="agent_id",
+        )
+
+    # Pull per-recipe stop policy. Defaults mirror the plan's safe
+    # fallback (5s SIGTERM window, sigterm_handled=True) when a recipe
+    # doesn't declare the fields (older recipes).
+    recipe = request.app.state.recipes.get(agent["recipe_name"]) or {}
+    persistent_spec = (recipe.get("persistent") or {}).get("spec") or {}
+    graceful = int(persistent_spec.get("graceful_shutdown_s", 5))
+    sigterm_handled = bool(persistent_spec.get("sigterm_handled", True))
+
+    # Long await — no DB held.
+    try:
+        details = await execute_persistent_stop(
+            running["container_id"],
+            graceful_shutdown_s=graceful,
+            sigterm_handled=sigterm_handled,
+            recipe_name=agent["recipe_name"],
+            data_dir=None,
+        )
+    except Exception:
+        _log.exception(
+            "execute_persistent_stop raised",
+            extra={
+                "agent_id": str(agent_id),
+                "container_id": running["container_id"],
+            },
+        )
+        return _err(
+            502,
+            ErrorCode.INFRA_UNAVAILABLE,
+            "stop failed",
+            category="INFRA_FAIL",
+        )
+
+    async with pool.acquire() as conn:
+        await mark_agent_container_stopped(
+            conn, UUID(running["id"]), last_error=None
+        )
+
+    return AgentStopResponse(
+        agent_id=agent_id,
+        container_row_id=UUID(running["id"]),
+        container_id=running["container_id"],
+        stopped_gracefully=bool(details.get("stopped_gracefully")),
+        force_killed=bool(details.get("force_killed")),
+        exit_code=int(details.get("exit_code") if details.get("exit_code") is not None else -1),
+        stop_wall_s=float(details.get("stop_wall_s") or 0.0),
+    ).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/agents/:id/status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agents/{agent_id}/status")
+async def agent_status(
+    request: Request,
+    agent_id: UUID,
+):
+    """Return current state of the agent + its persistent container.
+
+    This is the ONLY endpoint in the persistent-mode surface that does
+    NOT require a Bearer token: it's read-only metadata, returns no
+    secrets (the age-encrypted channel_config is never decoded here),
+    and frontends poll it every few seconds for liveness UI. Phase 21
+    will add session-cookie auth; until then, any caller can read any
+    agent's status (matching the rest of Phase 19's ANONYMOUS_USER_ID
+    single-tenant posture).
+
+    When the agent exists but has no container row yet (never started,
+    or the last start failed), we return a degenerate 200 with only
+    ``agent_id`` populated — never a 404 on this path so polling
+    frontends don't have to distinguish "agent gone" vs "container
+    gone".
+
+    G5 (spike-11): the ``http_code`` / ``ready`` fields come from the
+    dual-branch health probe in ``execute_persistent_status`` — only
+    populated when ``recipe.persistent.spec.health_check.kind == "http"``
+    (picoclaw/nanobot/openclaw). Process-alive recipes (hermes,
+    nullclaw) return ``None`` for both.
+    """
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        if agent is None:
+            return _err(
+                404,
+                ErrorCode.AGENT_NOT_FOUND,
+                f"agent {agent_id} not found",
+                param="agent_id",
+            )
+        running = await fetch_running_container_for_agent(conn, agent_id)
+
+    if running is None:
+        # Degenerate but valid: agent exists, no running container.
+        # Respond 200 with every optional field left NULL.
+        return AgentStatusResponse(agent_id=agent_id).model_dump(mode="json")
+
+    # Probe docker outside DB scope.
+    recipe = request.app.state.recipes.get(agent["recipe_name"]) or {}
+    recipe_health_check = (
+        ((recipe.get("persistent") or {}).get("spec") or {}).get("health_check")
+        or {"kind": "process_alive"}
+    )
+    try:
+        probe = await execute_persistent_status(
+            running["container_id"],
+            recipe_health_check=recipe_health_check,
+            log_tail_lines=50,
+        )
+    except Exception:
+        # Probe should be self-degrading; belt-and-braces for any
+        # unexpected raise (docker daemon gone, permissions broken, ...).
+        _log.exception(
+            "execute_persistent_status raised",
+            extra={
+                "agent_id": str(agent_id),
+                "container_id": running["container_id"],
+            },
+        )
+        probe = {
+            "running": False,
+            "exit_code": None,
+            "log_tail": [],
+            "http_code": None,
+            "ready": None,
+        }
+
+    return AgentStatusResponse(
+        agent_id=agent_id,
+        container_row_id=UUID(running["id"]),
+        container_id=running["container_id"],
+        container_status=running["container_status"],
+        channel=running.get("channel_type"),
+        ready_at=running.get("ready_at"),
+        boot_wall_s=running.get("boot_wall_s"),
+        runtime_running=bool(probe.get("running")),
+        runtime_exit_code=probe.get("exit_code"),
+        http_code=probe.get("http_code"),
+        ready=probe.get("ready"),
+        log_tail=probe.get("log_tail") or [],
+    ).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/agents/:id/channels/:cid/pair
+# ---------------------------------------------------------------------------
+
+
+@router.post("/agents/{agent_id}/channels/{cid}/pair")
+async def pair_channel(
+    request: Request,
+    agent_id: UUID,
+    cid: str,
+    body: AgentChannelPairRequest,
+    authorization: str = Header(default=""),
+):
+    """Run the recipe-declared pairing approve command inside the container.
+
+    Openclaw is the first caller: ``openclaw pairing approve telegram
+    <CODE>`` runs inside the agent's container via ``docker exec`` so
+    the user can complete Telegram pairing from the platform UI instead
+    of opening a shell. The argv template is in
+    ``recipe.channels.<cid>.pairing.approve_argv`` — the route layer is
+    agent-agnostic; adding another agent with a pairing CLI is purely a
+    recipe change.
+
+    G4 (spike-10): openclaw's pairing CLI cold-boots the full plugin
+    registry per invocation — empirical wall time ~60s. We pass
+    ``timeout_s=90`` to ``execute_persistent_exec`` (not 30s, the
+    default) so the call has headroom. Per-endpoint rate limiting
+    (3 req/min per user) is noted below for the middleware layer; until
+    Phase 21's real session resolution lands, the global rate limiter
+    covers this with the same budget as every other POST.
+
+    Argv substitution: ``$CODE`` is replaced literal-style via
+    ``str.replace``. ``AgentChannelPairRequest.code`` regex forbids ``$``
+    in the user-supplied value so recursive substitution is impossible.
+    """
+    if not authorization.startswith("Bearer "):
+        return _err(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            "Bearer token required",
+            param="Authorization",
+        )
+
+    # NOTE: G4 rate-limit hook — when Phase 21 wires per-route rate
+    # budgets, add an entry here for 3 req/min per user. Today the
+    # module-level middleware applies the global budget; openclaw's
+    # ~60s cold-boot per call is still within that envelope for normal
+    # UI-driven use.
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        if agent is None:
+            return _err(
+                404,
+                ErrorCode.AGENT_NOT_FOUND,
+                f"agent {agent_id} not found",
+                param="agent_id",
+            )
+        running = await fetch_running_container_for_agent(conn, agent_id)
+    if running is None:
+        return _err(
+            409,
+            ErrorCode.AGENT_NOT_RUNNING,
+            f"agent {agent_id} has no running container",
+            param="agent_id",
+        )
+
+    recipe = request.app.state.recipes.get(agent["recipe_name"])
+    if recipe is None:
+        return _err(
+            500,
+            ErrorCode.INTERNAL,
+            f"recipe {agent['recipe_name']!r} missing from server state",
+        )
+
+    channel_spec = (recipe.get("channels") or {}).get(cid)
+    if channel_spec is None:
+        return _err(
+            400,
+            ErrorCode.CHANNEL_NOT_CONFIGURED,
+            (
+                f"recipe {agent['recipe_name']!r} does not support channel "
+                f"{cid!r}"
+            ),
+            param="cid",
+        )
+    pairing = channel_spec.get("pairing") or {}
+    approve_argv = pairing.get("approve_argv")
+    if not approve_argv:
+        return _err(
+            400,
+            ErrorCode.CHANNEL_NOT_CONFIGURED,
+            (
+                f"channel {cid} on recipe {agent['recipe_name']!r} has no "
+                "pairing.approve_argv"
+            ),
+            param="cid",
+        )
+
+    # $CODE substitution. Code regex forbids '$' — no recursive sub risk.
+    argv = [str(a).replace("$CODE", body.code) for a in approve_argv]
+
+    try:
+        details = await execute_persistent_exec(
+            request.app.state,
+            running["container_id"],
+            argv,
+            timeout_s=90,  # G4: openclaw cold-boot ~60s; 90s gives headroom
+        )
+    except Exception:
+        _log.exception(
+            "execute_persistent_exec raised",
+            extra={
+                "agent_id": str(agent_id),
+                "container_id": running["container_id"],
+            },
+        )
+        return _err(
+            502,
+            ErrorCode.INFRA_UNAVAILABLE,
+            "pair command failed",
+            category="INFRA_FAIL",
+        )
+
+    wall = float(details.get("wall_time_s") or 0.0)
+    return AgentChannelPairResponse(
+        agent_id=agent_id,
+        channel=cid,
+        exit_code=int(
+            details.get("exit_code") if details.get("exit_code") is not None else -1
+        ),
+        stdout_tail=str(details.get("stdout_tail") or ""),
+        stderr_tail=str(details.get("stderr_tail") or ""),
+        wall_time_s=wall,
+        wall_s=wall,  # G4: alias — client-facing elapsed-time readout
+    ).model_dump(mode="json")
