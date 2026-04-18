@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: ready_for_hetzner_deploy
-stopped_at: "Phase 20 shipped (SC-11 PASSED via headless-Chromium smoke); 19-07 Task 3 Hetzner deploy is now unblocked"
-last_updated: "2026-04-17T21:05:00.000Z"
+status: executing
+stopped_at: context exhaustion at 90% (2026-04-18)
+last_updated: "2026-04-18T03:45:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,25 +20,42 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 20 — frontend-alicerce
+**Current focus:** Phase 22 — channels v0.2 (schema + runner persistent mode + UI)
 
 ## Current Position
 
-Phase: 20 (frontend-alicerce) — EXECUTING
-Plan: 1 of 5
-Plans: 5 of 5 created in 3 waves; plan-checker REVISE_MINOR resolved (4 fixes applied)
-Next:  `/gsd-execute-phase 20` — a fresh `/clear` is recommended first (planning consumed ~900K tokens across agent spawns)
-Status: Executing Phase 20
+Phase: 22 (channels-v0.2) — CONTEXT LOCKED, READY TO PLAN
+Next:  `/gsd-plan-phase 22a` — schema v0.2, runner --mode persistent, 3 new API endpoints, frontend Step 2.5.
 
-Progress: Phase 20 planning artifacts complete — CONTEXT (14 decisions), RESEARCH (10 focused Qs + 8 pitfalls), UI-SPEC (30 locked copy strings + ASCII wireframes), PATTERNS (6 analogs mapped), 5 PLANs validated.
+Progress (2026-04-18):
+- All 5 recipes carry v0.2-draft `persistent:` + `channels.telegram`
+  blocks with `verified_cells[]` from empirical Telegram round-trips.
+- hermes / picoclaw / nullclaw / nanobot: FULL_PASS via OpenRouter.
+- openclaw: FULL_PASS via Anthropic direct; `provider_compat.
+  deferred: [openrouter]` due to isolated upstream plugin bug in
+  image 2026.4.15-beta.1 (LLM calls abort pre-flight with
+  attempts: []; Anthropic direct works end-to-end).
+- Canonical docs URLs commented on each recipe (kept in sync when
+  recipe changes).
+- Bespoke per-agent recon methodology validated — doc-only recon
+  (CHANNEL-RECON.md) superseded by empirical per-agent verification
+  (schema-from-reality notes live in each recipe).
+
+Phase 20 (frontend-alicerce) — EXECUTED separately on 2026-04-17
+(Playground UI banho de loja + inline ModelBrowser + higher-contrast
+primitives shipped in commit a3c95fe).
 
 ## 📍 RESUME ANCHOR — READ THIS FIRST AFTER /clear
 
-**Primary resume file:** `.planning/phases/20-frontend-alicerce/20-CONTEXT.md`
+**Primary resume file:** `.planning/phases/22-channels-v0.2/22-CONTEXT.md`
 
-It captures: 14 locked decisions (D-01..D-14), success criteria (SC-01..SC-11), user-approved ASCII UI preview, scope boundaries (what's IN and what's OUT), canonical refs, and deferred ideas.
+It captures: scope (schema v0.2 + 4/5 Telegram rail + openclaw
+Anthropic path), per-recipe evidence matrix, SC-01..SC-06 exit
+gate, canonical doc URLs, openrouter plugin deferred status.
 
-**The next command is:** `/gsd-execute-phase 19 --wave 4` — run the previously-cancelled Hetzner deploy now that the dumb playground is live.
+**The next command is:** `/gsd-plan-phase 22a` — produce PLAN
+breakdown (schema formalization, runner persistent mode, API
+endpoints, frontend Step 2.5).
 
 Read files in this order after /clear:
 
@@ -300,9 +317,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-17T03:09:14.761Z
+Last session: 2026-04-18T03:14:21.826Z
 
-Stopped at: Completed 19-07-PLAN.md Tasks 1+2 (artifacts + local smoke); Task 3 human-verify checkpoint PENDING — deploy to Hetzner box required
+Stopped at: context exhaustion at 90% (2026-04-18)
 
 **Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
 
