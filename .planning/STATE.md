@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
+status: Executing Phase 22
 stopped_at: context exhaustion at 90% (2026-04-18)
-last_updated: "2026-04-18T04:00:00.000Z"
+last_updated: "2026-04-18T17:26:44.695Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,23 +20,37 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 22 — channels v0.2 (schema + runner persistent mode + UI)
+**Current focus:** Phase 22 — channels-v0.2
 
 ## Current Position
 
-Phase: 22a (channels-v0.2) — **FULLY PLANNED, READY TO EXECUTE**
-Next:  `/gsd-execute-phase 22a` — 7 PLAN files sealed, plan-checker PASS after 2 revision waves (G1..G5 spike findings + I1..I3 contract fixes).
+Phase: 22 (channels-v0.2) — EXECUTED (6 of 7 plans fully complete; 22-07 Tasks 1+2 shipped, Task 3 CHECKPOINT_PENDING)
+Plan: 22-07 Task 3 — SC-03 live-Telegram gate awaiting user supervised run
+Next:  User runs `bash test/e2e_channels_v0_2.sh --recipe hermes --rounds 1` (supervised first round), then `bash test/e2e_channels_v0_2.sh` (full 15-round stability). Resume signal: `approved` if 15/15 PASS. Then `/gsd-verify-work 22` + ROADMAP mark.
+
+Execution summary (2026-04-18):
+- Wave 1: 22-01 (v0.2 schema + JSON Schema + RecipeSummary surface) + 22-02 (alembic 003 agent_containers + age-KEK crypto) — merged at 439d3b5
+- Wave 2: 22-03 (runner `run_cell_persistent`/`stop_persistent`/`exec_in_persistent`) + 22-04 (async bridge wrappers `execute_persistent_{start,stop,status,exec}`) — merged at 9784615
+- Wave 3: 22-05 (4 HTTP endpoints /v1/agents/:id/{start,stop,status,channels/:cid/pair}) — merged at 60496b2
+- Wave 4: 22-06 (frontend Step 2.5 + PairingModal + TS types, Rule-2 dumb-client verified) — merged at d27f288
+- Wave 5: 22-07 Tasks 1+2 (test/lib/telegram_harness.py + test/e2e_channels_v0_2.sh) — merged at a38f74d
+
+SC-03 gate (live 15/15 Telegram round-trip) is the final exit criterion.
 
 Progress (2026-04-18):
+
 - All 5 recipes carry v0.2-draft `persistent:` + `channels.telegram`
   blocks with `verified_cells[]` from empirical Telegram round-trips.
+
 - hermes / picoclaw / nullclaw / nanobot: FULL_PASS via OpenRouter.
 - openclaw: FULL_PASS via Anthropic direct; `provider_compat.
   deferred: [openrouter]` due to isolated upstream plugin bug in
   image 2026.4.15-beta.1 (LLM calls abort pre-flight with
   attempts: []; Anthropic direct works end-to-end).
+
 - Canonical docs URLs commented on each recipe (kept in sync when
   recipe changes).
+
 - Bespoke per-agent recon methodology validated — doc-only recon
   (CHANNEL-RECON.md) superseded by empirical per-agent verification
   (schema-from-reality notes live in each recipe).
@@ -47,10 +61,13 @@ primitives shipped in commit a3c95fe).
 
 Desiccated audit (2026-04-18) — `.planning/audit/` now holds three
 FROZEN inventory docs:
+
 - BACKEND-DESICCATED.md (9 routes, 7 services, 4 middleware, status
   classified; 5 top gaps identified; production-ready foundation)
+
 - FRONTEND-DESSICATED.md (32 pages + 15 components; 71% real / 29%
   mock; Rule-1/2/3 scorecard)
+
 - ACTION-LIST.md (consolidated execution order — per user directive
   2026-04-18 EVERY mocked page gets real backend wiring, zero
   deletions; /signup is the only open decision pending OAuth landing)
@@ -65,9 +82,11 @@ agent runs history. Multi-phase work ordered after OAuth unblock.
 
 1. `.planning/audit/ACTION-LIST.md` — what to build (prioritized,
    per-page with real endpoint specs; open decisions flagged)
+
 2. `.planning/phases/22-channels-v0.2/22-CONTEXT.md` — Phase 22a
    scope already CONTEXT-locked (channels v0.2 schema + runner
    persistent mode); runs in parallel with OAuth prework
+
 3. `.planning/audit/BACKEND-DESICCATED.md` — per-route status
 4. `.planning/audit/FRONTEND-DESSICATED.md` — per-page status
 
@@ -75,8 +94,10 @@ agent runs history. Multi-phase work ordered after OAuth unblock.
 
 - `/gsd-execute-phase 22a` — execute channels v0.2 (all 7 plans
   sealed, spike-verified, checker-PASS). Independent of OAuth.
+
 - In parallel: `/gsd-spec-phase 22b-oauth` — spec OAuth (Google +
   GitHub), `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
+
 - Quick cleanup wins (can ship anytime): GET /v1/personalities +
   drop frontend PERSONALITIES catalog; add tagline/accent fields
   to RecipeSummary + drop frontend maps; fix pass_if NULL bug (B1).
