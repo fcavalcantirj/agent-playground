@@ -101,6 +101,17 @@ def to_summary(recipe: dict) -> RecipeSummary:
     build = recipe.get("build") or {}
     observed = build.get("observed") or {}
 
+    verified_cells = smoke.get("verified_cells") or []
+    verified_models: list[str] = []
+    for cell in verified_cells:
+        if not isinstance(cell, dict):
+            continue
+        if cell.get("verdict") != "PASS":
+            continue
+        m = cell.get("model")
+        if isinstance(m, str) and m and m not in verified_models:
+            verified_models.append(m)
+
     return RecipeSummary(
         name=recipe["name"],
         apiVersion=recipe.get("apiVersion", "ap.recipe/v0.1"),
@@ -115,4 +126,5 @@ def to_summary(recipe: dict) -> RecipeSummary:
         pass_if=pass_if_val,
         license=metadata.get("license"),
         maintainer=metadata.get("maintainer"),
+        verified_models=verified_models,
     )

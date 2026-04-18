@@ -53,6 +53,7 @@ class RecipeSummary(BaseModel):
     pass_if: str | None = None
     license: str | None = None
     maintainer: str | None = None
+    verified_models: list[str] = Field(default_factory=list)
 
 
 class RecipeListResponse(BaseModel):

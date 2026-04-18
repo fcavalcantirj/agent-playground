@@ -27,6 +27,7 @@ export type RecipeSummary = {
   pass_if?: string | null;
   license?: string | null;
   maintainer?: string | null;
+  verified_models?: string[];  // from smoke.verified_cells[].model (PASS only)
 };
 
 export type OpenRouterModel = {

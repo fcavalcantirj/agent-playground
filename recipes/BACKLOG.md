@@ -9,6 +9,24 @@
 >
 > **The stars-desc queue below is now live again.** New recipes should declare `apiVersion: ap.recipe/v0.1` and follow the contribution checklist in [`README.md`](./README.md). Top of queue: **ZeroClaw** (30,171 ★, Rust).
 
+## Cross-cutting chore — test matrix expansion (ADDED 2026-04-17)
+
+Today each of the 5 committed recipes has **at most 1 PASS cell** in `smoke.verified_cells[]` (hermes is the only one with 2). The `GET /v1/recipes` endpoint now exposes `verified_models[]` which the playground frontend uses to pin "tested" models on top of the model browser — so the thinness of the matrix is now **user-facing**, not just an internal recon artifact.
+
+**Goal:** every v0.1 recipe validated against at least 3 PASS cells across ≥2 providers, so the frontend "Tested (N)" toggle surfaces real choice.
+
+**Candidate target set** (cheap, diverse, OpenRouter-routable):
+
+- `openai/gpt-4o-mini` (already covered on hermes, nanobot, picoclaw)
+- `anthropic/claude-haiku-4.5` (already covered on hermes, nullclaw, openclaw; OpenRouter renamed from `-4-5` → `-4.5` — see drift fix 2026-04-17)
+- `google/gemini-2.5-flash` — currently `known_incompatible_cells` on hermes, retest against the others
+- `qwen/qwen3-max` or `qwen/qwen2.5-7b-instruct:free` (FREE tier probe)
+- `meta-llama/llama-3.3-70b-instruct:free` (FREE tier probe)
+
+**Gating rule:** a cell only lands in `verified_cells` if it's truly reproducible with `tools/run_recipe.py --json` — flaky/stochastic cells go to `known_incompatible_cells` or a new `known_stochastic_cells[]` bucket (schema addition needed).
+
+**Sequencing:** this chore is compatible with the stars-desc queue below — it can run in parallel with new-agent work and doesn't block ZeroClaw. Recommended order: one recipe at a time, commit per-recipe YAML append with the new PASS cells.
+
 Tracking agents we want to validate against `ap.recipe/v0.1`. A row flips to `[x]` only when the recipe is committed **and** `tools/run_recipe.py` returns `PASS` against at least one model cell.
 
 **Status legend**
