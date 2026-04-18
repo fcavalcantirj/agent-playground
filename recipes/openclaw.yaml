@@ -121,7 +121,7 @@ smoke:
   case_insensitive: true
   timeout_s: 180
   verified_cells:
-    - model: anthropic/claude-haiku-4-5
+    - model: anthropic/claude-haiku-4.5
       verdict: PASS
       notes: |
         Forcing prompt "What is OpenClaw? Reply..." yields a single clean

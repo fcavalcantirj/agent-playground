@@ -131,7 +131,7 @@ smoke:
   case_insensitive: true
   timeout_s: 90
   verified_cells:
-    - model: anthropic/claude-haiku-4-5
+    - model: anthropic/claude-haiku-4.5
       verdict: PASS
       wall_time_s: 2.42
       notes: |

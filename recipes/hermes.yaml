@@ -94,6 +94,7 @@ invoke:
       - "30"
       - --source
       - tool
+      - --verbose
     argv_note: |
       --yolo: skip interactive approval prompts. Safe because the container
               is the approval boundary in Agent Playground's isolation model.
@@ -101,6 +102,11 @@ invoke:
               fine for real sessions but wasteful for smoke tests.
       --source tool: tag the session so it doesn't pollute the user's
               session list in the TUI.
+      --verbose: surfaces upstream LLM errors (401/402/429/5xx) on stderr.
+              Without this, hermes's `run_agent` + `root` loggers are
+              suppressed, making every upstream failure look identical:
+              exit 1, empty stderr, stdout cut at `session_id:`. See debug
+              session `.planning/debug/hermes-invoke-fail-silent-stderr.md`.
     stdout_filter:
       engine: awk
       program: |
@@ -113,7 +119,7 @@ invoke:
         Cuts at the "Done: <N> new" skill-sync terminator to skip the
         83-line preamble, then captures until "session_id:", stripping
         Rich panel box-drawing chars (╭│╰) inside the window.
-        Known quirk: some models (e.g. claude-haiku-4-5) emit the reply
+        Known quirk: some models (e.g. claude-haiku-4.5) emit the reply
         TWICE — once inside a Rich panel with 4-space indent, once as
         plain text immediately after. This filter preserves both; the
         consumer should dedupe if a single copy is required. Shorter
@@ -129,7 +135,7 @@ smoke:
   case_insensitive: true
   timeout_s: 60
   verified_cells:
-    - model: anthropic/claude-haiku-4-5
+    - model: anthropic/claude-haiku-4.5
       verdict: PASS
       wall_time_s: 12.86
       notes: Adopts persona cleanly. Response duplicated in stdout (Rich + plain).
