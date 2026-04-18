@@ -287,7 +287,8 @@ persistent:
       kind: http
       port: 18789
       path: /
-    graceful_shutdown_s: 10      # openclaw takes 45-75s to boot, SIGTERM drain is also heavier
+    graceful_shutdown_s: 5       # per spike-07 (openclaw takes 45-75s to boot but SIGTERM drain is ~5s)
+    sigterm_handled: true
   argv_note: |
     Two-stage bootstrap: (1) write openclaw.json with channels.telegram
     (dmPolicy="allowlist" + allowFrom with "tg:" prefix) + agents.defaults.

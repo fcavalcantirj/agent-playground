@@ -7,6 +7,22 @@
 
 ---
 
+## 2026-04-19 — Spike-sourced plan revisions absorbed (G1–G5)
+
+The 5 gotchas documented in `22-SPIKES/RESULTS.md` §"Gotchas requiring plan revision" have been absorbed into the PLAN files. Each revision is a mechanical delta — no structural rewrite.
+
+| ID | Spike | Plans touched | Summary |
+|----|-------|---------------|---------|
+| G1 | spike-02 | 22-02 | pyrage API — use module-level `pyrage.passphrase.encrypt/decrypt`; Recipient.from_str / Identity.from_str don't exist |
+| G2 | spike-01 | 22-02 | New Task 0 — add `pyrage` + `cryptography` to `api_server/pyproject.toml`, introduce `AP_CHANNEL_MASTER_KEY` env, rebuild api_server image |
+| G3 | spike-07 | 22-03, 22-05, 5 recipe YAMLs | Per-recipe `graceful_shutdown_s` (hermes 15, picoclaw 2, nullclaw 10, openclaw 5, nanobot 0); `sigterm_handled: true` on all except nanobot (false); `stop_persistent` skips SIGTERM when `sigterm_handled=false`; returns `force_killed: bool` surfaced through AgentStopResponse |
+| G4 | spike-10 | 22-05, 22-06 | openclaw pair approve is ~60s cold-boot (not 2s). `docker exec` timeout 90s; response schema adds `wall_s`; endpoint rate-limit 3 req/min/user; PairingModal 90s fetch timeout + up-front UX disclosure + retry disabled until first response + spinner elapsed-time readout |
+| G5 | spike-11 | 22-01, 22-05, 5 recipe YAMLs | `health_check` is a `oneOf` union (`process_alive` \| `http{port,path}`). Recipe YAMLs: hermes process_alive, picoclaw http 18790 `/health` (NOT `/ready` — 503 even when OK), nanobot http 18790 `/health`, openclaw http 18789 `/`, nullclaw process_alive. `GET /status` dual-branch probe with `curl \|\| wget` fallback for image toolchain variance |
+
+**Next:** re-run plan-checker against the revised PLANs to confirm the absorbed deltas match the spike evidence before executing Wave 1.
+
+---
+
 ## Per-plan verdict
 
 | Plan | Wave | Hours | Status | Critical issues |

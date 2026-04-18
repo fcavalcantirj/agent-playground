@@ -237,8 +237,9 @@ persistent:
     health_check:
       kind: http
       port: 18790
-      path: /ready
-    graceful_shutdown_s: 5
+      path: /health
+    graceful_shutdown_s: 2
+    sigterm_handled: true
   argv_note: |
     Three-stage bootstrap inside one container: (1) write config.json with
     channel_list + model routing (api_key intentionally omitted — lives in

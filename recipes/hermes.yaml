@@ -223,7 +223,8 @@ persistent:
     ready_log_regex: "gateway\\.run: ✓ (\\w+) connected"
     health_check:
       kind: process_alive
-    graceful_shutdown_s: 5
+    graceful_shutdown_s: 15
+    sigterm_handled: true
   argv_note: |
     `hermes gateway run -v` is the non-interactive persistent daemon. A
     single gateway process hosts every channel whose env vars are set
