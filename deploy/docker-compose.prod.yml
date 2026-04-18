@@ -45,6 +45,11 @@ services:
       # appears in compose config output or `docker inspect`. deploy.sh writes
       # .env.prod from secrets/pg_password at deploy time.
       DATABASE_URL: postgresql+asyncpg://ap:${POSTGRES_PASSWORD}@postgres:5432/agent_playground_api
+      # Phase 22-02: channel credential encryption master key (32 bytes base64).
+      # Sourced from .env.prod via env_file below. When unset AND AP_ENV=prod,
+      # the crypto module raises on first use (fail-loud). In dev (AP_ENV=dev)
+      # the helper falls back to 32 zero bytes — never ship that fallback.
+      AP_CHANNEL_MASTER_KEY: ${AP_CHANNEL_MASTER_KEY}
     env_file:
       - .env.prod
     volumes:

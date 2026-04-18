@@ -1,6 +1,9 @@
 .env
 .env.local
 .env.*.local
+# Phase 22-02: deploy/.env.prod holds live POSTGRES_PASSWORD and
+# AP_CHANNEL_MASTER_KEY. Template lives in deploy/.env.prod.example.
+deploy/.env.prod
 
 # Python
 __pycache__/

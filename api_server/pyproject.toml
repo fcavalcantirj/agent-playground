@@ -25,6 +25,13 @@ dependencies = [
   "asgi-correlation-id>=4.3.4,<5",
   "ruamel.yaml>=0.17.21",
   "jsonschema>=4.23",
+  # Phase 22-02: age-based encryption for channel credentials at rest.
+  # pyrage is a Rust-backed age binding (aligned with CLAUDE.md's
+  # filippo.io/age guidance); cryptography is used for HKDF per-user
+  # KEK derivation. Both verified present in the 22-SPIKES probes
+  # (spike-01, spike-02).
+  "pyrage>=1.2",
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]
