@@ -23,6 +23,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -938,6 +939,446 @@ def run_cell(
     return verdict_obj, details
 
 
+# ---------- persistent-mode helpers (Phase 22) ----------
+
+
+def _cleanup(env_file: Path, data_dir: Path) -> None:
+    """Best-effort teardown of env-file + tempdir on failure paths."""
+    try:
+        env_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if data_dir.exists():
+        subprocess.run(["rm", "-rf", str(data_dir)], check=False)
+
+
+def _force_remove(container_id: str) -> None:
+    """Best-effort `docker rm -f`. Swallows errors."""
+    subprocess.run(
+        ["docker", "rm", "-f", container_id],
+        timeout=10, check=False, capture_output=True,
+    )
+
+
+def _redact_channel_creds(
+    text: str,
+    api_key_var: str,
+    api_key_val: str,
+    required_inputs: list,
+    optional_inputs: list,
+    channel_creds: dict[str, str],
+) -> str:
+    """Apply _redact_api_key for the API key + every secret channel cred.
+
+    Covers both the `VAR=value` prefix form and (when the value is >= 8 chars)
+    bare-value occurrences. Non-secret inputs are still redacted via the
+    `VAR=` regex pass so stderr lines like `TELEGRAM_ALLOWED_USER=152099202`
+    don't leak the numeric id.
+    """
+    out = _redact_api_key(text, api_key_var, api_key_val)
+    for entry in (required_inputs or []) + (optional_inputs or []):
+        var = entry.get("env")
+        if not var:
+            continue
+        val = channel_creds.get(var)
+        out = _redact_api_key(out, var, val if entry.get("secret") else None)
+    return out
+
+
+def run_cell_persistent(
+    recipe: dict,
+    *,
+    image_tag: str,
+    model: str,
+    api_key_var: str,
+    api_key_val: str,
+    channel_id: str,
+    channel_creds: dict[str, str],
+    run_id: str,
+    quiet: bool = True,
+    boot_timeout_s: int = 180,
+) -> tuple[Verdict, dict]:
+    """Spawn a persistent container, poll readiness, return (Verdict, details).
+
+    Delta from run_cell():
+      - `docker run -d --name ap-agent-<run_id>` (NOT --rm)
+      - argv sourced from recipe["persistent"]["spec"]["argv"]
+      - env-file contains BOTH api_key_var=api_key_val AND every
+        channel_creds entry (plus prefix_required transforms)
+      - polls `docker logs <cid>` for persistent.spec.ready_log_regex
+        within boot_timeout_s
+      - once ready, runs health_check probe (process_alive or http)
+      - returns container_id + ready_at + boot_wall_s in details dict
+
+    The caller (runner_bridge in Plan 22-04) is responsible for persisting
+    the container_id to the agent_containers table and for invoking
+    stop_persistent() with the matching graceful_shutdown_s + sigterm_handled
+    values on teardown.
+    """
+    # 1. Validate recipe has persistent + channel blocks.
+    persistent = recipe.get("persistent")
+    if not persistent:
+        raise RuntimeError(f"recipe {recipe['name']!r} has no persistent block")
+    spec = persistent.get("spec") or {}
+    if not spec.get("argv"):
+        raise RuntimeError(
+            f"recipe {recipe['name']!r} persistent.spec.argv is required"
+        )
+    if not spec.get("ready_log_regex"):
+        raise RuntimeError(
+            f"recipe {recipe['name']!r} persistent.spec.ready_log_regex is required"
+        )
+    if not spec.get("health_check"):
+        raise RuntimeError(
+            f"recipe {recipe['name']!r} persistent.spec.health_check is required"
+        )
+    channels = recipe.get("channels") or {}
+    channel = channels.get(channel_id)
+    if not channel:
+        raise RuntimeError(
+            f"recipe {recipe['name']!r} does not support channel {channel_id!r}"
+        )
+
+    required_inputs = list(channel.get("required_user_input") or [])
+    optional_inputs = list(channel.get("optional_user_input") or [])
+
+    # Validate all REQUIRED entries are present in channel_creds.
+    missing = [e["env"] for e in required_inputs if e["env"] not in channel_creds
+               or channel_creds.get(e["env"]) in (None, "")]
+    if missing:
+        raise RuntimeError(
+            f"channel {channel_id} missing required inputs: {missing}"
+        )
+
+    # 2. Assemble argv with model substitution (no $PROMPT in persistent mode).
+    raw_argv = spec["argv"]
+    argv = substitute_argv(list(raw_argv), prompt="", model=model)
+
+    # 3. Build env-file with secrets + channel creds + prefix_required transforms.
+    env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
+    lines = [f"{api_key_var}={api_key_val}"]
+    for entry in required_inputs + optional_inputs:
+        var = entry.get("env")
+        if not var:
+            continue
+        val = channel_creds.get(var)
+        if val is None or val == "":
+            continue
+        # Honor prefix_required (openclaw: "tg:" prepends to user ID value).
+        prefix = entry.get("prefix_required") or ""
+        lines.append(f"{var}={prefix}{val}")
+    env_file.write_text("\n".join(lines) + "\n")
+    try:
+        env_file.chmod(0o600)
+    except OSError:
+        pass
+
+    # 4. Build docker run command — DETACHED + NAMED + no --rm.
+    vol = recipe["runtime"]["volumes"][0]
+    container_mount = vol["container"]
+    entrypoint = spec.get("entrypoint")
+    user_override = spec.get("user_override")
+    data_dir = Path(tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-"))
+    container_name = f"ap-agent-{run_id}"
+
+    docker_cmd = [
+        "docker", "run", "-d",
+        "--name", container_name,
+        "--env-file", str(env_file),
+        "-v", f"{data_dir}:{container_mount}",
+    ]
+    if user_override:
+        docker_cmd += ["--user", user_override]
+    if entrypoint:
+        docker_cmd += ["--entrypoint", entrypoint]
+    docker_cmd += [image_tag] + argv
+
+    log(f"  $ docker run -d --name {container_name} ... {image_tag} [argv elided]",
+        quiet=quiet)
+
+    # 5. Execute `docker run -d`, capture container_id from stdout.
+    t0 = time.time()
+    try:
+        result = subprocess.run(
+            docker_cmd, timeout=30, capture_output=True, text=True, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _cleanup(env_file, data_dir)
+        raise RuntimeError("docker run -d timed out after 30s")
+
+    if result.returncode != 0:
+        _cleanup(env_file, data_dir)
+        stderr = _redact_channel_creds(
+            result.stderr or "", api_key_var, api_key_val,
+            required_inputs, optional_inputs, channel_creds,
+        )
+        return Verdict(
+            Category.INVOKE_FAIL,
+            f"docker run -d exit {result.returncode}: {stderr[:200]}",
+        ), {
+            "recipe": recipe["name"],
+            "model": model,
+            "channel": channel_id,
+            "container_name": container_name,
+            "boot_wall_s": round(time.time() - t0, 2),
+        }
+
+    container_id = (result.stdout or "").strip()
+    if not container_id:
+        _cleanup(env_file, data_dir)
+        raise RuntimeError("docker run -d produced empty container id")
+
+    # 6. Poll `docker logs <container_id>` for ready_log_regex.
+    ready_regex = re.compile(spec["ready_log_regex"])
+    deadline = t0 + boot_timeout_s
+    ready = False
+    while time.time() < deadline:
+        logs_result = subprocess.run(
+            ["docker", "logs", "--tail", "200", container_id],
+            timeout=10, capture_output=True, text=True, check=False,
+        )
+        combined = (logs_result.stdout or "") + "\n" + (logs_result.stderr or "")
+        if ready_regex.search(combined):
+            ready = True
+            break
+        # Fail fast if container exited before ready_log matched.
+        inspect = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", container_id],
+            timeout=5, capture_output=True, text=True, check=False,
+        )
+        if (inspect.stdout or "").strip() != "true":
+            exit_code_res = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.ExitCode}}", container_id],
+                timeout=5, capture_output=True, text=True, check=False,
+            )
+            try:
+                exit_code = int((exit_code_res.stdout or "").strip())
+            except ValueError:
+                exit_code = -1
+            _force_remove(container_id)
+            _cleanup(env_file, data_dir)
+            redacted_logs = _redact_channel_creds(
+                combined[-500:], api_key_var, api_key_val,
+                required_inputs, optional_inputs, channel_creds,
+            )
+            return Verdict(
+                Category.INVOKE_FAIL,
+                f"container exited (code={exit_code}) before ready: "
+                f"{redacted_logs[-200:]}",
+            ), {
+                "recipe": recipe["name"],
+                "model": model,
+                "channel": channel_id,
+                "container_id": container_id,
+                "container_name": container_name,
+                "boot_wall_s": round(time.time() - t0, 2),
+                "exit_code": exit_code,
+            }
+        time.sleep(2)
+
+    if not ready:
+        _force_remove(container_id)
+        _cleanup(env_file, data_dir)
+        return Verdict(
+            Category.TIMEOUT,
+            f"ready_log_regex not matched within {boot_timeout_s}s",
+        ), {
+            "recipe": recipe["name"],
+            "model": model,
+            "channel": channel_id,
+            "container_id": container_id,
+            "container_name": container_name,
+            "boot_wall_s": round(time.time() - t0, 2),
+        }
+
+    # 7. Health check probe (log-match already proves readiness; HC is
+    #    a secondary signal for the status endpoint).
+    hc = spec["health_check"]
+    hc_ok = False
+    if hc["kind"] == "process_alive":
+        inspect = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", container_id],
+            timeout=5, capture_output=True, text=True, check=False,
+        )
+        hc_ok = (inspect.stdout or "").strip() == "true"
+    elif hc["kind"] == "http":
+        port = hc["port"]
+        path = hc.get("path") or "/"
+        url = f"http://127.0.0.1:{port}{path}"
+        # Alpine-based images may lack curl; fall back to wget.
+        probe = subprocess.run(
+            ["docker", "exec", container_id, "sh", "-c",
+             f"curl -fsS -m 5 {shlex.quote(url)} "
+             f"|| wget -q -O- --timeout=5 {shlex.quote(url)}"],
+            timeout=15, capture_output=True, text=True, check=False,
+        )
+        hc_ok = probe.returncode == 0
+    else:
+        # Do not fail the boot on unknown health_check kind — log match wins.
+        log(f"  WARN: unknown health_check kind: {hc['kind']!r}", quiet=quiet)
+        hc_ok = False
+
+    # 8. Return success details. Env-file is safe to unlink NOW — docker CLI
+    #    has already read it and delivered env vars to the container's kernel
+    #    namespace. data_dir stays until stop (container references its mount).
+    ready_at = datetime.now(timezone.utc)
+    boot_wall_s = round(time.time() - t0, 2)
+    try:
+        env_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    details = {
+        "recipe": recipe["name"],
+        "model": model,
+        "channel": channel_id,
+        "container_id": container_id,
+        "container_name": container_name,
+        "ready_at": ready_at.isoformat(),
+        "boot_wall_s": boot_wall_s,
+        "ready_log_matched": True,
+        "health_check_ok": hc_ok,
+        "health_check_kind": hc["kind"],
+        "data_dir": str(data_dir),
+    }
+    return Verdict(Category.PASS, ""), details
+
+
+def stop_persistent(
+    container_id: str,
+    *,
+    graceful_shutdown_s: int,
+    sigterm_handled: bool = True,
+    recipe_name: str | None = None,
+    data_dir: str | None = None,
+    quiet: bool = True,
+) -> tuple[Verdict, dict]:
+    """Gracefully stop a persistent container.
+
+    When sigterm_handled=False (e.g. nanobot — spike-07), skip the SIGTERM +
+    poll phase and go directly to `docker rm -f`. This is the documented
+    normal path for that recipe; log as a warning, not an error. Returns
+    with force_killed=True.
+
+    Steps:
+      1. If sigterm_handled: `docker kill -s TERM <cid>`
+      2. Poll `docker inspect State.Running` every 500ms until either False
+         or graceful_shutdown_s elapsed
+      3. Always `docker rm -f <cid>` (idempotent — removes whether already
+         exited or still running)
+      4. rm -rf data_dir if provided
+    """
+    t0 = time.time()
+    stopped_gracefully = False
+    force_killed = False
+
+    if not sigterm_handled:
+        # Recipe explicitly opts out of graceful shutdown (e.g. nanobot).
+        # This IS the normal path for that recipe — warning, not error.
+        if not quiet:
+            print(
+                f"WARN graceful shutdown skipped for recipe={recipe_name or '?'};"
+                f" force-killed per recipe flag"
+            )
+        force_killed = True
+    else:
+        # Step 1: SIGTERM
+        subprocess.run(
+            ["docker", "kill", "-s", "TERM", container_id],
+            timeout=10, capture_output=True, check=False,
+        )
+        # Step 2: poll for graceful exit.
+        deadline = t0 + graceful_shutdown_s
+        while time.time() < deadline:
+            inspect = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_id],
+                timeout=5, capture_output=True, text=True, check=False,
+            )
+            if (inspect.stdout or "").strip() != "true":
+                stopped_gracefully = True
+                break
+            time.sleep(0.5)
+        if not stopped_gracefully:
+            force_killed = True
+
+    # Step 3: capture exit code then force remove (idempotent — works whether
+    # the container exited cleanly or is still running).
+    exit_code_res = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.ExitCode}}", container_id],
+        timeout=5, capture_output=True, text=True, check=False,
+    )
+    try:
+        exit_code = int((exit_code_res.stdout or "").strip())
+    except ValueError:
+        exit_code = -1
+    subprocess.run(
+        ["docker", "rm", "-f", container_id],
+        timeout=10, capture_output=True, check=False,
+    )
+    # Step 4: cleanup data_dir.
+    if data_dir:
+        p = Path(data_dir)
+        if p.exists():
+            subprocess.run(["rm", "-rf", str(p)], check=False)
+
+    stop_wall_s = round(time.time() - t0, 2)
+    return Verdict(Category.PASS, ""), {
+        "container_id": container_id,
+        "exit_code": exit_code,
+        "stopped_gracefully": stopped_gracefully,
+        "force_killed": force_killed,
+        "stop_wall_s": stop_wall_s,
+    }
+
+
+def exec_in_persistent(
+    container_id: str,
+    argv: list[str],
+    *,
+    timeout_s: int = 30,
+) -> tuple[Verdict, dict]:
+    """Run a command inside a running persistent container via `docker exec`.
+
+    First caller is POST /v1/agents/:id/channels/:cid/pair with argv
+    ["openclaw", "pairing", "approve", "telegram", "<CODE>"]. Output is NOT
+    redacted here — the caller (runner_bridge / route) owns key/token
+    redaction in responses. Typical callers pass short non-sensitive codes.
+    """
+    t0 = time.time()
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container_id] + argv,
+            timeout=timeout_s, capture_output=True, text=True, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        wall = round(time.time() - t0, 2)
+        so = exc.stdout or b""
+        se = exc.stderr or b""
+        if isinstance(so, bytes):
+            so = so.decode(errors="replace")
+        if isinstance(se, bytes):
+            se = se.decode(errors="replace")
+        return Verdict(Category.TIMEOUT, f"exec exceeded {timeout_s}s"), {
+            "container_id": container_id,
+            "exit_code": -1,
+            "stdout_tail": so[-500:],
+            "stderr_tail": se[-500:],
+            "wall_time_s": wall,
+        }
+    wall = round(time.time() - t0, 2)
+    verdict = Verdict(
+        Category.PASS if result.returncode == 0 else Category.INVOKE_FAIL,
+        "" if result.returncode == 0 else f"exec exit {result.returncode}",
+    )
+    return verdict, {
+        "container_id": container_id,
+        "exit_code": result.returncode,
+        "stdout_tail": (result.stdout or "")[-500:],
+        "stderr_tail": (result.stderr or "")[-500:],
+        "wall_time_s": wall,
+    }
+
+
 # ---------- reporting ----------
 
 def emit_json(result: dict) -> None:
@@ -1078,6 +1519,46 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_false",
         help="In --all-cells mode, do not modify the recipe file.",
     )
+    # Phase 22 persistent-mode flags (manual testing seam; API runner_bridge
+    # is the primary interface).
+    p.add_argument(
+        "--mode",
+        choices=["smoke", "persistent"],
+        default="smoke",
+        help="smoke runs the one-shot; persistent spawns a long-lived container.",
+    )
+    p.add_argument(
+        "--channel",
+        default="telegram",
+        help="channel id for --mode persistent (default: telegram).",
+    )
+    p.add_argument(
+        "--channel-creds-env-prefix",
+        default="AP_CHANNEL_",
+        help=(
+            "In --mode persistent, channel creds are read from env vars matching"
+            " this prefix (e.g. AP_CHANNEL_TELEGRAM_BOT_TOKEN -> TELEGRAM_BOT_TOKEN)."
+            " Keeps shell history free of secrets and avoids fragile quoting."
+        ),
+    )
+    p.add_argument(
+        "--run-id",
+        default=None,
+        help="Container name suffix (default: fresh uuid4 hex). Container name"
+             " becomes ap-agent-<run_id>.",
+    )
+    p.add_argument(
+        "--boot-timeout-s",
+        type=int,
+        default=180,
+        help="Seconds to wait for persistent.spec.ready_log_regex to match.",
+    )
+    p.add_argument(
+        "--stop",
+        metavar="CONTAINER_ID",
+        default=None,
+        help="Stop a persistent container gracefully (SIGTERM -> wait -> rm -f).",
+    )
     return p.parse_args(argv)
 
 
@@ -1091,6 +1572,19 @@ def main(argv: list[str] | None = None) -> int:
         if not recipes_dir.exists():
             recipes_dir = Path.cwd() / "recipes"
         return _lint_all_recipes(recipes_dir)
+
+    # Step 2.5: --stop short-circuit (Phase 22 persistent mode teardown).
+    # Does not need a recipe — the container_id is self-describing. We pass
+    # graceful_shutdown_s=10 as a safe upper bound; the runner_bridge caller
+    # in Plan 22-04 threads the recipe's actual value.
+    if args.stop:
+        infra = preflight_docker()
+        if infra is not None:
+            emit_verdict_line(infra, recipe="(pre-flight)", model="", wall_s=0.0)
+            return 1
+        verdict, details = stop_persistent(args.stop, graceful_shutdown_s=10)
+        print(json.dumps({"verdict": verdict.verdict, **details}, indent=2))
+        return 0 if verdict.verdict == "PASS" else 1
 
     # Step 3: recipe path validation
     if args.recipe is None:
@@ -1165,6 +1659,74 @@ def main(argv: list[str] | None = None) -> int:
     if image_verdict is not None:
         emit_verdict_line(image_verdict, recipe=name, model="", wall_s=0.0)
         return 1
+
+    # Step 8.5: --mode persistent dispatch (Phase 22 manual-testing seam).
+    # The API runner_bridge (Plan 22-04) is the primary caller of
+    # run_cell_persistent; this path lets developers exercise the primitive
+    # from a shell without the API in the loop.
+    if args.mode == "persistent":
+        if args.all_cells:
+            sys.stderr.write(
+                "--all-cells is incompatible with --mode persistent "
+                "(persistent is not a cell sweep)\n"
+            )
+            return 2
+        channel_id = args.channel
+        channel_block = (recipe.get("channels") or {}).get(channel_id) or {}
+        if not channel_block:
+            sys.stderr.write(
+                f"recipe {name} has no channels.{channel_id} block\n"
+            )
+            return 2
+        required = channel_block.get("required_user_input") or []
+        optional = channel_block.get("optional_user_input") or []
+        creds: dict[str, str] = {}
+        for entry in required + optional:
+            env_key = f"{args.channel_creds_env_prefix}{entry['env']}"
+            val = os.environ.get(env_key)
+            if val:
+                creds[entry["env"]] = val
+        missing = [e["env"] for e in required if e["env"] not in creds]
+        if missing:
+            sys.stderr.write(
+                f"missing required channel creds (env "
+                f"{args.channel_creds_env_prefix}*): {missing}\n"
+            )
+            return 2
+        # Model: CLI positional arg wins; else first PASS cell.
+        model = args.model or first_pass_cell_model(recipe)
+        if model is None:
+            sys.stderr.write(
+                "ERROR: no model on CLI and no PASS verified_cell to fall back on\n"
+            )
+            return 2
+        run_id = args.run_id or uuid.uuid4().hex[:12]
+        log(f"\n--- persistent: {name} × {model} × {channel_id} "
+            f"(run_id={run_id}) ---", quiet=quiet)
+        verdict_obj, details = run_cell_persistent(
+            recipe,
+            image_tag=image_tag,
+            model=model,
+            api_key_var=api_key_var,
+            api_key_val=api_key_val,
+            channel_id=channel_id,
+            channel_creds=creds,
+            run_id=run_id,
+            quiet=quiet,
+            boot_timeout_s=args.boot_timeout_s,
+        )
+        out = {
+            "verdict": verdict_obj.verdict,
+            "category": verdict_obj.category.value,
+            "detail": verdict_obj.detail,
+            **details,
+        }
+        print(json.dumps(out, indent=2))
+        if verdict_obj.verdict != "PASS":
+            return 1
+        print(f"\ncontainer is running. To stop it:")
+        print(f"  python tools/run_recipe.py --stop {details['container_id']}")
+        return 0
 
     # Step 9: cell loop — run_cell returns (Verdict, dict); honor --global-timeout
     # Determine the (model, expected_verdict) list.
