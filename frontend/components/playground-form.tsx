@@ -30,6 +30,11 @@ import {
   type RunResponse,
   type UiError,
   type OpenRouterModel,
+  type RecipeDetail,
+  type ChannelEntry,
+  type ChannelUserInput,
+  type AgentStartRequest,
+  type AgentStartResponse,
 } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +45,7 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 
 import { RunResultCard } from "@/components/run-result-card";
+import { PairingModal } from "@/components/pairing-modal";
 
 const PASS_IF_HUMAN: Record<string, string> = {
   response_contains_name: "PASS when the agent's reply mentions its own name",
@@ -105,6 +111,24 @@ export function PlaygroundForm({
   const [recipeQuery, setRecipeQuery] = useState("");
   const [recentModels, setRecentModels] = useState<string[]>([]);
 
+  // ─── Step 2.5 state — persistent-mode deploy + channel inputs ─────────
+  // CLAUDE.md Rule 2: channel metadata is server-supplied via recipeDetail;
+  // no hardcoded CHANNELS constant or channel-specific field lists here.
+  type DeployMode = "smoke" | "persistent";
+  const [deployMode, setDeployMode] = useState<DeployMode>("smoke");
+  const [selectedChannel, setSelectedChannel] = useState<string>("telegram");
+  const [channelInputs, setChannelInputs] = useState<Record<string, string>>({});
+  const [recipeDetail, setRecipeDetail] = useState<RecipeDetail | null>(null);
+  const [startResponse, setStartResponse] = useState<AgentStartResponse | null>(null);
+  const [pairingModalOpen, setPairingModalOpen] = useState(false);
+  const [agentInstanceId, setAgentInstanceId] = useState<string | null>(null);
+  // Bearer is lifecycle-scoped for the pairing modal only — the Step 4
+  // `byok` state is cleared on submit (BYOK discipline), but the pair
+  // endpoint still needs an Authorization header, so we copy byok into a
+  // separate state the moment a pairing flow is required. Cleared on
+  // modal close.
+  const [pairingBearer, setPairingBearer] = useState("");
+
   const onRetryExpire = useCallback(() => setUiError(null), []);
   const remainingSec = useRetryCountdown(uiError, onRetryExpire);
 
@@ -154,6 +178,33 @@ export function PlaygroundForm({
     return () => { cancelled = true; };
   }, []);
 
+  // ─── Recipe detail fetch — powers Step 2.5 channel input metadata ─────
+  // Rule 2: GET /v1/recipes/:name is the source of truth for
+  // channels.<cid>.required_user_input + optional_user_input. Re-fetches
+  // whenever the user picks a different recipe so the Step 2.5 form
+  // adapts to server-supplied field lists (not a React constant).
+  useEffect(() => {
+    if (!recipe) {
+      setRecipeDetail(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiGet<{ recipe: RecipeDetail }>(
+          `/api/v1/recipes/${encodeURIComponent(recipe)}`,
+        );
+        if (!cancelled) setRecipeDetail(data.recipe);
+      } catch {
+        // Best-effort: recipe-detail fetch failure leaves Step 2.5 in the
+        // disabled state (no persistent block), same UX as a recipe that
+        // does not advertise persistent-mode yet.
+        if (!cancelled) setRecipeDetail(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [recipe]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -188,6 +239,51 @@ export function PlaygroundForm({
     [orModels, model],
   );
 
+  // ─── Step 2.5 derivations — all server-sourced (Rule 2) ───────────────
+  const channelEntry = useMemo<ChannelEntry | null>(() => {
+    if (!recipeDetail?.channels || !selectedChannel) return null;
+    return recipeDetail.channels[selectedChannel] ?? null;
+  }, [recipeDetail, selectedChannel]);
+
+  const requiredInputs = useMemo<ChannelUserInput[]>(
+    () => channelEntry?.required_user_input ?? [],
+    [channelEntry],
+  );
+  const optionalInputs = useMemo<ChannelUserInput[]>(
+    () => channelEntry?.optional_user_input ?? [],
+    [channelEntry],
+  );
+  const allInputs = useMemo(
+    () => [...requiredInputs, ...optionalInputs],
+    [requiredInputs, optionalInputs],
+  );
+
+  const isPersistentSupported = Boolean(selectedRecipe?.persistent_mode_available);
+
+  // Openclaw-style provider compat — swap the BYOK key label when the
+  // selected channel defers the user's default provider (driven by
+  // channel_provider_compat on RecipeSummary; no "openclaw" string
+  // anywhere in the component).
+  const providerDeferredForChannel = useMemo<string[]>(() => {
+    const compat = selectedRecipe?.channel_provider_compat?.[selectedChannel];
+    return compat?.deferred ?? [];
+  }, [selectedRecipe, selectedChannel]);
+
+  const byokLabel = useMemo(() => {
+    if (deployMode === "persistent" && providerDeferredForChannel.includes("openrouter")) {
+      const supported =
+        selectedRecipe?.channel_provider_compat?.[selectedChannel]?.supported ?? [];
+      const primary = supported[0] ?? "Anthropic";
+      return `${primary.charAt(0).toUpperCase() + primary.slice(1)} API key`;
+    }
+    return "OpenRouter API key";
+  }, [deployMode, providerDeferredForChannel, selectedRecipe, selectedChannel]);
+
+  const allRequiredChannelInputsFilled = useMemo(
+    () => requiredInputs.every((e) => (channelInputs[e.env] ?? "").trim().length > 0),
+    [requiredInputs, channelInputs],
+  );
+
   const cardRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (verdict) cardRef.current?.focus();
@@ -201,14 +297,29 @@ export function PlaygroundForm({
     byok.trim() !== "" &&
     nameValid &&
     !isRunning &&
-    (uiError?.kind !== "rate_limited" || remainingSec === 0);
+    (uiError?.kind !== "rate_limited" || remainingSec === 0) &&
+    (deployMode === "smoke" ||
+      (deployMode === "persistent" && allRequiredChannelInputsFilled));
 
   async function onDeploy() {
     setVerdict(null);
     setUiError(null);
+    setStartResponse(null);
     setIsRunning(true);
+
+    // Track whether the pairing modal was opened in this submit so the
+    // finally block knows to preserve the bearer / channel inputs for the
+    // modal lifecycle. Default: clear everything.
+    let preserveBearerForPairing = false;
+
     try {
-      const res = await apiPost<RunResponse>(
+      // Step 1: always run the smoke first. It either resolves or creates
+      // the agent_instance row server-side (routes/runs.py upserts by
+      // user_id + recipe + model), which gives us an agent_id for /start.
+      // For persistent mode this is also the existence-proof that the
+      // recipe + model + BYOK combination works before we spawn a
+      // long-lived container.
+      const smokeRes = await apiPost<RunResponse>(
         "/api/v1/runs",
         {
           recipe_name: recipe,
@@ -218,15 +329,62 @@ export function PlaygroundForm({
         },
         { Authorization: `Bearer ${byok}` },
       );
-      setVerdict(res);
-      onDeployed?.(res);
+      setVerdict(smokeRes);
+      onDeployed?.(smokeRes);
+      const agentId = smokeRes.agent_instance_id;
+      setAgentInstanceId(agentId);
+
+      if (deployMode === "persistent" && agentId) {
+        if (smokeRes.verdict !== "PASS") {
+          setUiError({
+            kind: "unknown",
+            message: "Smoke failed — channel start aborted.",
+          });
+          return;
+        }
+
+        const startBody: AgentStartRequest = {
+          channel: selectedChannel,
+          channel_inputs: { ...channelInputs },
+        };
+        const startRes = await apiPost<AgentStartResponse>(
+          `/api/v1/agents/${agentId}/start`,
+          startBody,
+          { Authorization: `Bearer ${byok}` },
+        );
+        setStartResponse(startRes);
+
+        // If the recipe's selected channel declares a pairing block, the
+        // bot is live but needs a code from the user's DM before it'll
+        // accept traffic. Open the pairing modal and keep the bearer
+        // alive across the modal lifecycle.
+        const pairing = recipeDetail?.channels?.[selectedChannel]?.pairing;
+        if (pairing) {
+          setPairingBearer(byok);
+          setPairingModalOpen(true);
+          preserveBearerForPairing = true;
+        }
+      }
     } catch (e) {
       setUiError(parseApiError(e));
     } finally {
+      // BYOK discipline (SC-05): bot_token + channel creds + BYOK cleared
+      // after submit. Exception: pairing modal holds bearer for its own
+      // request lifecycle — cleared on modal close.
       setByok("");
+      setChannelInputs({});
+      if (!preserveBearerForPairing) {
+        setPairingBearer("");
+      }
       setIsRunning(false);
     }
   }
+
+  // Pairing modal bearer cleanup — invoked from the modal's onClose prop.
+  const onPairingModalClose = useCallback(() => {
+    setPairingModalOpen(false);
+    setPairingBearer("");
+  }, []);
 
   return (
     <div className="flex flex-col gap-12">
@@ -380,6 +538,142 @@ export function PlaygroundForm({
         )}
       </section>
 
+      {/* ─── STEP 2.5 — Deploy mode (smoke vs persistent + Telegram) ────
+          CLAUDE.md Rule 2: channel input fields are rendered dynamically
+          from recipeDetail.channels.<cid>.required_user_input served by
+          GET /v1/recipes/:name. No CHANNELS constant, no hardcoded
+          field list in this component. */}
+      <section>
+        <SectionHeader
+          step="2.5"
+          icon={<Rocket className="size-5" />}
+          title="How will you use this?"
+          subtitle="Pick one-shot smoke to verify the recipe works, or persistent mode to get a live bot."
+        />
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[
+            {
+              id: "smoke" as const,
+              label: "One-shot smoke",
+              emoji: "🧪",
+              description:
+                "Runs a single prompt against the agent and exits. Cheap, quick, the default.",
+            },
+            {
+              id: "persistent" as const,
+              label: "Persistent + Telegram",
+              emoji: "💬",
+              description:
+                "Keeps a container running; routes messages to/from a Telegram bot you own.",
+            },
+          ].map((mode) => {
+            const active = deployMode === mode.id;
+            const disabled = mode.id === "persistent" && !isPersistentSupported;
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => { if (!disabled) setDeployMode(mode.id); }}
+                disabled={isRunning || disabled}
+                aria-pressed={active}
+                className={cn(
+                  "group flex h-full items-start gap-3 rounded-xl border p-4 text-left transition-all",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  active
+                    ? "border-primary/70 bg-primary/10 shadow-lg shadow-primary/15"
+                    : "border-border/50 bg-card/40 hover:border-primary/40 hover:bg-card/70",
+                  (isRunning || disabled) && "cursor-not-allowed opacity-60",
+                )}
+              >
+                <span className="text-3xl leading-none" aria-hidden>{mode.emoji}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-semibold text-foreground">{mode.label}</span>
+                    {active && <Check className="size-4 text-primary" />}
+                  </div>
+                  <p className="mt-1 text-sm leading-snug text-foreground/70">{mode.description}</p>
+                  {disabled && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      This recipe does not advertise persistent-mode yet.
+                    </p>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Provider-compat warning — when the selected channel defers the
+            user's default provider (e.g. openclaw telegram defers
+            openrouter). Driven 100% off server-supplied
+            channel_provider_compat — no openclaw string check. */}
+        {deployMode === "persistent" && providerDeferredForChannel.length > 0 && (
+          <Alert className="mt-4">
+            <AlertTitle>Provider override required</AlertTitle>
+            <AlertDescription>
+              This recipe + channel combination defers {providerDeferredForChannel.join(", ")}.
+              Use your {(selectedRecipe?.channel_provider_compat?.[selectedChannel]?.supported ?? ["direct"]).join(" / ")} API key instead.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Dynamic channel input fields — rendered from server metadata */}
+        {deployMode === "persistent" && allInputs.length > 0 && (
+          <div className="mt-6 flex flex-col gap-5">
+            {allInputs.map((input: ChannelUserInput) => {
+              const isRequired = requiredInputs.some((e) => e.env === input.env);
+              return (
+                <div key={input.env} className="flex flex-col gap-2">
+                  <Label
+                    htmlFor={`ch-${input.env}`}
+                    className="flex items-center gap-2 text-base font-semibold text-foreground"
+                  >
+                    <KeyRound className="size-5 text-foreground/70" />
+                    {input.env}
+                    {!isRequired && (
+                      <span className="text-xs text-muted-foreground">(optional)</span>
+                    )}
+                  </Label>
+                  <Input
+                    id={`ch-${input.env}`}
+                    type={input.secret ? "password" : "text"}
+                    autoComplete={input.secret ? "new-password" : "off"}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    placeholder={input.secret ? "••••••••" : "..."}
+                    required={isRequired}
+                    disabled={isRunning}
+                    value={channelInputs[input.env] ?? ""}
+                    onChange={(e) =>
+                      setChannelInputs((prev) => ({ ...prev, [input.env]: e.target.value }))
+                    }
+                    className="h-14 max-w-2xl text-lg font-mono"
+                  />
+                  <p className="text-sm leading-relaxed text-foreground/70">
+                    {input.hint}
+                    {input.hint_url && (
+                      <>
+                        {" "}
+                        <a
+                          href={input.hint_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline decoration-dotted hover:decoration-solid"
+                        >
+                          get one here
+                        </a>
+                      </>
+                    )}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* ─── STEP 3 — Name + Personality ────────────────────────────── */}
       <section>
         <SectionHeader
@@ -468,7 +762,7 @@ export function PlaygroundForm({
         >
           <div className="flex flex-col gap-3">
             <Label htmlFor="byok" className="flex items-center gap-2 text-base font-semibold text-foreground">
-              <KeyRound className="size-5 text-foreground/70" /> OpenRouter API key
+              <KeyRound className="size-5 text-foreground/70" /> {byokLabel}
             </Label>
             <Input
               id="byok"
@@ -506,7 +800,11 @@ export function PlaygroundForm({
               ) : (
                 <>
                   <Rocket className="mr-2 size-5" />
-                  <span>Deploy {trimmedName ? `"${trimmedName}"` : "agent"}</span>
+                  <span>
+                    {deployMode === "persistent"
+                      ? `Deploy & start bot${trimmedName ? ` — "${trimmedName}"` : ""}`
+                      : `Deploy ${trimmedName ? `"${trimmedName}"` : "agent"}`}
+                  </span>
                 </>
               )}
             </Button>
@@ -553,6 +851,72 @@ export function PlaygroundForm({
         )}
 
         {!isRunning && verdict && <RunResultCard verdict={verdict} cardRef={cardRef} />}
+
+        {/* Persistent-mode success card — shows after /start returns 200.
+            bot_username comes from recipeDetail.channels.<cid>.verified_cells
+            (server-sourced, Rule 2) so no static RECIPE_BOT_USERNAMES map. */}
+        {!isRunning && startResponse && (
+          <div className="mt-6 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-6">
+            <div className="flex items-center gap-3">
+              <div className="text-2xl" aria-hidden>💬</div>
+              <div>
+                <div className="text-lg font-semibold text-foreground">Live on your bot</div>
+                <div className="text-sm text-muted-foreground">
+                  {(() => {
+                    const cells =
+                      recipeDetail?.channels?.[selectedChannel]?.verified_cells ?? [];
+                    const botUsername = cells.find((c) => c.bot_username)
+                      ?.bot_username as string | undefined;
+                    return botUsername ? (
+                      <>
+                        Bot{" "}
+                        <a
+                          href={`https://t.me/${botUsername.replace(/^@/, "")}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono underline"
+                        >
+                          {botUsername}
+                        </a>{" "}
+                        ready — DM it now.
+                      </>
+                    ) : (
+                      <>Bot is ready — DM it now.</>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-2 text-sm text-foreground/70 sm:grid-cols-3">
+              <div>
+                <span className="text-muted-foreground">Boot:</span>{" "}
+                {startResponse.boot_wall_s.toFixed(1)}s
+              </div>
+              <div>
+                <span className="text-muted-foreground">Container:</span>{" "}
+                <code className="font-mono text-xs">
+                  {startResponse.container_id.slice(0, 12)}
+                </code>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Health:</span>{" "}
+                {startResponse.health_check_ok ? "✓ OK" : "pending"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pairing modal — rendered when the selected channel has a
+            pairing block (e.g. openclaw telegram). Bearer kept alive in
+            pairingBearer for the modal's request lifecycle only. */}
+        {pairingModalOpen && agentInstanceId && (
+          <PairingModal
+            agentId={agentInstanceId}
+            channel={selectedChannel}
+            bearer={pairingBearer}
+            onClose={onPairingModalClose}
+          />
+        )}
 
         {!isRunning && uiError?.kind === "rate_limited" && (
           <Alert role="status" aria-live="polite" className="border-amber-500 bg-amber-500/10">
@@ -620,7 +984,7 @@ function SectionHeader({
   title,
   subtitle,
 }: {
-  step: number;
+  step: number | string;
   icon: React.ReactNode;
   title: string;
   subtitle: string;
