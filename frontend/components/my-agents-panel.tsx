@@ -111,19 +111,19 @@ export const MyAgentsPanel = forwardRef<
 
   return (
     <div>
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="text-2xl font-bold text-foreground sm:text-3xl">
+      <div className="mb-5 flex items-baseline justify-between gap-3">
+        <h2 className="text-3xl font-bold text-foreground sm:text-4xl">
           Your agents <span className="font-normal text-muted-foreground">({agents.length})</span>
         </h2>
         <button
           type="button"
           onClick={load}
-          className="text-xs text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-card/40 px-3 py-1.5 text-sm text-foreground/80 transition-colors hover:border-primary/40 hover:bg-card/70 hover:text-foreground"
         >
           ↻ refresh
         </button>
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {agents.map((a) => (
           <AgentCard key={a.id} agent={a} highlight={a.id === highlightAgentId} />
         ))}
@@ -137,15 +137,15 @@ function AgentCard({ agent, highlight }: { agent: AgentSummary; highlight: boole
   const persona = personalityFor(agent.personality);
   const verdictBadge = (() => {
     if (!agent.last_verdict) {
-      return { label: "Not run yet", icon: Activity, classes: "bg-muted/40 text-muted-foreground" };
+      return { label: "Not run", icon: Activity, classes: "bg-muted/60 text-foreground/80 ring-1 ring-border/60" };
     }
     if (agent.last_verdict === "PASS") {
-      return { label: "PASS", icon: CheckCircle2, classes: "bg-emerald-500/15 text-emerald-300" };
+      return { label: "PASS", icon: CheckCircle2, classes: "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40" };
     }
     if (agent.last_category === "INFRA_FAIL") {
-      return { label: agent.last_category, icon: AlertTriangle, classes: "bg-amber-500/15 text-amber-300" };
+      return { label: "INFRA", icon: AlertTriangle, classes: "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/40" };
     }
-    return { label: agent.last_verdict, icon: XCircle, classes: "bg-destructive/20 text-destructive" };
+    return { label: agent.last_verdict, icon: XCircle, classes: "bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40" };
   })();
 
   const VIcon = verdictBadge.icon;
@@ -153,58 +153,69 @@ function AgentCard({ agent, highlight }: { agent: AgentSummary; highlight: boole
   return (
     <div
       className={cn(
-        "group relative isolate flex h-full flex-col overflow-hidden rounded-2xl border bg-card/30 backdrop-blur-sm transition-all",
+        "group relative isolate flex h-full flex-col overflow-hidden rounded-2xl border bg-card/40 backdrop-blur-sm transition-all",
         highlight
-          ? cn("border-primary/60 ring-2 shadow-2xl", accent.ring)
-          : "border-border/40 hover:-translate-y-0.5 hover:border-border/80 hover:bg-card/50 hover:shadow-lg",
+          ? cn("border-primary/70 ring-2 shadow-2xl", accent.ring)
+          : "border-border/50 hover:-translate-y-0.5 hover:border-border/80 hover:bg-card/60 hover:shadow-xl",
       )}
     >
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 -z-10 h-24 bg-gradient-to-b opacity-70",
+          "pointer-events-none absolute inset-x-0 top-0 -z-10 h-28 bg-gradient-to-b opacity-80",
           accent.from,
           accent.to,
         )}
       />
 
-      <div className="flex items-start justify-between gap-3 p-4 pb-2">
+      <div className="flex items-start justify-between gap-3 p-5 pb-3">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-semibold leading-tight text-foreground" title={agent.name}>
+          <h3
+            className="line-clamp-2 break-words text-xl font-bold leading-tight text-foreground"
+            title={agent.name}
+          >
             {agent.name}
           </h3>
-          <p className="mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs text-muted-foreground">
-            <Box className="size-3 shrink-0 opacity-70" />
+          <p className="mt-1.5 flex items-center gap-1.5 truncate font-mono text-sm text-foreground/70">
+            <Box className="size-3.5 shrink-0 opacity-80" />
             {agent.recipe_name}
           </p>
         </div>
-        <div className={cn("inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider", verdictBadge.classes)}>
-          <VIcon className="size-3" />
+        <div
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wider",
+            verdictBadge.classes,
+          )}
+        >
+          <VIcon className="size-3.5" />
           {verdictBadge.label}
         </div>
       </div>
 
-      <div className="px-4 pb-3">
-        <p className="flex items-center gap-1.5 truncate font-mono text-xs text-muted-foreground/90" title={agent.model}>
-          <Cpu className="size-3 shrink-0 opacity-70" />
+      <div className="px-5 pb-4">
+        <p
+          className="flex items-center gap-1.5 truncate font-mono text-sm text-foreground/80"
+          title={agent.model}
+        >
+          <Cpu className="size-3.5 shrink-0 opacity-80" />
           {agent.model}
         </p>
       </div>
 
       {persona && (
-        <div className="mx-4 mb-3 flex items-center gap-2 rounded-md border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
-          <span className="text-base leading-none">{persona.emoji}</span>
-          <span className="truncate text-foreground/85">{persona.label}</span>
+        <div className="mx-5 mb-4 flex items-center gap-2.5 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm">
+          <span className="text-lg leading-none" aria-hidden>{persona.emoji}</span>
+          <span className="truncate font-medium text-foreground/90">{persona.label}</span>
         </div>
       )}
 
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/40 px-4 py-2.5 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1">
-          <Sparkles className="size-3 opacity-60" />
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/50 bg-background/30 px-5 py-3 text-sm text-foreground/70">
+        <span className="inline-flex items-center gap-1.5">
+          <Sparkles className="size-3.5 opacity-80" />
           {agent.total_runs} run{agent.total_runs === 1 ? "" : "s"}
         </span>
-        <span className="inline-flex items-center gap-1">
-          <Clock className="size-3 opacity-60" />
+        <span className="inline-flex items-center gap-1.5">
+          <Clock className="size-3.5 opacity-80" />
           {timeAgo(agent.last_run_at ?? agent.created_at)}
         </span>
       </div>

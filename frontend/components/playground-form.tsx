@@ -6,9 +6,7 @@ import {
   Clock,
   WifiOff,
   AlertCircle,
-  Copy,
   Check,
-  ChevronsUpDown,
   ExternalLink,
   HardDrive,
   Timer,
@@ -37,20 +35,9 @@ import { cn } from "@/lib/utils";
 
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
-import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 
 import { RunResultCard } from "@/components/run-result-card";
 
@@ -115,8 +102,8 @@ export function PlaygroundForm({
 
   const [orModels, setOrModels] = useState<OpenRouterModel[] | null>(null);
   const [orError, setOrError] = useState<string | null>(null);
-  const [modelOpen, setModelOpen] = useState(false);
   const [recipeQuery, setRecipeQuery] = useState("");
+  const [recentModels, setRecentModels] = useState<string[]>([]);
 
   const onRetryExpire = useCallback(() => setUiError(null), []);
   const remainingSec = useRetryCountdown(uiError, onRetryExpire);
@@ -162,6 +149,31 @@ export function PlaygroundForm({
         setOrModels(d.data ?? []);
       } catch (e) {
         if (!cancelled) setOrError(e instanceof Error ? e.message : "load failed");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiGet<{ agents: Array<{ model: string; last_run_at?: string | null; created_at: string }> }>(
+          "/api/v1/agents",
+        );
+        if (cancelled) return;
+        const ordered = [...data.agents]
+          .sort((a, b) => {
+            const at = new Date(a.last_run_at ?? a.created_at).getTime();
+            const bt = new Date(b.last_run_at ?? b.created_at).getTime();
+            return bt - at;
+          })
+          .map((a) => a.model);
+        const deduped: string[] = [];
+        for (const id of ordered) if (!deduped.includes(id)) deduped.push(id);
+        setRecentModels(deduped);
+      } catch {
+        // best-effort only — empty recent list is fine
       }
     })();
     return () => { cancelled = true; };
@@ -259,22 +271,22 @@ export function PlaygroundForm({
 
           return (
             <>
-              <div className="mb-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mb-6 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative w-full sm:max-w-md">
-                  <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-foreground/50" />
                   <input
                     type="search"
-                    placeholder={`Search ${recipes.length} recipe${recipes.length === 1 ? "" : "s"} — name, description, repo…`}
+                    placeholder={`Search ${recipes.length} recipe${recipes.length === 1 ? "" : "s"}…`}
                     value={recipeQuery}
                     onChange={(e) => setRecipeQuery(e.target.value)}
                     disabled={isRunning}
                     className={cn(
-                      "h-11 w-full rounded-lg border border-border/60 bg-card/40 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground/70",
-                      "focus-visible:border-primary focus-visible:bg-card/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                      "h-12 w-full rounded-lg border border-border/60 bg-card/50 pl-11 pr-3 text-base text-foreground placeholder:text-foreground/50",
+                      "focus-visible:border-primary focus-visible:bg-card/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                     )}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-foreground/70">
                   {filtered.length === recipes.length
                     ? `${recipes.length} recipes available`
                     : `${filtered.length} of ${recipes.length} match`}
@@ -296,7 +308,7 @@ export function PlaygroundForm({
                   </Button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {filtered.map((r) => (
                     <RecipeCard
                       key={r.name}
@@ -329,7 +341,7 @@ export function PlaygroundForm({
         )}
       </section>
 
-      {/* ─── STEP 2 — Model picker ──────────────────────────────────── */}
+      {/* ─── STEP 2 — Model browser (inline) ────────────────────────── */}
       <section>
         <SectionHeader
           step={2}
@@ -338,7 +350,9 @@ export function PlaygroundForm({
           subtitle={
             orError
               ? `OpenRouter catalog unreachable (${orError}) — type the model id directly.`
-              : `${orModels?.length ?? 0} models from OpenRouter, fetched live. Search by provider, family, or tag.`
+              : selectedRecipe?.verified_models?.length
+                ? `${selectedRecipe.verified_models.length} model${selectedRecipe.verified_models.length === 1 ? "" : "s"} verified end-to-end with ${selectedRecipe.display_name ?? selectedRecipe.name} — pinned on top. Or pick any of ${orModels?.length ?? "…"} OpenRouter models.`
+                : `Filter ${orModels?.length ?? "…"} OpenRouter models by provider or price. Your recently-used models are pinned on top.`
           }
         />
 
@@ -353,14 +367,15 @@ export function PlaygroundForm({
             className="h-14 max-w-2xl text-lg font-mono"
           />
         ) : (
-          <ModelCombobox
+          <ModelBrowser
             models={orModels}
             value={model}
             onChange={setModel}
-            open={modelOpen}
-            setOpen={setModelOpen}
             disabled={isRunning}
             selected={selectedModelMeta}
+            recentModels={recentModels}
+            verifiedModels={selectedRecipe?.verified_models ?? []}
+            recipeName={selectedRecipe?.display_name ?? selectedRecipe?.name ?? null}
           />
         )}
       </section>
@@ -374,11 +389,11 @@ export function PlaygroundForm({
           subtitle="The personality shapes how the agent introduces itself in the deploy smoke and steers its tone in later chats."
         />
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Name — 1/3 column */}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="agent-name" className="flex items-center gap-2 text-base font-medium">
-              <Boxes className="size-4 text-muted-foreground" /> Agent name
+          <div className="flex flex-col gap-3">
+            <Label htmlFor="agent-name" className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Boxes className="size-5 text-foreground/70" /> Agent name
             </Label>
             <Input
               id="agent-name"
@@ -392,17 +407,17 @@ export function PlaygroundForm({
               maxLength={64}
               aria-invalid={agentName.length > 0 && !nameValid ? true : undefined}
             />
-            <p className="text-sm text-muted-foreground">
-              Stored in your account. Letters, numbers, spaces, <code className="rounded bg-muted px-1 py-0.5">_</code> and <code className="rounded bg-muted px-1 py-0.5">-</code>. Must be unique among your agents.
+            <p className="text-sm leading-relaxed text-foreground/70">
+              Stored in your account. Letters, numbers, spaces, <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground/90">_</code> and <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground/90">-</code>. Must be unique among your agents.
             </p>
           </div>
 
           {/* Personality — 2/3 column */}
-          <div className="flex flex-col gap-2 lg:col-span-2">
-            <Label className="flex items-center gap-2 text-base font-medium">
-              <MessageSquareText className="size-4 text-muted-foreground" /> Personality preset
+          <div className="flex flex-col gap-3 lg:col-span-2">
+            <Label className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <MessageSquareText className="size-5 text-foreground/70" /> Personality preset
             </Label>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {PERSONALITIES.map((p) => {
                 const active = personality === p.id;
                 return (
@@ -413,21 +428,21 @@ export function PlaygroundForm({
                     disabled={isRunning}
                     aria-pressed={active}
                     className={cn(
-                      "group flex h-full items-start gap-3 rounded-xl border p-3 text-left transition-all",
+                      "group flex h-full items-start gap-3 rounded-xl border p-4 text-left transition-all",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                       active
-                        ? "border-primary/60 bg-primary/10 shadow-md shadow-primary/10"
-                        : "border-border/50 bg-card/30 hover:border-border/80 hover:bg-card/60",
+                        ? "border-primary/70 bg-primary/10 shadow-lg shadow-primary/15"
+                        : "border-border/50 bg-card/40 hover:border-primary/40 hover:bg-card/70",
                       isRunning && "cursor-not-allowed opacity-60",
                     )}
                   >
-                    <span className="text-2xl leading-none" aria-hidden>{p.emoji}</span>
+                    <span className="text-3xl leading-none" aria-hidden>{p.emoji}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{p.label}</span>
-                        {active && <Check className="size-3.5 text-primary" />}
+                        <span className="text-base font-semibold text-foreground">{p.label}</span>
+                        {active && <Check className="size-4 text-primary" />}
                       </div>
-                      <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{p.description}</p>
+                      <p className="mt-1 text-sm leading-snug text-foreground/70">{p.description}</p>
                     </div>
                   </button>
                 );
@@ -451,9 +466,9 @@ export function PlaygroundForm({
           aria-busy={isRunning}
           className="grid grid-cols-1 gap-6"
         >
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="byok" className="flex items-center gap-2 text-base font-medium">
-              <KeyRound className="size-4 text-muted-foreground" /> OpenRouter API key
+          <div className="flex flex-col gap-3">
+            <Label htmlFor="byok" className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <KeyRound className="size-5 text-foreground/70" /> OpenRouter API key
             </Label>
             <Input
               id="byok"
@@ -469,8 +484,8 @@ export function PlaygroundForm({
               onChange={(e) => setByok(e.target.value)}
               className="h-14 max-w-2xl text-lg font-mono"
             />
-            <p className="text-sm text-muted-foreground">
-              Sent as <code className="rounded bg-muted px-1 py-0.5 text-foreground/90">Authorization: Bearer</code>. Cleared from React state after submit.
+            <p className="text-sm leading-relaxed text-foreground/70">
+              Sent as <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground/90">Authorization: Bearer</code>. Cleared from React state after submit.
             </p>
           </div>
 
@@ -497,7 +512,7 @@ export function PlaygroundForm({
             </Button>
 
             {!canDeploy && !isRunning && (
-              <p className="mt-3 text-center text-sm text-muted-foreground">
+              <p className="mt-4 text-center text-base text-foreground/70">
                 {!recipe
                   ? "↑ pick a recipe to begin"
                   : !model
@@ -513,7 +528,7 @@ export function PlaygroundForm({
             )}
 
             {uiError?.kind === "validation" && uiError.message && (
-              <p role="alert" className="mt-3 text-center text-sm text-destructive">
+              <p role="alert" className="mt-4 text-center text-base font-medium text-destructive">
                 {uiError.message}
               </p>
             )}
@@ -611,16 +626,16 @@ function SectionHeader({
   subtitle: string;
 }) {
   return (
-    <div className="mb-5 flex items-start gap-4">
-      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 text-primary">
+    <div className="mb-6 flex items-start gap-4">
+      <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-primary/40 bg-primary/15 text-primary shadow-sm shadow-primary/10">
         {icon}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-xs uppercase tracking-widest text-primary/80">Step {step}</span>
+          <span className="font-mono text-sm font-bold uppercase tracking-widest text-primary">Step {step}</span>
         </div>
-        <h2 className="mt-0.5 text-2xl font-bold text-foreground sm:text-3xl">{title}</h2>
-        <p className="mt-1 text-base text-muted-foreground">{subtitle}</p>
+        <h2 className="mt-1 text-2xl font-bold text-foreground sm:text-3xl">{title}</h2>
+        <p className="mt-1.5 text-base leading-relaxed text-foreground/75">{subtitle}</p>
       </div>
     </div>
   );
@@ -678,47 +693,47 @@ function RecipeCard({
       )}
 
       {/* Header: avatar + title block */}
-      <div className="flex items-start gap-3 p-5 pb-3">
+      <div className="flex items-start gap-4 p-6 pb-4">
         <div
           className={cn(
-            "flex size-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br font-mono text-base font-bold text-white shadow-inner",
-            accent.from.replace("/30", "/60"),
-            accent.to.replace("/10", "/40"),
+            "flex size-14 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-gradient-to-br font-mono text-lg font-bold text-white shadow-inner",
+            accent.from.replace("/30", "/70"),
+            accent.to.replace("/10", "/50"),
           )}
         >
           {initials}
         </div>
-        <div className="min-w-0 flex-1 pr-7">
-          <h3 className="text-lg font-semibold leading-tight text-foreground" title={recipe.display_name ?? recipe.name}>
+        <div className="min-w-0 flex-1 pr-8">
+          <h3 className="text-xl font-bold leading-tight text-foreground" title={recipe.display_name ?? recipe.name}>
             {recipe.display_name ?? recipe.name}
           </h3>
-          <p className="font-mono text-xs text-muted-foreground/80">{recipe.name}</p>
+          <p className="mt-1 font-mono text-sm text-foreground/60">{recipe.name}</p>
         </div>
       </div>
 
       {/* Tagline */}
       {tagline && (
-        <p className="line-clamp-3 px-5 text-[15px] leading-relaxed text-foreground/85">
+        <p className="line-clamp-3 px-6 text-base leading-relaxed text-foreground/90">
           {tagline}
         </p>
       )}
 
       {/* Stats strip */}
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 text-xs text-muted-foreground">
+      <div className="mt-5 flex flex-wrap items-center gap-2 px-6 pb-4">
         {version && (
-          <span className="inline-flex items-center gap-1 font-mono">
-            <span className="text-foreground/70">{version}</span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-2 py-1 font-mono text-xs text-foreground/85">
+            {version}
           </span>
         )}
         {recipe.image_size_gb != null && (
-          <span className="inline-flex items-center gap-1">
-            <HardDrive className="size-3 opacity-60" />
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/40 px-2 py-1 text-xs text-foreground/85">
+            <HardDrive className="size-3.5 opacity-80" />
             <span className="font-mono">{recipe.image_size_gb.toFixed(1)}GB</span>
           </span>
         )}
         {recipe.expected_runtime_seconds != null && (
-          <span className="inline-flex items-center gap-1">
-            <Timer className="size-3 opacity-60" />
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/40 px-2 py-1 text-xs text-foreground/85">
+            <Timer className="size-3.5 opacity-80" />
             <span className="font-mono">~{Math.round(recipe.expected_runtime_seconds)}s</span>
           </span>
         )}
@@ -731,143 +746,416 @@ function RecipeCard({
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="mt-auto flex items-center gap-1.5 border-t border-border/40 px-5 py-3 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:bg-muted/30 hover:text-foreground"
+          className="mt-auto flex items-center gap-2 border-t border-border/50 bg-background/30 px-6 py-3 font-mono text-sm text-foreground/75 transition-colors hover:bg-muted/30 hover:text-foreground"
         >
-          <Github className="size-3.5 shrink-0" />
+          <Github className="size-4 shrink-0" />
           <span className="truncate">{repoOwnerRepo}</span>
           {recipe.source_ref && (
-            <code className="ml-auto rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-foreground/80">
+            <code className="ml-auto rounded bg-muted/70 px-1.5 py-0.5 text-xs text-foreground/90">
               {shortRef(recipe.source_ref)}
             </code>
           )}
-          <ExternalLink className="size-3 shrink-0 opacity-50" />
+          <ExternalLink className="size-3.5 shrink-0 opacity-60" />
         </a>
       )}
     </button>
   );
 }
 
-// ─── ModelCombobox ────────────────────────────────────────────────────
-function ModelCombobox({
+// ─── ModelBrowser ─────────────────────────────────────────────────────
+function isFreeModel(m: OpenRouterModel): boolean {
+  const p = Number.parseFloat(m.pricing?.prompt ?? "0");
+  const c = Number.parseFloat(m.pricing?.completion ?? "0");
+  return Number.isFinite(p) && p === 0 && Number.isFinite(c) && c === 0;
+}
+
+function ModelBrowser({
   models,
   value,
   onChange,
-  open,
-  setOpen,
   disabled,
   selected,
+  recentModels,
+  verifiedModels,
+  recipeName,
 }: {
   models: OpenRouterModel[] | null;
   value: string;
   onChange: (id: string) => void;
-  open: boolean;
-  setOpen: (v: boolean) => void;
   disabled: boolean;
   selected: OpenRouterModel | null;
+  recentModels: string[];
+  verifiedModels: string[];
+  recipeName: string | null;
 }) {
+  const [query, setQuery] = useState("");
+  const [freeOnly, setFreeOnly] = useState(false);
+  const [testedOnly, setTestedOnly] = useState(false);
+  const [selectedProviders, setSelectedProviders] = useState<Set<string>>(() => new Set());
+
+  const verifiedSet = useMemo(() => new Set(verifiedModels), [verifiedModels]);
+  const hasVerified = verifiedModels.length > 0;
+
+  // Auto-clear testedOnly if the recipe changes and new one has no verified list
+  useEffect(() => {
+    if (!hasVerified) setTestedOnly(false);
+  }, [hasVerified]);
+
   const loading = models === null;
-  const ctx = formatContext(selected?.context_length);
-  const promptPrice = formatPricePerMTok(selected?.pricing?.prompt);
-  const completionPrice = formatPricePerMTok(selected?.pricing?.completion);
+
+  const { topProviders, providerCounts } = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const m of models ?? []) {
+      const p = m.id.split("/")[0] || "other";
+      counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    return {
+      topProviders: sorted.slice(0, 8).map(([p]) => p),
+      providerCounts: counts,
+    };
+  }, [models]);
+
+  const filtered = useMemo(() => {
+    if (!models) return [];
+    const tokens = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    return models.filter((m) => {
+      if (testedOnly && !verifiedSet.has(m.id)) return false;
+      if (freeOnly && !isFreeModel(m)) return false;
+      if (selectedProviders.size > 0) {
+        const p = m.id.split("/")[0] || "other";
+        if (!selectedProviders.has(p)) return false;
+      }
+      if (tokens.length) {
+        const hay = `${m.id} ${m.name}`.toLowerCase();
+        if (!tokens.every((t) => hay.includes(t))) return false;
+      }
+      return true;
+    });
+  }, [models, query, freeOnly, testedOnly, verifiedSet, selectedProviders]);
+
+  const sorted = useMemo(() => {
+    const recentRank = new Map<string, number>();
+    recentModels.forEach((id, i) => recentRank.set(id, i));
+    return [...filtered].sort((a, b) => {
+      // Tier 1: verified for this recipe — always on top
+      const av = verifiedSet.has(a.id);
+      const bv = verifiedSet.has(b.id);
+      if (av && !bv) return -1;
+      if (!av && bv) return 1;
+      // Tier 2: user's recent picks
+      const ar = recentRank.get(a.id);
+      const br = recentRank.get(b.id);
+      if (ar !== undefined && br !== undefined) return ar - br;
+      if (ar !== undefined) return -1;
+      if (br !== undefined) return 1;
+      // Tier 3: alphabetical
+      return a.id.localeCompare(b.id);
+    });
+  }, [filtered, recentModels, verifiedSet]);
+
+  const toggleProvider = (p: string) =>
+    setSelectedProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+
+  const hasFilters = query.length > 0 || freeOnly || testedOnly || selectedProviders.size > 0;
+  const clearFilters = () => {
+    setQuery("");
+    setFreeOnly(false);
+    setTestedOnly(false);
+    setSelectedProviders(new Set());
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-card/30 p-8 text-foreground/80">
+        <Loader2 className="size-5 animate-spin" />
+        <span className="text-base">Loading models from OpenRouter…</span>
+      </div>
+    );
+  }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled || loading}
-          className={cn(
-            "h-auto min-h-[4rem] w-full max-w-3xl justify-between gap-3 px-5 py-3 text-left text-base font-normal",
-            // Override the default outline-variant accent hover (--accent is bright orange + dark fg → unreadable).
-            "bg-card/40 text-foreground hover:!bg-card/70 hover:!text-foreground hover:border-primary/50",
-            "data-[state=open]:!bg-card/70 data-[state=open]:border-primary",
-            value && "border-primary/40 bg-card/70",
-          )}
-        >
-          {loading ? (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="size-5 animate-spin" />
-              Loading models from OpenRouter…
-            </span>
-          ) : value ? (
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate font-mono text-base text-foreground">{value}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                {selected?.name && <span className="truncate">{selected.name}</span>}
-                {ctx && <Badge variant="outline" className="text-[10px]">{ctx} ctx</Badge>}
-                {promptPrice && <Badge variant="outline" className="text-[10px]">{promptPrice}/M in</Badge>}
-                {completionPrice && <Badge variant="outline" className="text-[10px]">{completionPrice}/M out</Badge>}
-              </div>
+    <div className="flex flex-col gap-5">
+      {/* Selected model bar */}
+      {selected && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-primary/50 bg-primary/10 px-5 py-4 shadow-sm shadow-primary/10">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+            <Check className="size-5" strokeWidth={2.5} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate font-mono text-lg font-semibold text-foreground">{selected.id}</span>
+              {isFreeModel(selected) && (
+                <span className="inline-flex items-center rounded-md border border-emerald-500/50 bg-emerald-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-200">
+                  free
+                </span>
+              )}
             </div>
-          ) : (
-            <span className="text-muted-foreground">Select a model — search by family, provider, or “free”…</span>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground/75">
+              <span className="truncate">{selected.name}</span>
+              {formatContext(selected.context_length) && (
+                <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                  {formatContext(selected.context_length)} ctx
+                </span>
+              )}
+              {!isFreeModel(selected) && formatPricePerMTok(selected.pricing?.prompt) && (
+                <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                  {formatPricePerMTok(selected.pricing?.prompt)}/M in
+                </span>
+              )}
+              {!isFreeModel(selected) && formatPricePerMTok(selected.pricing?.completion) && (
+                <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                  {formatPricePerMTok(selected.pricing?.completion)}/M out
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            disabled={disabled}
+            className="shrink-0 rounded-md border border-border/60 bg-card/50 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:border-primary/50 hover:bg-card/80 hover:text-foreground disabled:opacity-50"
+          >
+            Change
+          </button>
+        </div>
+      )}
+
+      {/* Toolbar: search + FREE + provider chips */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card/50 p-4 shadow-lg shadow-black/20 ring-1 ring-white/5">
+        <div className="flex flex-col items-stretch gap-3 md:flex-row md:items-center">
+          <div className="relative flex-1">
+            <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-foreground/50" />
+            <input
+              type="search"
+              placeholder="Search models — 'claude opus', 'gpt-4o'…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              disabled={disabled}
+              className={cn(
+                "h-12 w-full rounded-lg border border-border bg-background/70 pl-11 pr-3 text-base text-foreground placeholder:text-foreground/50",
+                "focus-visible:border-primary focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              )}
+            />
+          </div>
+          {hasVerified && (
+            <button
+              type="button"
+              onClick={() => setTestedOnly((v) => !v)}
+              disabled={disabled}
+              aria-pressed={testedOnly}
+              title={`${verifiedModels.length} model${verifiedModels.length === 1 ? "" : "s"} tested with ${recipeName ?? "this recipe"}`}
+              className={cn(
+                "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg border px-5 text-base font-semibold transition-all",
+                testedOnly
+                  ? "border-primary/70 bg-primary/20 text-primary shadow-sm shadow-primary/20"
+                  : "border-border/60 bg-card/50 text-foreground/85 hover:border-primary/40 hover:bg-primary/5 hover:text-primary",
+              )}
+            >
+              <span className="text-lg leading-none" aria-hidden>🧪</span>
+              Tested ({verifiedModels.length})
+            </button>
           )}
-          <ChevronsUpDown className="ml-2 size-5 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="z-50 w-[var(--radix-popover-trigger-width)] border-border/80 bg-popover/95 p-0 shadow-2xl backdrop-blur-md"
-        align="start"
-        sideOffset={8}
-        side="bottom"
-        avoidCollisions={false}
+          <button
+            type="button"
+            onClick={() => setFreeOnly((v) => !v)}
+            disabled={disabled}
+            aria-pressed={freeOnly}
+            className={cn(
+              "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg border px-5 text-base font-semibold transition-all",
+              freeOnly
+                ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-200 shadow-sm shadow-emerald-500/20"
+                : "border-border/60 bg-card/50 text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/5 hover:text-emerald-200",
+            )}
+          >
+            <span className="text-lg leading-none" aria-hidden>🆓</span>
+            FREE only
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 font-mono text-xs font-semibold uppercase tracking-wider text-foreground/60">
+            Provider
+          </span>
+          {topProviders.map((p) => {
+            const active = selectedProviders.has(p);
+            const count = providerCounts.get(p) ?? 0;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => toggleProvider(p)}
+                disabled={disabled}
+                aria-pressed={active}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-all",
+                  active
+                    ? "border-primary/70 bg-primary/15 font-semibold text-foreground shadow-sm shadow-primary/20"
+                    : "border-border/60 bg-card/40 text-foreground/80 hover:border-primary/40 hover:bg-card/70",
+                )}
+              >
+                {p}
+                <span
+                  className={cn(
+                    "font-mono text-xs",
+                    active ? "text-foreground/70" : "text-foreground/50",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="ml-auto rounded-md px-2 py-1 text-sm text-foreground/70 hover:bg-muted/40 hover:text-foreground"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Results header */}
+      <div className="flex items-baseline justify-between px-1 text-sm text-foreground/70">
+        <span>
+          <span className="font-semibold text-foreground">{sorted.length}</span>
+          <span className="text-foreground/60"> of {models.length} models</span>
+          {hasVerified && (
+            <span className="ml-2 text-emerald-400/80">· tested for {recipeName} pinned ↑</span>
+          )}
+          {!hasVerified && recentModels.length > 0 && (
+            <span className="ml-2 text-foreground/50">· your recent picks pinned ↑</span>
+          )}
+        </span>
+      </div>
+
+      {/* List */}
+      {sorted.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border bg-card/30 p-10 text-center">
+          <p className="text-base text-foreground/75">No model matches your filters.</p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-3 text-sm font-semibold text-primary hover:underline"
+          >
+            Clear filters
+          </button>
+        </div>
+      ) : (
+        <div className="model-browser-scroll max-h-[36rem] overflow-y-auto rounded-2xl border border-border bg-card/50 shadow-lg shadow-black/20 ring-1 ring-white/5">
+          <ul className="divide-y divide-border">
+            {sorted.map((m) => (
+              <ModelRow
+                key={m.id}
+                model={m}
+                isSelected={value === m.id}
+                isRecent={recentModels.includes(m.id)}
+                isVerified={verifiedSet.has(m.id)}
+                onSelect={() => onChange(m.id)}
+                disabled={disabled}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelRow({
+  model,
+  isSelected,
+  isRecent,
+  isVerified,
+  onSelect,
+  disabled,
+}: {
+  model: OpenRouterModel;
+  isSelected: boolean;
+  isRecent: boolean;
+  isVerified: boolean;
+  onSelect: () => void;
+  disabled: boolean;
+}) {
+  const promptP = formatPricePerMTok(model.pricing?.prompt);
+  const completionP = formatPricePerMTok(model.pricing?.completion);
+  const c = formatContext(model.context_length);
+  const free = isFreeModel(model);
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onSelect}
+        disabled={disabled}
+        aria-pressed={isSelected}
+        className={cn(
+          "flex w-full flex-col gap-2 px-5 py-4 text-left transition-colors",
+          "focus-visible:outline-none focus-visible:bg-primary/15",
+          "hover:bg-muted/50",
+          isSelected
+            ? "bg-primary/20 border-l-4 border-l-primary pl-[calc(1.25rem-4px)] shadow-inner"
+            : isVerified
+              ? "border-l-4 border-l-emerald-500/60 bg-emerald-500/[0.04] pl-[calc(1.25rem-4px)]"
+              : "border-l-4 border-l-transparent pl-[calc(1.25rem-4px)]",
+          disabled && "cursor-not-allowed opacity-50",
+        )}
       >
-        <Command
-          filter={(value, search) => {
-            const tokens = search.toLowerCase().split(/\s+/).filter(Boolean);
-            return tokens.every((t) => value.includes(t)) ? 1 : 0;
-          }}
-        >
-          <CommandInput
-            placeholder="Search 345+ models — try ‘claude opus’, ‘gpt-4o’, ‘free’…"
-            className="h-12 text-base"
-          />
-          <CommandList className="max-h-96">
-            <CommandEmpty>No model matches.</CommandEmpty>
-            <CommandGroup>
-              {(models ?? []).map((m) => {
-                const promptP = formatPricePerMTok(m.pricing?.prompt);
-                const completionP = formatPricePerMTok(m.pricing?.completion);
-                const c = formatContext(m.context_length);
-                const isSelected = value === m.id;
-                return (
-                  <CommandItem
-                    key={m.id}
-                    value={`${m.id} ${m.name}`}
-                    onSelect={() => { onChange(m.id); setOpen(false); }}
-                    className={cn(
-                      // Override the harsh accent fill — use subtle bg + left rail when selected/focused
-                      "flex flex-col items-start gap-1 px-3 py-2.5 text-base",
-                      "data-[selected=true]:bg-primary/8 data-[selected=true]:text-foreground",
-                      "data-[selected=true]:border-l-2 data-[selected=true]:border-l-primary",
-                      "border-l-2 border-l-transparent",
-                      isSelected && "bg-primary/12",
-                    )}
-                  >
-                    <div className="flex w-full items-center justify-between gap-2">
-                      <span className="truncate font-mono text-sm font-medium text-foreground">{m.id}</span>
-                      {isSelected && <Check className="size-4 shrink-0 text-primary" />}
-                    </div>
-                    <div className="flex w-full flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className="truncate text-foreground/70">{m.name}</span>
-                      <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                        {c && <Badge variant="outline" className="text-[10px]">{c}</Badge>}
-                        {promptP && <Badge variant="outline" className="text-[10px]">{promptP}/M in</Badge>}
-                        {completionP && <Badge variant="outline" className="text-[10px]">{completionP}/M out</Badge>}
-                      </div>
-                    </div>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="truncate font-mono text-base font-semibold text-foreground">
+              {model.id}
+            </span>
+            {isVerified && (
+              <span
+                title="Recipe author tested this model end-to-end and it passed the smoke"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/60 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200"
+              >
+                <span aria-hidden>🧪</span>
+                tested
+              </span>
+            )}
+            {isRecent && (
+              <span className="inline-flex shrink-0 items-center rounded-md border border-primary/50 bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+                recent
+              </span>
+            )}
+            {free && (
+              <span className="inline-flex shrink-0 items-center rounded-md border border-emerald-500/50 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200">
+                free
+              </span>
+            )}
+          </div>
+          {isSelected && <Check className="size-5 shrink-0 text-primary" strokeWidth={2.5} />}
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <span className="truncate text-sm text-foreground/75">{model.name}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {c && (
+              <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                {c}
+              </span>
+            )}
+            {!free && promptP && (
+              <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                {promptP}/M in
+              </span>
+            )}
+            {!free && completionP && (
+              <span className="inline-flex items-center rounded-md border border-border/60 bg-muted/60 px-2 py-0.5 font-mono text-xs text-foreground/85">
+                {completionP}/M out
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+    </li>
   );
 }

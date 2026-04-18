@@ -10,10 +10,10 @@ import { MyAgentsPanel, type MyAgentsPanelHandle } from "@/components/my-agents-
 
 function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="bg-card/60 p-5 backdrop-blur-sm">
-      <dt className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</dt>
-      <dd className="mt-1.5 text-3xl font-bold tabular-nums text-foreground">{value}</dd>
-      <dd className="mt-0.5 text-xs text-muted-foreground/80">{sub}</dd>
+    <div className="bg-card/60 p-6 backdrop-blur-sm">
+      <dt className="font-mono text-xs font-semibold uppercase tracking-widest text-foreground/60">{label}</dt>
+      <dd className="mt-2 text-4xl font-bold tabular-nums text-foreground">{value}</dd>
+      <dd className="mt-1 text-sm text-foreground/70">{sub}</dd>
     </div>
   )
 }
@@ -33,19 +33,19 @@ export default function PlaygroundPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-24 sm:px-6 sm:pb-20 sm:pt-28 lg:px-8">
-        <div className="mb-10 sm:mb-14">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 font-mono text-xs uppercase tracking-widest text-primary backdrop-blur-sm">
-            <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+      <div className="relative z-10 mx-auto max-w-[1400px] px-4 pb-16 pt-24 sm:px-6 sm:pb-20 sm:pt-28 lg:px-8">
+        <div className="mb-12 sm:mb-16">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 py-1.5 font-mono text-sm font-semibold uppercase tracking-widest text-primary backdrop-blur-sm">
+            <span className="size-2 animate-pulse rounded-full bg-primary shadow-sm shadow-primary" />
             Live API · per-session container
           </div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
+          <h1 className="text-5xl font-bold tracking-tight text-foreground sm:text-6xl lg:text-7xl">
             Any agent. Any model.{" "}
             <span className="bg-gradient-to-r from-primary via-amber-400 to-primary bg-clip-text text-transparent">
               One click.
             </span>
           </h1>
-          <p className="mt-4 max-w-3xl text-lg text-muted-foreground sm:text-xl">
+          <p className="mt-5 max-w-3xl text-xl leading-relaxed text-foreground/80 sm:text-2xl">
             Deploy a configured agent — pick a recipe, a model, give it a name and a personality, paste your OpenRouter key. Use it later from your agents list.
           </p>
 
@@ -64,11 +64,11 @@ export default function PlaygroundPage() {
 
         {/* Deploy a new agent */}
         <section>
-          <div className="mb-6 flex items-baseline justify-between gap-3 border-t border-border/40 pt-10">
-            <h2 className="text-2xl font-bold text-foreground sm:text-3xl">
+          <div className="mb-8 flex items-baseline justify-between gap-3 border-t border-border/40 pt-12">
+            <h2 className="text-3xl font-bold text-foreground sm:text-4xl">
               Deploy a <span className="text-primary">new agent</span>
             </h2>
-            <p className="hidden text-sm text-muted-foreground sm:block">
+            <p className="hidden font-mono text-sm font-medium text-foreground/70 sm:block">
               4 steps · ~10s for a smoke verdict
             </p>
           </div>

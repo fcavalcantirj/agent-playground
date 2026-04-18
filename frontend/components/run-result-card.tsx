@@ -4,6 +4,7 @@ import { useState, type RefObject } from "react";
 import { Copy, Check } from "lucide-react";
 
 import type { RunResponse } from "@/lib/api-types";
+import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -81,69 +82,69 @@ export function RunResultCard({
       role="status"
       aria-live="polite"
       tabIndex={-1}
-      className="p-6"
+      className="p-8"
     >
-      <CardContent className="flex flex-col gap-4 p-0">
+      <CardContent className="flex flex-col gap-6 p-0">
         {/* Header row: verdict badge + category pill + timestamp */}
         <div className="flex items-center gap-3">
-          <Badge className={badgeClass}>{verdict.verdict}</Badge>
-          <Badge variant="outline" className="font-mono text-xs">
+          <Badge className={cn("px-3 py-1 text-sm font-bold uppercase tracking-wider", badgeClass)}>
+            {verdict.verdict}
+          </Badge>
+          <Badge variant="outline" className="border-border/70 bg-muted/60 px-2.5 py-1 font-mono text-xs text-foreground/90">
             {verdict.category}
           </Badge>
           {completedAt && (
-            <span className="ml-auto text-xs text-muted-foreground">
+            <span className="ml-auto font-mono text-sm text-foreground/70">
               {new Date(completedAt).toLocaleTimeString()}
             </span>
           )}
         </div>
 
-        {/* Metadata grid (UI-SPEC lines 337-353) */}
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-          <dt className="text-muted-foreground">exit_code</dt>
-          <dd className="font-mono">{verdict.exit_code ?? "—"}</dd>
+        {/* Metadata grid */}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-base">
+          <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">exit_code</dt>
+          <dd className="font-mono text-foreground">{verdict.exit_code ?? "—"}</dd>
 
-          <dt className="text-muted-foreground">wall_time</dt>
-          <dd className="font-mono">
+          <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">wall_time</dt>
+          <dd className="font-mono text-foreground">
             {verdict.wall_time_s != null ? `${verdict.wall_time_s.toFixed(2)}s` : "—"}
           </dd>
 
-          <dt className="text-muted-foreground">run_id</dt>
+          <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">run_id</dt>
           <dd className="flex items-center gap-2">
-            <code className="font-mono text-xs">{verdict.run_id}</code>
+            <code className="font-mono text-sm text-foreground/90">{verdict.run_id}</code>
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={copyRunId}
               aria-label="Copy run_id"
-              className="size-7"
+              className="size-8"
             >
               {copied ? (
-                <Check className="size-3.5" aria-hidden="true" />
+                <Check className="size-4" aria-hidden="true" />
               ) : (
-                <Copy className="size-3.5" aria-hidden="true" />
+                <Copy className="size-4" aria-hidden="true" />
               )}
             </Button>
           </dd>
         </dl>
 
-        {/* Optional detail line (e.g., "assertion failed on X") */}
         {verdict.detail && (
-          <p className="text-sm text-muted-foreground">{verdict.detail}</p>
+          <p className="text-base leading-relaxed text-foreground/80">{verdict.detail}</p>
         )}
 
-        {/* stderr accordion — UI-SPEC lines 361-380; expanded by default on non-PASS */}
         <Accordion
           type="single"
           collapsible
           defaultValue={verdict.verdict !== "PASS" ? "stderr" : undefined}
         >
-          <AccordionItem value="stderr" className="border-t">
-            <AccordionTrigger className="text-sm">
+          <AccordionItem value="stderr" className="border-t border-border/60">
+            <AccordionTrigger className="py-4 text-base font-semibold text-foreground hover:no-underline">
               stderr tail ({stderrLineCount} lines)
             </AccordionTrigger>
             <AccordionContent>
-              <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+              <pre className="max-h-96 overflow-auto rounded-lg bg-muted/60 p-4 font-mono text-sm leading-relaxed text-foreground/85 whitespace-pre-wrap break-words">
                 {verdict.stderr_tail || "(no output)"}
               </pre>
             </AccordionContent>
