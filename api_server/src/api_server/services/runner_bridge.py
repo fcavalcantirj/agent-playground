@@ -212,3 +212,173 @@ async def execute_persistent_start(
         details = dict(result)
         details.setdefault("verdict", "PASS")
     return details
+
+
+async def execute_persistent_stop(
+    container_id: str,
+    *,
+    graceful_shutdown_s: int = 5,
+    sigterm_handled: bool = True,
+    recipe_name: str | None = None,
+    data_dir: str | None = None,
+) -> dict[str, Any]:
+    """Gracefully stop a persistent container.
+
+    Wraps Plan 22-03's ``stop_persistent`` in ``asyncio.to_thread`` so the
+    sync subprocess calls (``docker kill``, ``docker inspect``, ``docker
+    rm``) don't stall the event loop.
+
+    Concurrency:
+    - NO image tag-lock — stop doesn't touch images.
+    - NO semaphore — stop is cheap (<< 1 run budget) and concurrent-safe.
+
+    Per-recipe ``sigterm_handled``: when ``False`` (nanobot's gateway
+    ignores SIGTERM entirely per spike-07), ``stop_persistent`` skips the
+    SIGTERM + poll phase and force-rms immediately, logging a WARNING
+    (not error) with ``recipe_name``. The caller surfaces
+    ``force_killed: bool`` through ``AgentStopResponse``.
+
+    Plan 22-03's ``stop_persistent`` is expected to return
+    ``(Verdict, details)`` — both shapes handled for test fixtures.
+    """
+    mod = _import_run_recipe_module()
+    result = await asyncio.to_thread(
+        mod.stop_persistent,
+        container_id,
+        graceful_shutdown_s=graceful_shutdown_s,
+        sigterm_handled=sigterm_handled,
+        recipe_name=recipe_name,
+        data_dir=data_dir,
+        quiet=True,
+    )
+    if isinstance(result, tuple):
+        verdict, details = result
+        details = dict(details)
+        details["verdict"] = getattr(verdict, "verdict", None) or getattr(verdict, "name", None) or str(verdict)
+    else:
+        details = dict(result)
+        details.setdefault("verdict", "PASS")
+    details.setdefault("force_killed", False)
+    return details
+
+
+async def execute_persistent_status(
+    container_id: str,
+    *,
+    recipe_health_check: dict | None = None,
+    log_tail_lines: int = 50,
+) -> dict[str, Any]:
+    """Return current state of a persistent container.
+
+    Response shape: ``{running, exit_code, log_tail, http_code?, ready?}``.
+    Read-only probe — no image tag-lock, no global semaphore. Dual-branch
+    per spike-11:
+
+    - ``recipe_health_check.kind == "process_alive"`` (or omitted): probe
+      via ``docker inspect -f '{{.State.Running}},{{.State.ExitCode}}'``
+      only.
+    - ``recipe_health_check.kind == "http"``: additionally run a
+      ``docker exec <cid> sh -c 'curl ... || wget ...'`` probe against the
+      container-local health port. The curl/wget fallback is mandatory
+      because image toolchains vary — hermes has neither curl nor wget
+      (so it's always process_alive), other images have one or both.
+
+    Factored here (not as a new ``run_recipe`` function) because the probe
+    logic is API-layer concern, not runner primitive — adding it to
+    ``tools/run_recipe.py`` would be noise for a ~30-line self-contained
+    probe. ``asyncio.to_thread`` is still mandatory because even a "fast"
+    ``docker inspect`` can block if the daemon is slow.
+
+    Returns ``running=False`` cleanly for non-existent containers (the
+    inspect exits non-zero; we treat that as "not running" without
+    raising, so ``GET /v1/agents/:id/status`` always responds 200).
+    """
+    def _probe() -> dict[str, Any]:
+        import subprocess as _sp  # local import — not needed by the rest of the module
+        running = False
+        exit_code: int | None = None
+        http_code: int | None = None
+        ready: bool | None = None
+        inspect = _sp.run(
+            ["docker", "inspect", "-f", "{{.State.Running}},{{.State.ExitCode}}", container_id],
+            timeout=5, capture_output=True, text=True, check=False,
+        )
+        if inspect.returncode == 0:
+            parts = (inspect.stdout or "").strip().split(",", 1)
+            running = (parts[0].strip() == "true")
+            try:
+                exit_code = int(parts[1].strip()) if len(parts) > 1 else None
+            except ValueError:
+                exit_code = None
+
+        # G5 dual-branch: http probe only if recipe asks for it AND container running
+        if running and recipe_health_check and recipe_health_check.get("kind") == "http":
+            port = recipe_health_check.get("port")
+            path = recipe_health_check.get("path", "/")
+            # curl || wget fallback — see spike-11 for image toolchain variance.
+            # Double {{ }} escapes the shell format spec past Python's f-string.
+            probe_cmd = (
+                f"curl -s -o /dev/null -w '%{{http_code}}' "
+                f"http://127.0.0.1:{port}{path} 2>/dev/null "
+                f"|| wget -qO /dev/null --server-response "
+                f"http://127.0.0.1:{port}{path} 2>&1 | grep -oE 'HTTP/[0-9.]+ [0-9]+' "
+                f"| grep -oE '[0-9]+$' | head -1"
+            )
+            probe = _sp.run(
+                ["docker", "exec", container_id, "sh", "-c", probe_cmd],
+                timeout=5, capture_output=True, text=True, check=False,
+            )
+            out = (probe.stdout or "").strip()
+            if out.isdigit():
+                http_code = int(out)
+                ready = http_code == 200
+
+        logs = _sp.run(
+            ["docker", "logs", "--tail", str(log_tail_lines), container_id],
+            timeout=10, capture_output=True, text=True, check=False,
+        )
+        log_tail = ((logs.stdout or "") + "\n" + (logs.stderr or "")).strip().splitlines()[-log_tail_lines:]
+        return {
+            "running": running,
+            "exit_code": exit_code,
+            "log_tail": log_tail,
+            "http_code": http_code,
+            "ready": ready,
+        }
+    return await asyncio.to_thread(_probe)
+
+
+async def execute_persistent_exec(
+    app_state,
+    container_id: str,
+    argv: list[str],
+    *,
+    timeout_s: int = 30,
+) -> dict[str, Any]:
+    """Run a command inside a persistent container (openclaw pairing approve, etc.).
+
+    Uses the global semaphore to avoid flooding the docker daemon with
+    concurrent ``docker exec`` calls across unrelated containers. NO image
+    tag-lock — exec doesn't touch images.
+
+    First caller is POST ``/v1/agents/:id/channels/:cid/pair`` with
+    argv ``["openclaw", "pairing", "approve", "telegram", "<CODE>"]`` —
+    sub-second in practice but the semaphore bound protects the daemon
+    against concurrent-exec storms.
+    """
+    mod = _import_run_recipe_module()
+    async with app_state.run_semaphore:
+        result = await asyncio.to_thread(
+            mod.exec_in_persistent,
+            container_id,
+            argv,
+            timeout_s=timeout_s,
+        )
+    if isinstance(result, tuple):
+        verdict, details = result
+        details = dict(details)
+        details["verdict"] = getattr(verdict, "verdict", None) or getattr(verdict, "name", None) or str(verdict)
+    else:
+        details = dict(result)
+        details.setdefault("verdict", "PASS")
+    return details
