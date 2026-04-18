@@ -47,6 +47,12 @@ class ErrorCode:
     INTERNAL = "INTERNAL"
     RUNNER_TIMEOUT = "RUNNER_TIMEOUT"
     INFRA_UNAVAILABLE = "INFRA_UNAVAILABLE"
+    # Phase 22-05: persistent-mode agent lifecycle error codes.
+    AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
+    AGENT_NOT_RUNNING = "AGENT_NOT_RUNNING"
+    AGENT_ALREADY_RUNNING = "AGENT_ALREADY_RUNNING"
+    CHANNEL_NOT_CONFIGURED = "CHANNEL_NOT_CONFIGURED"
+    CHANNEL_INPUTS_INVALID = "CHANNEL_INPUTS_INVALID"
 
 
 _CODE_TO_TYPE = {
@@ -61,6 +67,14 @@ _CODE_TO_TYPE = {
     ErrorCode.INTERNAL: "internal_error",
     ErrorCode.RUNNER_TIMEOUT: "runner_error",
     ErrorCode.INFRA_UNAVAILABLE: "infra_error",
+    # Phase 22-05 additions. "conflict" is a new type used for 409s on the
+    # persistent-mode endpoints (double-start, stop-when-not-running). No
+    # collision with the existing surface — only used by these codes today.
+    ErrorCode.AGENT_NOT_FOUND: "not_found",
+    ErrorCode.AGENT_NOT_RUNNING: "conflict",
+    ErrorCode.AGENT_ALREADY_RUNNING: "conflict",
+    ErrorCode.CHANNEL_NOT_CONFIGURED: "invalid_request",
+    ErrorCode.CHANNEL_INPUTS_INVALID: "invalid_request",
 }
 
 

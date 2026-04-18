@@ -316,6 +316,13 @@ channels:
     response_routing: per_message_origin
     multi_user_model: allowlist
     multi_account_supported: true
+    # Phase 22-05: pairing approve CLI drives POST /v1/agents/:id/channels/telegram/pair.
+    # Runner substitutes $CODE with the user-supplied 4-char Telegram pairing
+    # code at docker-exec time. openclaw's `pairing approve` CLI cold-boots
+    # the full plugin registry per invocation (~60s wall per spike-10) so
+    # the API-side timeout is 90s.
+    pairing:
+      approve_argv: [openclaw, pairing, approve, telegram, "$CODE"]
     known_quirks:
       - id: openrouter_provider_plugin_silent_fail
         severity: blocks_llm_reply_with_openrouter
