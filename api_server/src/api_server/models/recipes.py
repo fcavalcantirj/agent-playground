@@ -53,6 +53,18 @@ class RecipeSummary(BaseModel):
     pass_if: str | None = None
     license: str | None = None
     maintainer: str | None = None
+    # v0.2 channels fields (Phase 22 plan 22-01). Surface the recipe's
+    # ``persistent:`` + ``channels:`` blocks so the frontend can gate
+    # deploy-form Step 2.5 without a second request. None-safe: recipes
+    # that don't declare channels return empty/absent values.
+    persistent_mode_available: bool = False
+    # ``recipe["channels"]`` keys in iteration order (e.g. ["telegram"]).
+    channels_supported: list[str] = Field(default_factory=list)
+    # ``{channel_id: {supported: [...], deferred: [...]}}`` — only populated
+    # when at least one channel declares ``provider_compat`` (openclaw-only
+    # today). Lets the frontend swap BYOK key copy (OpenRouter → Anthropic)
+    # for recipes with known-broken provider paths.
+    channel_provider_compat: dict[str, dict[str, list[str]]] | None = None
     verified_models: list[str] = Field(default_factory=list)
 
 

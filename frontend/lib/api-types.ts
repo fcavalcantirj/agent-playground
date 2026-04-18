@@ -27,6 +27,12 @@ export type RecipeSummary = {
   pass_if?: string | null;
   license?: string | null;
   maintainer?: string | null;
+  // v0.2 channels fields (Phase 22 plan 22-01). None-safe: recipes that
+  // don't declare persistent/channels return empty/absent. Drives
+  // deploy-form Step 2.5 gating without a second fetch.
+  persistent_mode_available?: boolean;
+  channels_supported?: string[];
+  channel_provider_compat?: Record<string, { supported?: string[]; deferred?: string[] }> | null;
   verified_models?: string[];  // from smoke.verified_cells[].model (PASS only)
 };
 

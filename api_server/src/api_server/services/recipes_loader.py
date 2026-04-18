@@ -112,6 +112,50 @@ def to_summary(recipe: dict) -> RecipeSummary:
         if isinstance(m, str) and m and m not in verified_models:
             verified_models.append(m)
 
+    # v0.2 channels metadata — added in Phase 22 plan 22-01. Surfaces the
+    # recipe's persistent + channels blocks so the frontend can gate
+    # deploy-form Step 2.5 without a second detail fetch.
+    persistent_block = recipe.get("persistent") or {}
+    persistent_mode_available = bool(persistent_block)
+
+    channels_raw = recipe.get("channels") or {}
+    # isinstance(dict) is defensive — ruamel's CommentedMap is a dict subclass
+    # so this still accepts round-tripped recipes.
+    channels_supported: list[str] = (
+        list(channels_raw.keys()) if isinstance(channels_raw, dict) else []
+    )
+
+    channel_provider_compat: dict[str, dict[str, list[str]]] | None = None
+    if isinstance(channels_raw, dict):
+        compat_map: dict[str, dict[str, list[str]]] = {}
+        for cid, cinfo in channels_raw.items():
+            if not isinstance(cinfo, dict):
+                continue
+            pc = cinfo.get("provider_compat")
+            if not isinstance(pc, dict):
+                continue
+            # Normalize to plain list[str] in case ruamel returns
+            # CommentedSeq. Clamp to the two known keys we expose on the API.
+            supported = [str(s) for s in (pc.get("supported") or [])]
+            deferred = [str(s) for s in (pc.get("deferred") or [])]
+            compat_map[str(cid)] = {"supported": supported, "deferred": deferred}
+        if compat_map:
+            channel_provider_compat = compat_map
+
+    # maintainer in v0.1.1 is a {name, url?} object. RecipeSummary.maintainer
+    # is typed ``str | None`` on the public wire (per the pre-existing
+    # docstring: maps metadata.maintainer). Project to the name when present
+    # so the Pydantic validator accepts the value; detail response keeps the
+    # full object via the dict passthrough.
+    maintainer_raw = metadata.get("maintainer")
+    if isinstance(maintainer_raw, dict):
+        maintainer_val = maintainer_raw.get("name")
+        maintainer_val = str(maintainer_val) if maintainer_val is not None else None
+    elif maintainer_raw is None:
+        maintainer_val = None
+    else:
+        maintainer_val = str(maintainer_raw)
+
     return RecipeSummary(
         name=recipe["name"],
         apiVersion=recipe.get("apiVersion", "ap.recipe/v0.1"),
@@ -125,6 +169,9 @@ def to_summary(recipe: dict) -> RecipeSummary:
         provider=runtime.get("provider"),
         pass_if=pass_if_val,
         license=metadata.get("license"),
-        maintainer=metadata.get("maintainer"),
+        maintainer=maintainer_val,
+        persistent_mode_available=persistent_mode_available,
+        channels_supported=channels_supported,
+        channel_provider_compat=channel_provider_compat,
         verified_models=verified_models,
     )
