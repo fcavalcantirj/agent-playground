@@ -4,6 +4,7 @@
 2. **Dumb client, intelligence in the API.** The frontend is a thin terminal over the API. **No client-side catalogs** of anything the server owns — recipes come from `GET /v1/recipes`, models come from the API, no hardcoded `defaultClones`/model arrays in React state. If the page needs a list, it `fetch`es it. See `memory/feedback_dumb_client_no_mocks.md`.
 3. **Ship when the stack works locally end-to-end.** Never deploy to a production host until the same Docker topology runs locally AND a real user workflow (click → see result, not `setState(isRunning: true)` theater) completes against it. Deploying an API with a mock UI is shipping a mock to prod.
 4. **Root cause first, never fix-to-pass.** Investigate before removing code. See `memory/feedback_root_cause_first.md`.
+5. **Test everything. Probe gray areas empirically BEFORE planning.** No PLAN may assume "pattern X in another module will work the same here" — every non-trivial mechanism (new file format, new subprocess lifecycle, new encryption path, new env-var injection, new health check, new container flag, new regex, new HTTP contract, new DB constraint) must be spiked against real infra and the spike result captured as evidence BEFORE the planner consumes it. If the spike fails or surfaces a gray area not considered, the plan goes back. Risk budget: zero untested mechanisms in a sealed PLAN. Rule-1 extended to planning: the plan's own assumptions hit real infra too. See `memory/feedback_test_everything_before_planning.md`.
 
 # ⚠️ Current project state as of 2026-04-15
 
