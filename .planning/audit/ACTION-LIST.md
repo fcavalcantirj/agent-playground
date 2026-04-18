@@ -21,26 +21,27 @@
 
 Ordered by user-visible damage, then Rule 1/2 violations.
 
-### 🔴 PRIORITY 1 — Delete or rebuild-from-scratch pages (100% mock)
+### 🔴 PRIORITY 1 — Implement every mocked page for real (no deletions)
 
-These pages do NOTHING real. Either remove from nav or rebuild properly.
+Directive from user 2026-04-18: "we are not fucking deleting. implement everything."
+Every page below gets real backend wiring. Marketing pages stay as-is.
 
-| Page | File | Current state | Action |
+| Page | File | Current state | Real-implementation plan (minimal) |
 |---|---|---|---|
-| `/login` | `frontend/app/login/page.tsx` | hardcoded email/password, setTimeout then redirect | DELETE or wire Google/GitHub OAuth (goth backend) |
-| `/signup` | `frontend/app/signup/page.tsx` | form that calls `/* TODO */` | DELETE — OAuth-only per PROJECT.md |
-| `/forgot-password` | `frontend/app/forgot-password/page.tsx` | stub | DELETE — OAuth-only means no passwords to forget |
-| `/dashboard` | `frontend/app/dashboard/page.tsx` | mockAgents array (4 items hardcoded) | REBUILD: fetch `GET /v1/agents`, show real list |
-| `/dashboard/agents` | `frontend/app/dashboard/agents/page.tsx` | mock list + filters | REBUILD: same as above + real filtering |
-| `/dashboard/agents/[id]` | `frontend/app/dashboard/agents/[id]/page.tsx` | mock single agent + status: "running" \| "stopped" | REBUILD: fetch `GET /v1/agents/:id` + `GET /v1/runs/:id` history |
-| `/dashboard/analytics` | `frontend/app/dashboard/analytics/page.tsx` | static chart data | DELETE or defer to Phase 23 (needs backend metrics endpoint) |
-| `/dashboard/api-keys` | `frontend/app/dashboard/api-keys/page.tsx` | generates fake keys with random strings | DELETE — BYOK means no platform-issued keys |
-| `/dashboard/billing` | `frontend/app/dashboard/billing/page.tsx` | static balance + fake transactions | DEFER to Phase 24 (Stripe wiring) |
-| `/dashboard/notifications` | `frontend/app/dashboard/notifications/page.tsx` | mock notifications array, buttons are `setState` only | DEFER to Phase 23 |
-| `/dashboard/profile` | `frontend/app/dashboard/profile/page.tsx` | hardcoded user, Save button is `alert()` | REBUILD: `GET/PUT /v1/users/me` (endpoint MISSING) |
-| `/dashboard/settings` | `frontend/app/dashboard/settings/page.tsx` | local state only | REBUILD: `GET/PUT /v1/users/me/settings` (endpoint MISSING) |
-| `/pricing` | `frontend/app/pricing/page.tsx` | static marketing page | KEEP as-is (marketing, no backend) |
-| `/contact`, `/privacy`, `/terms`, `/docs` | various | static marketing | KEEP |
+| `/login` | `frontend/app/login/page.tsx` | hardcoded email/password, setTimeout | OAuth buttons (Google + GitHub via `goth` in Go, or equivalent in FastAPI); form for password/email kept as a non-default alt (magic link) |
+| `/signup` | `frontend/app/signup/page.tsx` | form → `/* TODO */` | OPEN DECISION — with OAuth, "Sign in with Google" handles both signup and signin (account auto-created on first callback). Options: (a) keep `/signup` as an intent-switched redirect to `/login?intent=signup` with copy framing ("Get started"); (b) keep as dedicated first-time flow with ToS + tier selection before OAuth; (c) drop the route entirely — decide after OAuth flow lands. The other 11 pages ARE being implemented regardless. |
+| `/forgot-password` | `frontend/app/forgot-password/page.tsx` | stub | Magic-link reset flow: `POST /v1/auth/forgot` → email → `POST /v1/auth/reset?token=...` |
+| `/dashboard` | `frontend/app/dashboard/page.tsx` | mockAgents (4 items hardcoded) | Fetch `GET /v1/agents` on mount, render live list with verdict badges + last_run_at |
+| `/dashboard/agents` | `frontend/app/dashboard/agents/page.tsx` | mock list + filters | Same `GET /v1/agents` + client-side filtering by recipe/model/status, OR server-side `GET /v1/agents?recipe=...&status=...` |
+| `/dashboard/agents/[id]` | `frontend/app/dashboard/agents/[id]/page.tsx` | mock agent, status `running`\|`stopped` | `GET /v1/agents/:id` (metadata) + `GET /v1/agents/:id/runs` (history) + `GET /v1/agents/:id/status` (live container state from Phase 22a endpoint) |
+| `/dashboard/analytics` | `frontend/app/dashboard/analytics/page.tsx` | static chart data | Real chart: `GET /v1/users/me/analytics?range=...` (new endpoint aggregating user's runs by day/recipe/verdict). Uses SQL group-by on `runs` table. |
+| `/dashboard/api-keys` | `frontend/app/dashboard/api-keys/page.tsx` | generates fake keys | Store per-user BYOK provider keys (OpenRouter, Anthropic, OpenAI) encrypted via age/libsodium keyed by server master + user_id. Endpoints: `GET/POST/DELETE /v1/users/me/api-keys`. Keys decrypt server-side only when spawning a run/agent, never returned to frontend. |
+| `/dashboard/billing` | `frontend/app/dashboard/billing/page.tsx` | static balance + fake txs | Stripe wiring: `GET /v1/users/me/billing/balance` (reads credit_balance_cents from users table), `GET /v1/users/me/billing/history` (Stripe-fetched txs + local meter events), `POST /v1/users/me/billing/topup` → Stripe Checkout redirect, webhook `POST /v1/stripe/webhook` populates balance |
+| `/dashboard/notifications` | `frontend/app/dashboard/notifications/page.tsx` | mock array, buttons = `setState` | New table `notifications(id, user_id, kind, payload, read_at, created_at)`. Endpoints: `GET /v1/users/me/notifications`, `PATCH /v1/users/me/notifications/:id` (mark read). Kinds: run_complete, agent_crash, channel_ready, credit_low. |
+| `/dashboard/profile` | `frontend/app/dashboard/profile/page.tsx` | hardcoded user, Save = `alert()` | `GET /v1/users/me` + `PUT /v1/users/me` (name, avatar_url, timezone, language). `users` table already exists; needs profile columns migration. |
+| `/dashboard/settings` | `frontend/app/dashboard/settings/page.tsx` | local state only | `GET /v1/users/me/settings` + `PUT` — JSONB column on users: default model, default personality, default recipe, theme, telegram bot preferences, notification prefs. |
+| `/pricing` | `frontend/app/pricing/page.tsx` | static marketing | KEEP — pure marketing, but CTAs must link to real signup flow |
+| `/contact`, `/privacy`, `/terms`, `/docs` | various | static marketing | KEEP — legal/docs pages, no backend |
 
 ### 🟡 PRIORITY 2 — Rule 2 violations (client-side catalogs)
 
