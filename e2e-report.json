@@ -1,11 +1,223 @@
 [
   {
     "gate": "A",
+    "recipe": "hermes",
+    "correlation_id": "fceb",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-fceb",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-fceb",
+    "wall_s": 14.32,
+    "verdict": "PASS",
+    "error": null,
+    "round": 1
+  },
+  {
+    "gate": "A",
+    "recipe": "hermes",
+    "correlation_id": "b744",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-b744",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-b744",
+    "wall_s": 5.68,
+    "verdict": "PASS",
+    "error": null,
+    "round": 2
+  },
+  {
+    "gate": "A",
+    "recipe": "hermes",
+    "correlation_id": "30e4",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-30e4",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-30e4",
+    "wall_s": 5.61,
+    "verdict": "PASS",
+    "error": null,
+    "round": 3
+  },
+  {
+    "gate": "B",
+    "recipe": "hermes",
+    "correlation_id": "d288",
+    "sent_text": "injected-event corr=d288 chat=152099202",
+    "reply_sent_event": {
+      "seq": 1,
+      "kind": "reply_sent",
+      "payload": {
+        "chat_id": "152099202",
+        "captured_at": "2026-04-19T18:23:15.486743Z",
+        "length_chars": 12
+      },
+      "correlation_id": "test:d288",
+      "ts": "2026-04-19T18:23:15.490257+00:00"
+    },
+    "wall_s": 1.19,
+    "verdict": "PASS",
+    "error": null
+  },
+  {
+    "gate": "A",
+    "recipe": "picoclaw",
+    "correlation_id": "3348",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-3348",
+    "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
+    "wall_s": 1.74,
+    "verdict": "PASS",
+    "error": null,
+    "round": 1
+  },
+  {
+    "gate": "A",
+    "recipe": "picoclaw",
+    "correlation_id": "2336",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-2336",
+    "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
+    "wall_s": 1.76,
+    "verdict": "PASS",
+    "error": null,
+    "round": 2
+  },
+  {
+    "gate": "A",
+    "recipe": "picoclaw",
+    "correlation_id": "5835",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-5835",
+    "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
+    "wall_s": 2.1,
+    "verdict": "PASS",
+    "error": null,
+    "round": 3
+  },
+  {
+    "gate": "B",
+    "recipe": "picoclaw",
+    "correlation_id": "7221",
+    "sent_text": "injected-event corr=7221 chat=152099202",
+    "reply_sent_event": {
+      "seq": 1,
+      "kind": "reply_sent",
+      "payload": {
+        "chat_id": "152099202",
+        "captured_at": "2026-04-19T18:23:44.136994Z",
+        "length_chars": 12
+      },
+      "correlation_id": "test:7221",
+      "ts": "2026-04-19T18:23:44.137137+00:00"
+    },
+    "wall_s": 1.08,
+    "verdict": "PASS",
+    "error": null
+  },
+  {
+    "gate": "A",
+    "recipe": "nullclaw",
+    "correlation_id": "baa9",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-baa9",
+    "reply_text": "ok-nullclaw-baa9\n",
+    "wall_s": 2.09,
+    "verdict": "PASS",
+    "error": null,
+    "round": 1
+  },
+  {
+    "gate": "A",
+    "recipe": "nullclaw",
+    "correlation_id": "ec2a",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-ec2a",
+    "reply_text": "ok-nullclaw-ec2a\n",
+    "wall_s": 3.51,
+    "verdict": "PASS",
+    "error": null,
+    "round": 2
+  },
+  {
+    "gate": "A",
+    "recipe": "nullclaw",
+    "correlation_id": "2316",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-2316",
+    "reply_text": "ok-nullclaw-2316\n",
+    "wall_s": 1.58,
+    "verdict": "PASS",
+    "error": null,
+    "round": 3
+  },
+  {
+    "gate": "B",
+    "recipe": "nullclaw",
+    "correlation_id": "979d",
+    "sent_text": "injected-event corr=979d chat=152099202",
+    "reply_sent_event": {
+      "seq": 1,
+      "kind": "reply_sent",
+      "payload": {
+        "chat_id": "152099202",
+        "captured_at": "2026-04-19T18:24:33.538184Z",
+        "length_chars": 12
+      },
+      "correlation_id": "test:979d",
+      "ts": "2026-04-19T18:24:33.539170+00:00"
+    },
+    "wall_s": 1.13,
+    "verdict": "PASS",
+    "error": null
+  },
+  {
+    "gate": "A",
+    "recipe": "nanobot",
+    "correlation_id": "b7fe",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-b7fe",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠹\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠏\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠋\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 16.45,
+    "verdict": "PASS",
+    "error": null,
+    "round": 1
+  },
+  {
+    "gate": "A",
+    "recipe": "nanobot",
+    "correlation_id": "e585",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-e585",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠹\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠼\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠦\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 5.88,
+    "verdict": "PASS",
+    "error": null,
+    "round": 2
+  },
+  {
+    "gate": "A",
+    "recipe": "nanobot",
+    "correlation_id": "a20c",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-a20c",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠹\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠼\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠦\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 5.13,
+    "verdict": "PASS",
+    "error": null,
+    "round": 3
+  },
+  {
+    "gate": "B",
+    "recipe": "nanobot",
+    "correlation_id": "5389",
+    "sent_text": "injected-event corr=5389 chat=152099202",
+    "reply_sent_event": {
+      "seq": 1,
+      "kind": "reply_sent",
+      "payload": {
+        "chat_id": "152099202",
+        "captured_at": "2026-04-19T18:26:13.884973Z",
+        "length_chars": 12
+      },
+      "correlation_id": "test:5389",
+      "ts": "2026-04-19T18:26:13.885115+00:00"
+    },
+    "wall_s": 1.11,
+    "verdict": "PASS",
+    "error": null
+  },
+  {
+    "gate": "A",
     "recipe": "openclaw",
-    "correlation_id": "ca0e",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-ca0e",
-    "reply_text": "ok-openclaw-ca0e",
-    "wall_s": 101.59,
+    "correlation_id": "39a9",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-39a9",
+    "reply_text": "ok-openclaw-39a9",
+    "wall_s": 119.04,
     "verdict": "PASS",
     "error": null,
     "round": 1
@@ -13,10 +225,10 @@
   {
     "gate": "A",
     "recipe": "openclaw",
-    "correlation_id": "5dbf",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-5dbf",
-    "reply_text": "ok-openclaw-5dbf",
-    "wall_s": 89.05,
+    "correlation_id": "78dc",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-78dc",
+    "reply_text": "ok-openclaw-78dc",
+    "wall_s": 101.22,
     "verdict": "PASS",
     "error": null,
     "round": 2
@@ -24,10 +236,10 @@
   {
     "gate": "A",
     "recipe": "openclaw",
-    "correlation_id": "8d2e",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-8d2e",
-    "reply_text": "ok-openclaw-8d2e",
-    "wall_s": 93.93,
+    "correlation_id": "09d6",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-09d6",
+    "reply_text": "ok-openclaw-09d6",
+    "wall_s": 83.03,
     "verdict": "PASS",
     "error": null,
     "round": 3
@@ -35,7 +247,21 @@
   {
     "gate": "B",
     "recipe": "openclaw",
-    "verdict": "SKIP",
-    "reason": "missing creds"
+    "correlation_id": "cf34",
+    "sent_text": "injected-event corr=cf34 chat=152099202",
+    "reply_sent_event": {
+      "seq": 1,
+      "kind": "reply_sent",
+      "payload": {
+        "chat_id": "152099202",
+        "captured_at": "2026-04-19T18:35:34.622620Z",
+        "length_chars": 12
+      },
+      "correlation_id": "test:cf34",
+      "ts": "2026-04-19T18:35:34.626430+00:00"
+    },
+    "wall_s": 1.79,
+    "verdict": "PASS",
+    "error": null
   }
 ]
