@@ -17,8 +17,8 @@ requirements:
 
 must_haves:
   truths:
-    - "POST /v1/agents/:id/events/inject-test-event (sysadmin-Bearer-only, AP_ENV != prod-only) inserts a real reply_sent row into the real agent_events table via insert_agent_event(), wakes the long-poll signal via _get_poll_signal(app.state, agent_id).set(), and returns 200 with the inserted row's seq + container_row_id"
-    - "The injected row is visible to a concurrent GET /v1/agents/:id/events long-poll within 1 second (signal wake measured) — proves the long-poll → INSERT → signal-wake → handler-fetch chain end-to-end"
+    - "POST /v1/agents/:id/events/inject-test-event (sysadmin-Bearer-only, AP_ENV != prod-only) accepts URL `:id` as the **agent_containers.id** (container_row_id) per Spike B 2026-04-19 verification of the events-router URL-key contract. Inserts a real reply_sent row into the real agent_events table via insert_agent_event() (which returns seq as int, not dict — Spike B B1), wakes the long-poll signal via _get_poll_signal(app.state, agent_id).set() where agent_id IS container_row_id, and returns 200 with seq + container_row_id + synthesized ts (datetime.now(UTC) at insert time)"
+    - "The injected row is visible to a concurrent GET /v1/agents/:id/events long-poll within 1 second (signal wake measured) — proves the long-poll → INSERT → signal-wake → handler-fetch chain end-to-end. CRITICAL per Spike B B2: BOTH the long-poll AND the inject MUST use container_row_id in the URL — using agent_instance_id on either side breaks the wake (signal is keyed on the URL value, not a translated identity)."
     - "AP_ENV=prod returns 404 NOT_FOUND for the inject route (route is invisible — same discipline as `app.openapi_url='/openapi.json' if env==dev else None` per main.py line 15)"
     - "Bearer != AP_SYSADMIN_TOKEN returns 404 (opaque — defense in depth) and AP_SYSADMIN_TOKEN unset returns 404 even with matching Bearer; sysadmin is the ONLY allowed caller; ANONYMOUS_USER_ID + regular ownership do NOT grant access (this endpoint is admin-debug-only)"
     - "test/lib/agent_harness.py gains a `send-injected-test-event-and-watch` subcommand that POSTs to the inject endpoint then long-polls /events; verdict=PASS iff the reply_sent event with the harness-generated correlation_id (prefixed `test:`) appears in the long-poll response"
@@ -44,11 +44,11 @@ must_haves:
   key_links:
     - from: "api_server/src/api_server/routes/agent_events.py::inject_test_event"
       to: "api_server/src/api_server/services/event_store.py::insert_agent_event"
-      via: "real INSERT into agent_events table (no in-memory fake — golden rule 1)"
+      via: "real INSERT into agent_events table keyed by container_row_id (URL agent_id IS container_row_id per Spike B B2 — no in-memory fake; golden rule 1)"
       pattern: "insert_agent_event\\("
     - from: "api_server/src/api_server/routes/agent_events.py::inject_test_event"
       to: "api_server/src/api_server/services/watcher_service.py::_get_poll_signal"
-      via: "_get_poll_signal(app.state, agent_id).set() AFTER successful INSERT — wakes any pending long-poll"
+      via: "_get_poll_signal(app.state, agent_id).set() AFTER successful INSERT, where agent_id == container_row_id per URL-key contract — wakes the pending long-poll on the SAME key (Spike B verified: URL=container_row_id long-poll wakes in 0.04s; URL=instance_id long-poll TIMES OUT)"
       pattern: "_get_poll_signal.*\\.set\\("
     - from: "api_server/src/api_server/main.py"
       to: "api_server/src/api_server/routes/agent_events.py::inject_router"
@@ -65,6 +65,26 @@ must_haves:
 ---
 
 <objective>
+**SPIKE B EMPIRICAL EVIDENCE (2026-04-19) — supersedes the original plan's URL-key assumption.**
+
+The route `/v1/agents/{agent_id}/events` (GET, long-poll) treats URL `agent_id` as **`agent_containers.id`** (container_row_id), NOT as `agent_instances.id`. EMPIRICALLY CONFIRMED by:
+
+1. `api_server/tests/test_events_long_poll.py:47-80` — the `seed_agent_container` fixture returns the agent_containers PK as a single UUID and uses it directly in long-poll URLs (`/v1/agents/{container_uuid}/events`).
+2. `api_server/src/api_server/routes/agent_lifecycle.py:494` — the watcher spawn passes `agent_id=container_row_id` to `run_watcher`, and the watcher uses that key to populate the `event_poll_signals` dict (the dict the long-poll handler waits on).
+3. Live test 2026-04-19: `long_poll(URL=instance_id) + INSERT(container_row_id)` → timed_out, 0 events. `long_poll(URL=container_row_id) + INSERT(container_row_id)` → returns in 0.04s with 1 event.
+
+**Implications for THIS plan:**
+
+- The new POST `/v1/agents/{agent_id}/events/inject-test-event` MUST follow the same URL-key convention (URL agent_id = container_row_id) so that injected events match what concurrent long-pollers see.
+- The Step 4 agent-existence check in the handler must look up the row by `agent_containers.id`, NOT by `agent_instances.id` via `fetch_running_container_for_agent` (which expects the latter).
+- The `seed_running_container` fixture MUST surface the container_row_id as the primary URL value (not the agent_instance_id).
+- All 8 tests MUST use container_row_id in URLs (not agent_instance_id).
+- The harness subcommand's `--agent-id` argument MUST be the container_row_id (same as the existing send-telegram-and-watch-events subcommand which is already container-row-id-based per Plan 22b-05).
+
+The variable name `agent_id` in route handlers and existing code is a misleading legacy — the canonical URL key for `/v1/agents/{?}/events*` endpoints is `agent_containers.id`. This plan does NOT rename the variable (rename is out of scope; would touch Plan 22b-05's GET handler), but the REVISED Step 4 + fixture + tests below DO use container_row_id consistently.
+
+---
+
 **Gap 2 closure — Gate B mechanism redesign.** Verifier verdict: `send-telegram-and-watch-events` uses bot-self `sendMessage`, but every recipe ships `channels.telegram.allowFrom: [tg:152099202]` (only the human user). Bots aren't users; the bot's own outbound messages are filtered out, so no `reply_sent` event flows. Result: Gate B 0/5. The harness comment at line 109-111 explicitly admits this is a Gate-C concern. D-18a in CONTEXT.md formalized that MTProto user-impersonation is permanently deferred.
 
 **Decision: Path B — test-injection endpoint** (recommended in user prompt).
@@ -142,7 +162,7 @@ Output: new POST handler in agent_events.py; conditional router include in main.
 <interfaces>
 <!-- Contracts consumed; signatures verified by reading the source files in read_first -->
 
-From api_server/src/api_server/services/event_store.py (Plan 22b-02):
+From api_server/src/api_server/services/event_store.py (Plan 22b-02; SPIKE B EMPIRICALLY VERIFIED 2026-04-19 — return type is int, NOT dict):
 ```python
 async def insert_agent_event(
     conn,
@@ -150,8 +170,10 @@ async def insert_agent_event(
     kind: str,
     payload: dict,
     correlation_id: str | None = None,
-) -> dict   # returns the inserted row including seq
+) -> int   # returns the allocated seq (int) — verified via reading event_store.py:50,92
 ```
+
+CRITICAL: the function returns the seq as a plain `int`. There is NO `ts` returned and NO row dict. The original plan's response builder `row["ts"].isoformat()` and `row["seq"]` would crash with `TypeError: 'int' object is not subscriptable`. The handler MUST capture the seq as int and synthesize `ts = datetime.now(timezone.utc)` at insert time — acceptable approximation (Postgres `now()` is within ms of the Python timestamp because the INSERT is on a same-connection same-host transaction; for stricter equivalence the handler could SELECT ts back, but the additional query cost is not justified for a synthetic-event response field).
 
 From api_server/src/api_server/services/watcher_service.py (Plan 22b-03):
 ```python
@@ -268,7 +290,12 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from ..services.event_store import insert_agent_event
-from ..services.run_store import fetch_running_container_for_agent
+
+# NOTE: Spike B 2026-04-19 — we deliberately do NOT import
+# fetch_running_container_for_agent. That helper assumes URL agent_id is an
+# agent_instances PK; the events router convention (verified empirically)
+# uses agent_containers PK. Step 4 below does a direct SELECT on
+# agent_containers by PK to match the URL-key contract.
 
 inject_router = APIRouter()
 
@@ -322,16 +349,26 @@ async def inject_test_event(
         return _err(400, ErrorCode.INVALID_REQUEST,
                     f"unknown kind: {body.kind!r}", param="kind")
 
-    # Step 4 — agent must have a RUNNING container row (we INSERT against
-    # agent_containers.id, not agent_instances.id).
+    # Step 4 — Spike B 2026-04-19 EMPIRICALLY VERIFIED: URL `agent_id` is
+    # `agent_containers.id` (container_row_id), NOT `agent_instances.id`.
+    # We look the row up by container PK to confirm the container exists AND
+    # is in 'running' status. This matches the GET /events handler convention
+    # and the test_events_long_poll.py fixture pattern.
     pool = request.app.state.db
     async with pool.acquire() as conn:
-        running = await fetch_running_container_for_agent(conn, agent_id)
-    if running is None:
+        container_row = await conn.fetchrow(
+            "SELECT id, container_status FROM agent_containers WHERE id = $1",
+            agent_id,
+        )
+    if container_row is None or container_row["container_status"] != "running":
         return _err(404, ErrorCode.AGENT_NOT_FOUND,
-                    f"agent {agent_id} has no running container", param="agent_id")
+                    f"agent {agent_id} has no running container",
+                    param="agent_id")
 
-    container_row_id = UUID(running["id"])
+    # By URL-key contract, agent_id IS the container_row_id. The duplicated
+    # variable name keeps the handler reading naturally without hiding the
+    # contractual identity.
+    container_row_id = agent_id
 
     # Step 5 — Build the payload to match ReplySentPayload exactly. captured_at
     # is the synthesis timestamp (ISO 8601 with Z suffix per D-06 convention).
@@ -345,10 +382,18 @@ async def inject_test_event(
     # Step 6 — INSERT the row (real DB write, real advisory-lock seq allocation
     # — golden rule 1). insert_agent_event is the same function the watcher uses;
     # we are NOT taking a different code path than production.
+    #
+    # Spike B 2026-04-19 EMPIRICALLY VERIFIED: insert_agent_event returns the
+    # allocated seq as a plain `int` — NOT a dict, NOT a row. We capture
+    # `inserted_seq: int` directly. The `ts` field for the response is
+    # synthesized from `datetime.now(timezone.utc)` BEFORE the INSERT (within
+    # ms of the Postgres now() the row gets — close enough for a synthetic-
+    # event response; a SELECT-back is not warranted for the extra round-trip).
     test_correlation_id = f"test:{body.correlation_id}"
+    response_ts = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         try:
-            row = await insert_agent_event(
+            inserted_seq = await insert_agent_event(
                 conn, container_row_id, body.kind, payload,
                 correlation_id=test_correlation_id,
             )
@@ -359,23 +404,37 @@ async def inject_test_event(
             return _err(500, ErrorCode.INVALID_REQUEST,
                         f"insert failed: {type(exc).__name__}", param=None)
 
-    # Step 7 — Wake any pending long-poll on the same agent_id. _get_poll_signal
-    # is keyed on agent_instance_id (NOT container_row_id); the GET handler
-    # waits on the same key. This is the load-bearing wire — without .set(),
-    # a concurrent long-poll would only see the row when its own next fetch
-    # cycle ran (after timeout_s).
+    # Step 7 — Wake any pending long-poll on the SAME URL agent_id key. Spike B
+    # 2026-04-19 EMPIRICALLY VERIFIED: the long-poll route at
+    # /v1/agents/{agent_id}/events treats URL agent_id as agent_containers.id
+    # (the container_row_id), NOT as agent_instances.id. This is consistent
+    # with the rest of the events router (test_events_long_poll.py:47-80
+    # `seed_agent_container` returns the containers PK and uses it directly
+    # in URLs) AND with the watcher spawn site (agent_lifecycle.py:494 passes
+    # `agent_id=container_row_id` to run_watcher). So we wake the signal keyed
+    # on container_row_id. (The variable name `agent_id` in this URL handler
+    # is misleading — it IS container_row_id by convention; we keep the
+    # variable name to match the existing route signature.)
+    #
+    # CRITICAL — see "URL key contract" note below the handler: this endpoint
+    # MUST be called with URL agent_id == container_row_id (matching the GET
+    # /events convention). The agent_existence step above (Step 4) already
+    # uses fetch_running_container_for_agent(conn, agent_id) which assumes
+    # agent_id is an agent_instances PK and returns the running container. If
+    # callers send container_row_id in the URL (as the long-poll convention
+    # requires), Step 4 needs to ALSO try a fetch-by-container-id path. See
+    # Step 4 revision below.
     _get_poll_signal(request.app.state, agent_id).set()
 
-    # Step 8 — Project the response. The seq comes from insert_agent_event's
-    # return; ts comes from the row's ts column (asyncpg returns datetime).
-    ts_iso = (row["ts"].isoformat() if hasattr(row["ts"], "isoformat")
-              else str(row["ts"]))
+    # Step 8 — Project the response. seq is the int returned from
+    # insert_agent_event; ts is the response_ts captured pre-INSERT.
+    ts_iso = response_ts.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return JSONResponse(
         status_code=200,
         content={
             "agent_id": str(agent_id),
             "agent_container_id": str(container_row_id),
-            "seq": int(row["seq"]),
+            "seq": inserted_seq,
             "kind": body.kind,
             "correlation_id": test_correlation_id,
             "ts": ts_iso,
@@ -481,9 +540,10 @@ async def test_inject_test_event_prod_returns_404(
     """Even with valid sysadmin Bearer, the route is invisible in prod."""
     app, client = await _build_prod_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _container_row_id = seed_running_container
+        # Spike B B2: URL key is container_row_id (per events-router contract).
+        container_row_id, _instance_id = seed_running_container
         resp = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "1", "length_chars": 5},
             headers={"Authorization": f"Bearer {sysadmin_env}"},
         )
@@ -497,9 +557,11 @@ async def test_inject_test_event_sysadmin_happy_path(
     """Sysadmin Bearer + AP_ENV=dev + running agent → 200 with seq + correlation_id prefix."""
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, container_row_id = seed_running_container
+        # Spike B B2: URL key is container_row_id; agent_container_id in
+        # response equals the URL value (they are the same identity).
+        container_row_id, _instance_id = seed_running_container
         resp = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "152099202", "length_chars": 12},
             headers={"Authorization": f"Bearer {sysadmin_env}"},
         )
@@ -510,6 +572,8 @@ async def test_inject_test_event_sysadmin_happy_path(
     assert body["kind"] == "reply_sent"
     assert int(body["seq"]) >= 1
     assert UUID(body["agent_container_id"]) == container_row_id
+    assert UUID(body["agent_id"]) == container_row_id, \
+        "agent_id in response echoes URL value (URL key contract)"
 
     # Verify the real DB row exists.
     async with db_pool.acquire() as conn:
@@ -528,9 +592,9 @@ async def test_inject_test_event_missing_bearer_401(
 ):
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _ = seed_running_container
+        container_row_id, _instance_id = seed_running_container
         resp = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "1", "length_chars": 1},
         )
     assert resp.status_code == 401
@@ -544,9 +608,9 @@ async def test_inject_test_event_wrong_bearer_404_opaque(
     """Wrong Bearer returns 404 — surface area is opaque to non-sysadmin callers."""
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _ = seed_running_container
+        container_row_id, _instance_id = seed_running_container
         resp = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "1", "length_chars": 1},
             headers={"Authorization": "Bearer some-random-not-sysadmin-token"},
         )
@@ -562,9 +626,9 @@ async def test_inject_test_event_sysadmin_token_unset_404(
     monkeypatch.delenv("AP_SYSADMIN_TOKEN", raising=False)
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _ = seed_running_container
+        container_row_id, _instance_id = seed_running_container
         resp = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "1", "length_chars": 1},
             headers={"Authorization": "Bearer anything"},
         )
@@ -575,9 +639,20 @@ async def test_inject_test_event_sysadmin_token_unset_404(
 async def test_inject_test_event_no_running_container_404(
     seed_agent_instance, sysadmin_env, monkeypatch,
 ):
-    """agent_id exists but has no running container row → 404."""
+    """A UUID with no matching agent_containers row → 404.
+
+    Spike B B2: URL key is agent_containers.id. We pass an agent_instances
+    UUID (which is, by definition, NOT in agent_containers); Step 4 of the
+    handler does a SELECT on agent_containers WHERE id = $1 which returns
+    None → 404. The error message says "no running container" because
+    that's the user-facing contract from Step 4 (the handler does not
+    leak the underlying URL-key contract to error consumers).
+    """
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
+        # seed_agent_instance returns an agent_instance_id which is NOT a
+        # valid container_row_id (different table, different UUID). Per
+        # Step 4, the SELECT returns None and the handler returns 404.
         resp = await client.post(
             f"/v1/agents/{seed_agent_instance}/events/inject-test-event",
             json={"correlation_id": "abc1", "chat_id": "1", "length_chars": 1},
@@ -595,12 +670,16 @@ async def test_inject_test_event_wakes_long_poll_within_1s(
     """End-to-end: long-poll waits → inject runs → long-poll wakes within 1s with the row."""
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _ = seed_running_container
+        # Spike B B2: BOTH the inject AND the long-poll MUST use
+        # container_row_id in the URL. Using instance_id on either side
+        # (or mismatched on the two calls) breaks the wake — long-poll
+        # times out with 0 events. Empirically verified 2026-04-19.
+        container_row_id, _instance_id = seed_running_container
 
         async def injector():
             await asyncio.sleep(0.4)
             return await client.post(
-                f"/v1/agents/{agent_id}/events/inject-test-event",
+                f"/v1/agents/{container_row_id}/events/inject-test-event",
                 json={"correlation_id": "wake1", "chat_id": "152099202", "length_chars": 8},
                 headers={"Authorization": f"Bearer {sysadmin_env}"},
                 timeout=5.0,
@@ -608,7 +687,7 @@ async def test_inject_test_event_wakes_long_poll_within_1s(
 
         injector_task = asyncio.create_task(injector())
         long_poll_resp = await client.get(
-            f"/v1/agents/{agent_id}/events?since_seq=0&kinds=reply_sent&timeout_s=3",
+            f"/v1/agents/{container_row_id}/events?since_seq=0&kinds=reply_sent&timeout_s=3",
             headers={"Authorization": f"Bearer {sysadmin_env}"},
             timeout=6.0,
         )
@@ -629,14 +708,14 @@ async def test_inject_test_event_double_inject_advances_seq(
     """Two POSTs with same correlation_id produce 2 rows; seq advances per insert."""
     app, client = await _build_dev_client(monkeypatch)
     async with app.router.lifespan_context(app):
-        agent_id, _ = seed_running_container
+        container_row_id, _instance_id = seed_running_container
         first = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "dup1", "chat_id": "1", "length_chars": 1},
             headers={"Authorization": f"Bearer {sysadmin_env}"},
         )
         second = await client.post(
-            f"/v1/agents/{agent_id}/events/inject-test-event",
+            f"/v1/agents/{container_row_id}/events/inject-test-event",
             json={"correlation_id": "dup1", "chat_id": "1", "length_chars": 1},
             headers={"Authorization": f"Bearer {sysadmin_env}"},
         )
@@ -706,7 +785,15 @@ async def seed_agent_instance(db_pool) -> UUID:
 async def seed_running_container(db_pool) -> tuple[UUID, UUID]:
     """Insert agent_instances + agent_containers rows in 'running' state.
 
-    Returns (agent_instance_id, agent_container_id) — both UUIDs.
+    Returns (container_row_id, agent_instance_id) — container_row_id FIRST
+    because it is the canonical URL key for /v1/agents/{?}/events* routes
+    per Spike B 2026-04-19 (matches test_events_long_poll.py:47-80
+    seed_agent_container convention). Tests destructure as
+    `container_row_id, instance_id = seed_running_container`.
+
+    The agent_instance_id is returned secondarily for the rare test that
+    needs to seed a row in another instance-keyed table; most tests will
+    discard it with `_`.
     """
     instance_id = uuid4()
     container_row_id = uuid4()
@@ -735,7 +822,7 @@ async def seed_running_container(db_pool) -> tuple[UUID, UUID]:
             ANONYMOUS_USER_ID,
             fake_container_id,
         )
-    return instance_id, container_row_id
+    return container_row_id, instance_id
 ```
 
 Cleanup is handled automatically by `_truncate_tables` autouse fixture in `api_server/tests/conftest.py` line 89 (TRUNCATEs agent_instances RESTART IDENTITY CASCADE between tests, FK-cascades to agent_containers + agent_events). NO explicit teardown DELETE is required from these fixtures.
@@ -924,7 +1011,10 @@ Then EXTEND `build_parser()` (line ~413). After the existing `b = sub.add_parser
     c.add_argument("--api-base", required=True,
                    help="Base URL of the API server (e.g. http://localhost:8000)")
     c.add_argument("--agent-id", required=True,
-                   help="agent_instance_id — long-poll target")
+                   help="agent_containers.id (container_row_id) — long-poll target. "
+                        "Per Spike B 2026-04-19, the events-router URL key is "
+                        "container_row_id, NOT agent_instance_id. The /v1/agents/:id/start "
+                        "response returns this as `container_row_id` in the JSON body.")
     c.add_argument("--bearer", required=True,
                    help="AP_SYSADMIN_TOKEN value (POST /inject-test-event is sysadmin-only)")
     c.add_argument("--recipe", required=True,
@@ -965,18 +1055,34 @@ Replace with:
     # opt-in), fall back to the bot-self path with its known structural
     # limitation (Gate C still owns the real-user flow).
     if [[ -z "${AP_USE_LEGACY_GATE_B:-}" ]] && python3 test/lib/agent_harness.py send-injected-test-event-and-watch --help >/dev/null 2>&1; then
+      # Spike B B2 (2026-04-19): the events-router URL key is
+      # agent_containers.id (container_row_id), NOT agent_instance_id.
+      # AGENT_ID extracted at smoke time is agent_instance_id (line 166);
+      # we need container_row_id from the /start response instead. The
+      # /v1/agents/:id/start response returns it as `container_row_id`.
+      CONTAINER_ROW_ID=$(jq -r '.container_row_id // ""' <<<"$START")
+      if [[ -z "$CONTAINER_ROW_ID" ]]; then
+        _fail "$RECIPE: /start response missing container_row_id (events router URL key per Spike B B2): $(jq -c '.' <<<"$START")"
+        REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" '{recipe:$r,gate:"B",verdict:"FAIL",error:"missing container_row_id"}')")
+        cleanup
+        continue
+      fi
       GATE_B_OUT=$(python3 test/lib/agent_harness.py send-injected-test-event-and-watch \
         --api-base "$API_BASE" \
-        --agent-id "$AGENT_ID" \
+        --agent-id "$CONTAINER_ROW_ID" \
         --bearer "$AP_SYSADMIN_TOKEN" \
         --recipe "$RECIPE" \
         --chat-id "$TELEGRAM_CHAT_ID" \
         --timeout-s 10 2>/dev/null || echo '{"gate":"B","verdict":"ERROR","error":"harness crashed"}')
     else
       _info "Gate B falling back to legacy send-telegram-and-watch-events (AP_USE_LEGACY_GATE_B set OR new subcommand unavailable). NOTE: this path will FAIL because every recipe's allowFrom filters bot-self; documented in 22b-VERIFICATION.md gap 2."
+      # Spike B B2: even the legacy bot-self fallback needs container_row_id
+      # for the long-poll URL — the URL-key contract is the SAME (the
+      # bot-self path was double-broken: allowFrom AND URL key).
+      CONTAINER_ROW_ID="${CONTAINER_ROW_ID:-$(jq -r '.container_row_id // ""' <<<"$START")}"
       GATE_B_OUT=$(python3 test/lib/agent_harness.py send-telegram-and-watch-events \
         --api-base "$API_BASE" \
-        --agent-id "$AGENT_ID" \
+        --agent-id "$CONTAINER_ROW_ID" \
         --bearer "$AP_SYSADMIN_TOKEN" \
         --recipe "$RECIPE" \
         --token "$TELEGRAM_BOT_TOKEN" \

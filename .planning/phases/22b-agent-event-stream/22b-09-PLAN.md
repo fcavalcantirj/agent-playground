@@ -19,13 +19,13 @@ must_haves:
     - "tools/ap.recipe.schema.json $defs.v0_2 declares a top-level optional `direct_interface` property pointing at a new `$defs.direct_interface_block` whose oneOf branches are: `docker_exec_cli` (argv_template + timeout_s + reply_extract_regex + exit_code_success + stdout_reply) and `http_chat_completions` (port + path + auth + request_template + response_jsonpath + timeout_s)"
     - "tools/ap.recipe.schema.json $defs.channel_entry declares `event_log_regex` (object map: kind name → regex string OR null) and `event_source_fallback` (oneOf: docker_logs_stream / docker_exec_poll / file_tail_in_container) — both as additive optional properties"
     - "Running `pytest tools/tests/test_lint.py::TestLintPositive::test_minimal_valid_recipe_passes` returns PASS"
-    - "Running `python3 -c 'from run_recipe import lint_recipe; import json,yaml; s=json.load(open(\"tools/ap.recipe.schema.json\")); [print(r, len(lint_recipe(yaml.safe_load(open(f\"recipes/{r}.yaml\")), s))) for r in [\"hermes\",\"picoclaw\",\"nullclaw\",\"nanobot\",\"openclaw\"]]'` outputs each recipe with `0` lint errors (currently outputs `2` for each — the `direct_interface` and `event_log_regex` additionalProperties violations)"
+    - "Running `python3 -c 'from run_recipe import lint_recipe; import json,yaml; s=json.load(open(\"tools/ap.recipe.schema.json\")); [print(r, len(lint_recipe(yaml.safe_load(open(f\"recipes/{r}.yaml\")), s))) for r in [\"hermes\",\"picoclaw\",\"nullclaw\",\"nanobot\",\"openclaw\"]]'` outputs each recipe with `0` lint errors. Spike C 2026-04-19 BASELINE (pre-fix): hermes=2, picoclaw=5, nullclaw=7, nanobot=6, openclaw=7 (TOTAL 27 errors). Plan must close ALL 27, not just the 2 categories the original framing covered (direct_interface + event_log_regex)."
     - "tools/tests/test_lint.py grows a new positive test class `TestLintRealRecipes` that asserts each of the 5 committed recipes lints clean against the v0.2 schema (regression guard for any future schema drift)"
     - "The 12 broken recipes in tools/tests/broken_recipes/*.yaml STILL fail lint (no regression in negative tests) — the existing `TestLintBrokenRecipes::test_broken_recipe_fails_lint` parametrize sweep stays GREEN"
     - "The Go-side stale schemas at `agents/schemas/recipe.schema.json` and `api/internal/recipes/schema/recipe.schema.json` are NOT touched in this plan — those are pre-v0.2 legacy `ap.recipe/v1` schemas with a separate scope (the Phase 22b-08 SUMMARY reads them but does NOT enforce them); future cleanup tracked under tech-debt"
   artifacts:
     - path: "tools/ap.recipe.schema.json"
-      provides: "v0.2 schema extended with direct_interface_block + event_log_regex + event_source_fallback definitions and references"
+      provides: "v0.2 schema extended with: (i) direct_interface_block + event_log_regex + event_source_fallback definitions and references (the original scope), AND (ii) Spike C 2026-04-19 retrofits — boot_wall_s/first_reply_wall_s relaxed to number-or-string-with-tilde, verdict + channel_category enums get PASS_WITH_FLAG, channel_verified_cell.required loses category (or recipe gets one — orchestrator decision), spike_artifact field declared, runtime.process_env.api_key_by_provider declared. ALL 27 pre-existing lint errors close."
       contains: "direct_interface_block"
     - path: "tools/tests/test_lint.py"
       provides: "TestLintRealRecipes class with one parametrized test per real recipe asserting `lint_recipe(...) == []`"
@@ -53,6 +53,45 @@ must_haves:
 ---
 
 <objective>
+**SPIKE C EMPIRICAL EVIDENCE (2026-04-19) — supersedes the original plan's "only 2 errors per recipe" framing.**
+
+The unpatched schema produces the following lint errors per recipe (verified by running `lint_recipe(recipe, schema)` from `tools/run_recipe.py` against each `recipes/*.yaml` on this commit):
+
+| Recipe | Errors | Details |
+|--------|--------|---------|
+| hermes   | 2 | direct_interface unknown; channels.telegram.event_log_regex unknown |
+| picoclaw | 5 | + verified_cells[1].spike_artifact unknown; + boot_wall_s 2.85 not integer; + first_reply_wall_s 3.2 not integer |
+| nullclaw | 7 | + spike_artifact, boot_wall_s 2.46, first_reply_wall_s '~3', verdict 'PASS_WITH_FLAG' not in enum, category 'PASS_WITH_FLAG' not in enum, event_source_fallback also unknown |
+| nanobot  | 6 | + spike_artifact, boot_wall_s 23.36, first_reply_wall_s '~6', verified_cells[0].category MISSING (required field) |
+| openclaw | 7 | + spike_artifact, first_reply_wall_s '~6', verdict + category PASS_WITH_FLAG, runtime.process_env.api_key_by_provider unknown, event_source_fallback also unknown |
+
+**This means the original plan's scope was incorrect.** Adding `direct_interface_block` + `event_log_regex` + `event_source_fallback` $defs alone closes only 2 of the 7 categories of error. Five additional pre-existing schema-vs-recipe drifts must be retrofitted in the SAME plan to achieve "all 5 recipes lint clean":
+
+- **B1** — `boot_wall_s` recipe values are floats (2.46/2.85/23.36); schema declares `integer`
+- **B2** — `first_reply_wall_s` is float (3.2) or YAML literal-string (`~3`/`~6`); schema declares `integer`
+- **B3** — `verdict='PASS_WITH_FLAG'` not in enum `[PASS, FULL_PASS, CHANNEL_PASS_LLM_FAIL]` (nullclaw + openclaw)
+- **B4** — `category='PASS_WITH_FLAG'` not in `channel_category` enum (nullclaw + openclaw)
+- **B5** — `category` is required but nanobot[0] (date 2026-04-17) has no `category:` field (verified: only line 337 `verdict: PASS`, no category line)
+- **B6** — `spike_artifact` field on cells, not declared in schema (4 recipes)
+- **B7** — `runtime.process_env.api_key_by_provider` not declared (openclaw env-var-by-provider innovation per project memory feedback_recipe_runner_debt.md item #3)
+
+**Two structural bugs in the originally planned schema** ALSO surface during Spike C:
+
+- **A1** — `direct_interface_block` $def declares outer `additionalProperties: false` with NO outer `properties`, only `oneOf` branches. JSON Schema does NOT propagate branch properties into the parent's known-properties set, so the outer `additionalProperties: false` rejects `kind` AND `spec` BEFORE the oneOf branches even get to validate. **Fix: drop outer `additionalProperties: false`; inner branches already enforce closure via their own `additionalProperties: false`.**
+- **A2** — Same defect in `event_source_fallback`. ALSO: nullclaw + openclaw recipes carry a load-bearing `notes:` field under event_source_fallback that the original $def doesn't declare. **Fix: drop outer `additionalProperties: false` AND add `notes: {type: string}` as a top-level allowed property (not in any oneOf branch — hoist).**
+
+**Resolution path (per project memory: "recipes are not to be rewritten unless retroactive re-validation requires a minimal retrofit" — conservative path is to widen the schema rather than rewrite recipes):**
+
+- B1, B2: relax type from `integer` to `number` (also accept `string` for the `~6`/`~3` literal-string idioms — `oneOf: [{type: number}, {type: string}]`)
+- B3, B4: append `PASS_WITH_FLAG` to both enums (verdict enum + channel_category enum)
+- B5: open decision (see "Open decisions" below) — preferred path is **schema relax**: change `category` from `required` to optional (allow null/missing) — the alternative (recipe edit to add `category: PASS` to nanobot[0]) would touch the 5-recipes-no-rewrite memory rule
+- B6: declare `spike_artifact: {type: string}` on `channel_verified_cell.properties`
+- B7: declare `api_key_by_provider: {type: object, additionalProperties: {type: string}}` under `runtime.process_env.properties`
+
+**Open decision left for orchestrator:** B5 — accept `category: null` in schema (relax) OR ask developer to add `category: PASS` to nanobot recipe verified_cells[0] (rewrite, requires user confirmation per CLAUDE.md golden rule "no unasked code changes"). This plan ASSUMES the schema-relax path (no recipe edits beyond what's already locked elsewhere) — flagged in Task 1 for orchestrator override.
+
+---
+
 **Gap 3 closure — recipe lint schema lags the recipe contract.** Verifier verdict: Plan 22b-06 added `direct_interface` (top-level) and `event_log_regex` (under channels.telegram) to all 5 recipes; Plan 22b-08 (this gap closure batch) adds `event_source_fallback` references via the existing nullclaw/openclaw definitions. The canonical schema at `tools/ap.recipe.schema.json` does not declare any of these fields, so strict-mode lint (`additionalProperties: false`) rejects every committed recipe.
 
 **Empirical confirmation (2026-04-19, in this planning session):**
@@ -300,8 +339,7 @@ event_source_fallback:
     "direct_interface_block": {
       "type": "object",
       "required": ["kind", "spec"],
-      "additionalProperties": false,
-      "description": "v0.2 direct_interface declaration (Phase 22b D-19..D-22). Top-level sibling of `persistent` + `channels`. Declares the recipe's primary programmatic invocation surface — a docker exec CLI invocation OR an HTTP POST to an in-container endpoint. Used by SC-03 Gate A (test/lib/agent_harness.py send-direct-and-read) to invoke the agent directly without involving the channel layer (Telegram bot-self impersonation is filtered by allowFrom; direct_interface bypasses the gateway entirely).",
+      "description": "v0.2 direct_interface declaration (Phase 22b D-19..D-22). Top-level sibling of `persistent` + `channels`. Declares the recipe's primary programmatic invocation surface — a docker exec CLI invocation OR an HTTP POST to an in-container endpoint. Used by SC-03 Gate A (test/lib/agent_harness.py send-direct-and-read) to invoke the agent directly without involving the channel layer (Telegram bot-self impersonation is filtered by allowFrom; direct_interface bypasses the gateway entirely). Spike C 2026-04-19: outer `additionalProperties: false` was REMOVED — JSON Schema does not propagate oneOf-branch property declarations to the outer level, so an outer additionalProperties:false would reject `kind` and `spec` BEFORE oneOf branches validate. Each oneOf branch carries its own `additionalProperties: false` which is the actual closure mechanism.",
       "oneOf": [
         {
           "type": "object",
@@ -403,9 +441,14 @@ event_source_fallback:
 ```json
     "event_source_fallback": {
       "type": "object",
-      "required": ["kind", "spec"],
-      "additionalProperties": false,
-      "description": "v0.2 channel-scoped event source dispatcher (Phase 22b D-23). Declares the alternate observation path when docker logs do NOT carry per-message events for this recipe. Watcher_service _select_source() (api_server/src/api_server/services/watcher_service.py line 380-387) dispatches on `kind`. When this block is ABSENT entirely, the watcher defaults to docker_logs_stream (the typical case for hermes/picoclaw/nanobot whose docker logs DO carry events).",
+      "required": ["kind"],
+      "properties": {
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes hoisted to the outer block (nullclaw + openclaw both carry a `notes:` field — Spike C 2026-04-19 verified the field is load-bearing in those recipes; declared here at the outer level so it applies to ALL oneOf branches without per-branch repetition)."
+        }
+      },
+      "description": "v0.2 channel-scoped event source dispatcher (Phase 22b D-23). Declares the alternate observation path when docker logs do NOT carry per-message events for this recipe. Watcher_service _select_source() (api_server/src/api_server/services/watcher_service.py line 380-387) dispatches on `kind`. When this block is ABSENT entirely, the watcher defaults to docker_logs_stream (the typical case for hermes/picoclaw/nanobot whose docker logs DO carry events). Spike C 2026-04-19: outer `additionalProperties: false` REMOVED for the same reason as direct_interface_block (oneOf branch properties don't propagate); outer-level `notes` property hoisted to allow nullclaw + openclaw's load-bearing notes field. Inner branches retain `additionalProperties: false`.",
       "oneOf": [
         {
           "type": "object",
@@ -559,6 +602,190 @@ Replace with:
 
 (Note: `additionalProperties: false` on channel_entry is preserved by inserting the new properties INSIDE the existing properties object — additionalProperties applies to the OBJECT, not to the properties block. Verify by reading the channel_entry $def in full first.)
 
+**Change 4 (B1+B2) — Relax `boot_wall_s` and `first_reply_wall_s` types in `$defs.channel_verified_cell.properties`** (pre-existing drift surfaced by Spike C 2026-04-19):
+
+The recipes empirically use float values (2.46, 2.85, 3.2, 23.36) and YAML literal-string values (`~3`, `~6`, written without quotes — YAML parses these as strings, not numbers). Schema today declares `integer`. Widen.
+
+Find (in $defs.channel_verified_cell.properties — at lines ~226-233):
+```json
+        "boot_wall_s": {
+          "type": "integer",
+          "description": "Observed wall time from docker run -d to ready_log_regex match."
+        },
+        "first_reply_wall_s": {
+          "type": "integer",
+          "description": "Observed wall time from first user message to first agent reply."
+        },
+```
+
+Replace with:
+```json
+        "boot_wall_s": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string", "pattern": "^~?[0-9]+(?:\\.[0-9]+)?$" }
+          ],
+          "description": "Observed wall time from docker run -d to ready_log_regex match. Accepts integer (12), float (2.85), or YAML literal-string approximations (`~3`, `~6` — note YAML parses unquoted ~3 as the string '~3', not the number 3) for human-friendly recon notes."
+        },
+        "first_reply_wall_s": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string", "pattern": "^~?[0-9]+(?:\\.[0-9]+)?$" }
+          ],
+          "description": "Observed wall time from first user message to first agent reply. Same accepted shapes as boot_wall_s."
+        },
+```
+
+**Change 5 (B3) — Append `PASS_WITH_FLAG` to `verified_cells.verdict` enum** (channel_verified_cell.properties.verdict, around line 202-205):
+
+Find:
+```json
+        "verdict": {
+          "type": "string",
+          "enum": ["PASS", "FULL_PASS", "CHANNEL_PASS_LLM_FAIL"],
+          "description": "Channel verdict enum. Distinct from smoke.verified_cells[*].verdict ({PASS, FAIL})."
+        },
+```
+
+Replace with:
+```json
+        "verdict": {
+          "type": "string",
+          "enum": ["PASS", "FULL_PASS", "CHANNEL_PASS_LLM_FAIL", "PASS_WITH_FLAG"],
+          "description": "Channel verdict enum. Distinct from smoke.verified_cells[*].verdict ({PASS, FAIL}). PASS_WITH_FLAG (added Spike C 2026-04-19): semantic for nullclaw + openclaw recipes whose channel + LLM both work but a non-blocking quirk is documented (e.g., openclaw openrouter plugin upstream-blocked, anthropic-direct path PASSes; the `_WITH_FLAG` suffix signals the cell is functionally green but the operator should read the notes)."
+        },
+```
+
+**Change 6 (B4) — Append `PASS_WITH_FLAG` to `channel_category` enum** (around line 30-46):
+
+Find (the FULL channel_category enum block):
+```json
+    "channel_category": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "ASSERT_FAIL",
+        "INVOKE_FAIL",
+        "BUILD_FAIL",
+        "PULL_FAIL",
+        "CLONE_FAIL",
+        "TIMEOUT",
+        "LINT_FAIL",
+        "INFRA_FAIL",
+        "STOCHASTIC",
+        "SKIP",
+        "BLOCKED_UPSTREAM"
+      ],
+```
+
+Replace with (append PASS_WITH_FLAG; preserve description):
+```json
+    "channel_category": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "ASSERT_FAIL",
+        "INVOKE_FAIL",
+        "BUILD_FAIL",
+        "PULL_FAIL",
+        "CLONE_FAIL",
+        "TIMEOUT",
+        "LINT_FAIL",
+        "INFRA_FAIL",
+        "STOCHASTIC",
+        "SKIP",
+        "BLOCKED_UPSTREAM",
+        "PASS_WITH_FLAG"
+      ],
+```
+
+(Leave description as-is; or extend with a sentence noting PASS_WITH_FLAG is for cells that are functionally PASS but carry a non-blocking quirk note.)
+
+**Change 7 (B5) — Make `category` optional on `channel_verified_cell`** (the schema-relax path; flagged as orchestrator-overridable in objective).
+
+Find (channel_verified_cell `required` array at line ~185):
+```json
+      "required": ["date", "bot_username", "allowed_user_id", "verdict", "category", "notes"],
+```
+
+Replace with (drop category from required; existing `category` property declaration unchanged — it remains valid when present):
+```json
+      "required": ["date", "bot_username", "allowed_user_id", "verdict", "notes"],
+```
+
+(This unblocks nanobot.verified_cells[0] which was authored 2026-04-17 without a `category` field. ALTERNATIVELY, the orchestrator may opt to ADD `category: PASS` to nanobot's verified_cells[0] line 337 instead — see "Open decisions" in objective. The schema-relax path here is the conservative default; if the orchestrator overrides to recipe-edit, REVERT this Change 7 hunk and INSTEAD add a one-line `category: PASS` to recipes/nanobot.yaml after the `verdict: PASS` at line 337.)
+
+**Change 8 (B6) — Declare `spike_artifact` field on `channel_verified_cell`** (4 of 5 recipes use this for cross-link to spike artifacts):
+
+Find (in channel_verified_cell.properties, AFTER `reply_sample` at line ~234-237):
+```json
+        "reply_sample": {
+          "type": "string",
+          "description": "Verbatim or lightly redacted sample of the first reply."
+        }
+      }
+    },
+```
+
+Replace with (insert spike_artifact as a sibling property; keep the closing braces):
+```json
+        "reply_sample": {
+          "type": "string",
+          "description": "Verbatim or lightly redacted sample of the first reply."
+        },
+        "spike_artifact": {
+          "type": "string",
+          "description": "Optional path to a related spike artifact (e.g., .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01e-openclaw.md) for full evidence trail. Used by 4 of 5 v0.2 recipes (Spike C 2026-04-19: picoclaw + nullclaw + nanobot + openclaw)."
+        }
+      }
+    },
+```
+
+**Change 9 (B7) — Declare `runtime.process_env.api_key_by_provider`** (openclaw env-var-by-provider innovation per Phase 22b D-21 — the recipe already uses it; schema needs to allow it):
+
+Find (in `$defs.v0_2.properties.runtime.properties.process_env.properties` — there are TWO process_env blocks in the schema, one in v0_1 around line 464 and one in v0_2 around line 1026-1037; we update the v0_2 one ONLY):
+```json
+            "process_env": {
+              "type": "object",
+              "required": ["api_key", "base_url", "model"],
+              "additionalProperties": false,
+              "properties": {
+                "api_key": { "type": "string" },
+                "api_key_fallback": { "type": ["string", "null"] },
+                "base_url": { "type": ["string", "null"] },
+                "model": { "type": ["string", "null"] }
+              }
+            },
+```
+
+Replace with (add api_key_by_provider as additional sibling property — preserves additionalProperties:false closure):
+```json
+            "process_env": {
+              "type": "object",
+              "required": ["api_key", "base_url", "model"],
+              "additionalProperties": false,
+              "properties": {
+                "api_key": { "type": "string" },
+                "api_key_fallback": { "type": ["string", "null"] },
+                "base_url": { "type": ["string", "null"] },
+                "model": { "type": ["string", "null"] },
+                "api_key_by_provider": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "v0.2 (Phase 22b D-21) — per-provider env-var override map. Keys are LLM provider IDs (anthropic, openrouter, openai, ...); values are the env-var name to inject. Used by openclaw to declare `anthropic: ANTHROPIC_API_KEY` so the persistent /start handler's _resolve_api_key_var can pick the right env-var when the user-selected model uses the anthropic-direct provider. Verified verbatim in recipes/openclaw.yaml lines 36-39."
+                }
+              }
+            },
+```
+
+**Pre-edit verification (MANDATORY for Change 9 — golden rule 5):** confirm the v0_2 process_env block is at line ~1028-1037 (NOT the v0_1 block at line ~464-471 which is a DIFFERENT $def for legacy recipes). The v0_2 block lives under `$defs.v0_2.properties.runtime.properties.process_env`; the v0_1 block lives under `$defs.v0_1.properties.runtime.properties.process_env`. Editing the wrong one would silently NOT fix openclaw lint (openclaw uses v0_2). Run:
+
+```bash
+python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); print('v0_2 process_env keys:', list(s['\$defs']['v0_2']['properties']['runtime']['properties']['process_env']['properties'].keys()))"
+```
+
+Must output a list NOT containing `api_key_by_provider` (pre-edit). After edit, MUST contain it.
+
 **Validation strategy** (post-edit, golden rule 5 — empirical confirmation):
 
 ```bash
@@ -615,10 +842,16 @@ print('all 5 recipes lint clean')
     - All 5 recipes lint clean: the verify automated command exits 0
     - The test_minimal_valid_recipe_passes test STILL passes: `cd tools && pytest -x tests/test_lint.py::TestLintPositive -q 2>&1 | tail -3 | grep -qE "passed"` exits 0
     - The 12 broken recipes STILL fail lint: `cd tools && pytest -x tests/test_lint.py::TestLintBrokenRecipes -q 2>&1 | tail -3 | grep -qE "passed"` exits 0
-    - Schema file size grew but is still valid JSON: `wc -l tools/ap.recipe.schema.json` returns >1450 lines (was 1356; +120 for the 3 changes)
+    - Schema file size grew but is still valid JSON: `wc -l tools/ap.recipe.schema.json` returns >1480 lines (was 1356; +130-150 for the 9 changes — 3 original $defs + 6 retrofit hunks per Spike C)
     - The Go-side legacy schemas are UNTOUCHED: `git diff agents/schemas/recipe.schema.json api/internal/recipes/schema/recipe.schema.json | wc -l` returns `0`
+    - Spike C retrofit B1+B2: `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); cv=s['\$defs']['channel_verified_cell']['properties']; assert 'oneOf' in cv['boot_wall_s'] and 'oneOf' in cv['first_reply_wall_s']; print('boot_wall_s/first_reply_wall_s relaxed to oneOf')"` succeeds
+    - Spike C retrofit B3+B4: `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); v=s['\$defs']['channel_verified_cell']['properties']['verdict']['enum']; cc=s['\$defs']['channel_category']['enum']; assert 'PASS_WITH_FLAG' in v and 'PASS_WITH_FLAG' in cc, f'verdict={v} category={cc}'; print('PASS_WITH_FLAG in both enums')"` succeeds
+    - Spike C retrofit B5 (schema-relax path): `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); req=s['\$defs']['channel_verified_cell']['required']; assert 'category' not in req, f'category still required: {req}'; print('category optional')"` succeeds (OR if orchestrator chose recipe-edit path: nanobot.yaml gets the category line — check via `grep -A 1 \"verdict: PASS\" recipes/nanobot.yaml | grep -c \"category:\"` returns `>= 2`)
+    - Spike C retrofit B6: `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); print('spike_artifact' in s['\$defs']['channel_verified_cell']['properties'])"` outputs `True`
+    - Spike C retrofit B7: `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); print('api_key_by_provider' in s['\$defs']['v0_2']['properties']['runtime']['properties']['process_env']['properties'])"` outputs `True`
+    - Spike C bug A1+A2 fix verified: `python3 -c "import json; s=json.load(open('tools/ap.recipe.schema.json')); dib=s['\$defs']['direct_interface_block']; esf=s['\$defs']['event_source_fallback']; assert dib.get('additionalProperties') is not False, 'direct_interface_block still has outer additionalProperties:false (Bug A1)'; assert esf.get('additionalProperties') is not False, 'event_source_fallback still has outer additionalProperties:false (Bug A2)'; assert 'notes' in esf.get('properties', {}), 'event_source_fallback missing hoisted notes property'; print('A1+A2 fixed')"` succeeds
   </acceptance_criteria>
-  <done>tools/ap.recipe.schema.json gains direct_interface_block + event_source_fallback $defs and three new property references (v0_2.direct_interface + channel_entry.event_log_regex + channel_entry.event_source_fallback); all 5 committed recipes lint clean against the extended schema; minimal valid + 12 broken recipe tests unchanged; Go-side legacy schemas not touched.</done>
+  <done>tools/ap.recipe.schema.json gains direct_interface_block + event_source_fallback $defs (with Spike C bug A1+A2 fixes — outer additionalProperties:false dropped, event_source_fallback notes hoisted) and three new property references (v0_2.direct_interface + channel_entry.event_log_regex + channel_entry.event_source_fallback) AND 6 retrofit hunks (B1-B7 from Spike C — boot_wall_s + first_reply_wall_s relaxed; PASS_WITH_FLAG in both enums; category optional OR recipe-edit; spike_artifact declared; api_key_by_provider declared); all 5 committed recipes lint clean against the extended schema (27 baseline errors → 0); minimal valid + 12 broken recipe tests unchanged; Go-side legacy schemas not touched.</done>
 </task>
 
 <task type="auto">
@@ -762,20 +995,27 @@ All 7 new tests (5 parametrized + 2 sanity) green; full suite green.
 </verification>
 
 <success_criteria>
-1. tools/ap.recipe.schema.json $defs gains `direct_interface_block` + `event_source_fallback` definitions matching the 5 committed recipes' shapes verbatim
+1. tools/ap.recipe.schema.json $defs gains `direct_interface_block` + `event_source_fallback` definitions matching the 5 committed recipes' shapes verbatim, with Spike C 2026-04-19 bug A1+A2 fixes (outer additionalProperties:false REMOVED on both — JSON Schema doesn't propagate oneOf-branch properties into the parent's known set; inner branches enforce closure)
 2. tools/ap.recipe.schema.json $defs.v0_2.properties gains `direct_interface` reference; $defs.channel_entry.properties gains `event_log_regex` + `event_source_fallback` references
-3. All 5 committed recipes (hermes, picoclaw, nullclaw, nanobot, openclaw) lint clean against the extended schema
-4. The 12 broken recipes in tools/tests/broken_recipes/ STILL fail lint (no regression in TestLintBrokenRecipes)
-5. The minimal_valid_recipe fixture STILL passes lint (no regression in TestLintPositive)
-6. New TestLintRealRecipes class with 5 parametrized + 2 sanity tests asserts the regression guard
-7. Go-side legacy schemas at agents/schemas/ + api/internal/recipes/schema/ are untouched (separate tech-debt concern)
+3. Spike C retrofits B1-B7 land:
+   - B1+B2: boot_wall_s + first_reply_wall_s relaxed from `integer` to `oneOf:[number, string-with-tilde]`
+   - B3: `PASS_WITH_FLAG` appended to channel_verified_cell.verdict enum
+   - B4: `PASS_WITH_FLAG` appended to channel_category enum
+   - B5: `category` made optional on channel_verified_cell (schema-relax path; orchestrator may opt into recipe-edit path for nanobot.yaml line 337 instead)
+   - B6: `spike_artifact: {type: string}` declared on channel_verified_cell.properties
+   - B7: `api_key_by_provider: {type: object, additionalProperties: string}` declared on v0_2.runtime.process_env.properties
+4. All 5 committed recipes (hermes, picoclaw, nullclaw, nanobot, openclaw) lint clean against the extended schema (27 baseline errors → 0)
+5. The 12 broken recipes in tools/tests/broken_recipes/ STILL fail lint (no regression in TestLintBrokenRecipes)
+6. The minimal_valid_recipe fixture STILL passes lint (no regression in TestLintPositive)
+7. New TestLintRealRecipes class with 5 parametrized + 2 sanity tests asserts the regression guard
+8. Go-side legacy schemas at agents/schemas/ + api/internal/recipes/schema/ are untouched (separate tech-debt concern)
 </success_criteria>
 
 <output>
 After completion, create `.planning/phases/22b-agent-event-stream/22b-09-SUMMARY.md` with:
 - Exact diff stats for `tools/ap.recipe.schema.json` (lines added per change; total file size before/after)
 - The 3 new $defs/property declarations summarized (direct_interface_block oneOf shape; event_source_fallback oneOf shape; event_log_regex propertyNames + value union)
-- Per-recipe lint-error count BEFORE Task 1 (each was 2 errors per planning-session reproducer) AND AFTER Task 1 (each is 0 errors)
+- Per-recipe lint-error count BEFORE Task 1 (Spike C 2026-04-19 baseline: hermes=2, picoclaw=5, nullclaw=7, nanobot=6, openclaw=7; total=27) AND AFTER Task 1 (each is 0 errors; total=0)
 - Test counts: TestLintPositive (1 → 1 — unchanged), TestLintBrokenRecipes (12 parametrized cases — unchanged), TestLintRealRecipes (NEW: 5 parametrized + 2 sanity)
 - Honest scope notes:
   - The user prompt pointed at `agents/schemas/recipe.schema.json` and `api/internal/recipes/schema/recipe.schema.json` as the files needing edits. Empirical verification (in this plan's read_first) showed those are pre-v0.2 legacy `ap.recipe/v1` schemas (257 lines, declare ID/runtime/launch/chat_io/isolation — fields that don't exist in v0.2 recipes). They are not referenced by `test_lint.py` (which uses `tools/ap.recipe.schema.json`) and not used by api_server's lint pipeline. Editing them would NOT close gap 3.

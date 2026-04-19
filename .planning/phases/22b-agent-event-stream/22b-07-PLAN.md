@@ -14,14 +14,14 @@ requirements:
 
 must_haves:
   truths:
-    - "openclaw direct_interface invocation works end-to-end against the persistent gateway-mode container — the harness invocation `python3 test/lib/agent_harness.py send-direct-and-read --recipe openclaw --container-id <CID> --model anthropic/claude-haiku-4-5 --api-key $ANTHROPIC_API_KEY` returns verdict=PASS with non-empty reply_text containing the correlation id"
-    - "openclaw direct_interface.kind is `docker_exec_cli` (NOT `http_chat_completions`) — port 18000 line is removed; argv targets `openclaw infer model run --local --json` which uses the auth state ALREADY established by the persistent /start (config set + ANTHROPIC_API_KEY env)"
+    - "openclaw direct_interface invocation works end-to-end against the persistent gateway-mode container — the harness invocation `python3 test/lib/agent_harness.py send-direct-and-read --recipe openclaw --container-id <CID> --model anthropic/claude-haiku-4-5 --api-key $ANTHROPIC_API_KEY` returns verdict=PASS with non-empty reply_text containing the correlation id. EMPIRICALLY PROVED 2026-04-19 by Spike A (transcripts /tmp/spike-A-stdout-anthropic.txt + /tmp/spike-A-stdout-gateway.txt): the argv MUST include explicit `--model {model}` because the heredoc-baked openclaw.json defaults to `openrouter/anthropic/claude-haiku-4-5` (per persistent.spec.argv) and the gateway-baked config takes precedence — without `--model` infer model run hits FailoverError(\"No API key found for provider \\\"openrouter\\\"\") despite ANTHROPIC_API_KEY being in env."
+    - "openclaw direct_interface.kind is `docker_exec_cli` (NOT `http_chat_completions`) — port 18000 line is removed; argv targets `openclaw infer model run --prompt {prompt} --local --json --model {model}` (the trailing `--model {model}` is MANDATORY per Spike A — the gateway-baked openclaw.json overrides env-detected provider unless `--model` is explicit on the CLI). The harness-substituted `{model}` is the MATRIX-row model (e.g., `anthropic/claude-haiku-4-5`); ANTHROPIC_API_KEY env is already in place from the persistent /start handler's _resolve_api_key_var (per D-21)."
     - "test/e2e_channels_v0_2.sh MATRIX entry for openclaw drops `skip_smoke=true` (the band-aid); the smoke /v1/runs probe must PASS via the same `infer model run --local` path that direct_interface now reuses"
     - "Running `bash test/e2e_channels_v0_2.sh` with full creds produces Gate A 15/15 PASS (openclaw 3/3 included) AND Gate A score writes to e2e-report.json with no openclaw FAIL entries"
-    - "Recipe ships an empirical re-verification entry under channels.telegram.verified_cells with date 2026-04-19+ and category=PASS confirming Gate A direct_interface PASSES against the persistent gateway-mode container (i.e., proven through the live FastAPI /v1/agents/:id/start lifecycle — NOT only against the manual `docker run -e ANTHROPIC_API_KEY ...` path that spike-01e used to validate the auth-state precondition in isolation)"
+    - "Recipe ships an empirical re-verification entry under channels.telegram.verified_cells with date 2026-04-19+ and category=PASS confirming Gate A direct_interface PASSES against the persistent gateway-mode container. Spike A (2026-04-19, /tmp/spike-A-stdout-anthropic.txt + /tmp/spike-A-stdout-gateway.txt) PROVED the argv against a `/v1/agents/:id/start`-spawned openclaw container (NOT against a standalone `docker run` — the persistent /start lifecycle was exercised end-to-end). Two argv variants both PASS: `--local --json --model anthropic/claude-haiku-4-5` (84s wall) and `--gateway --json --model anthropic/claude-haiku-4-5` (42s wall, faster because it reuses the warm gateway). Plan defaults to `--local` for explicitness; orchestrator may opt into `--gateway` for the perf bump."
   artifacts:
     - path: "recipes/openclaw.yaml"
-      provides: "direct_interface block reshaped to docker_exec_cli targeting openclaw infer model run --local --json (matches spike-01e working path); skip_smoke removal precondition"
+      provides: "direct_interface block reshaped to docker_exec_cli targeting openclaw infer model run --local --json --model {model} (Spike A 2026-04-19 PROVED `--model` is mandatory — gateway-baked openclaw.json overrides env-detected provider otherwise); skip_smoke removal precondition"
       contains: "kind: docker_exec_cli"
     - path: "test/e2e_channels_v0_2.sh"
       provides: "MATRIX openclaw row with skip_smoke=false; Gate A passes openclaw without the band-aid"
@@ -42,6 +42,24 @@ must_haves:
 ---
 
 <objective>
+**SPIKE A EMPIRICAL EVIDENCE (2026-04-19) — supersedes spike-06 + spike-01e citations below.**
+
+Three argv variants tested live against a `/v1/agents/:id/start`-spawned openclaw container (NOT against standalone `docker run`):
+
+| argv | result |
+|------|--------|
+| `["openclaw","infer","model","run","--prompt","{prompt}","--local","--json"]` (the originally planned argv, NO `--model`) | EXIT=0 BUT stdout JSON contains `FailoverError: No API key found for provider "openrouter"`. The gateway-baked openclaw.json defaults `agents.defaults.model` to `openrouter/anthropic/claude-haiku-4-5`; only ANTHROPIC_API_KEY is in env; openrouter env-var is absent → infer dispatches to openrouter provider per config and fails auth. |
+| `["openclaw","infer","model","run","--prompt","{prompt}","--local","--json","--model","anthropic/claude-haiku-4-5"]` | EXIT=0, stdout JSON `outputs[0].text == "ok-spike-A-99"`, 84s wall. PASS. |
+| `["openclaw","infer","model","run","--prompt","{prompt}","--gateway","--json","--model","anthropic/claude-haiku-4-5"]` | EXIT=0, same JSON shape, 42s wall (faster — reuses warm gateway). PASS. |
+
+**Conclusion:** the `--model {model}` CLI flag is MANDATORY. The argv_template MUST end with `..., "--model", "{model}"`. Transcripts at /tmp/spike-A-stdout-anthropic.txt + /tmp/spike-A-stdout-gateway.txt.
+
+**Output extraction:** the `--json` envelope shape is `{"ok":true,"capability":"model.run","transport":"local|gateway","provider":"anthropic","model":"claude-haiku-4-5","attempts":[],"outputs":[{"text":"<assistant text>","mediaUrl":null}]}`. The originally-planned regex `(?s)"outputs"\s*:\s*\[\s*"(?P<reply>[^"]*)"` would FAIL because outputs[0] is an OBJECT not a string. Use `(?s)"text"\s*:\s*"(?P<reply>[^"]*)"` instead — matches the inner `text` field directly. (Note: harness `cmd_send_direct_and_read` for docker_exec_cli supports `reply_extract_regex` only — it does NOT support `response_jsonpath` for this kind. Verified by reading test/lib/agent_harness.py lines 187-230. Adding response_jsonpath support to docker_exec_cli is a separate scope; the regex form is sufficient.)
+
+**Recipe doc-fix tech debt:** `recipes/openclaw.yaml` lines 80-94 (the `argv_note:` field on `invoke.spec`) claim `--model` on `infer model run` is "decorative" / "the embedded agent runtime reads its lane model from agents.defaults.model in the config, NOT from the CLI flag". Spike A empirically REFUTES that for openclaw `2026.4.15-beta.1`: the `--model` CLI flag IS respected and overrides the config. This is doc-debt in the existing recipe — flagged but not fixed in this plan (a separate doc-fix can land in a future cleanup; the YAML works correctly today, only the `argv_note` prose is misleading).
+
+---
+
 **Gap 1 closure — openclaw Gate A.** Verifier verdict: openclaw direct_interface declares port 18000 + `http_chat_completions`, but the persistent `/v1/agents/:id/start` runs `openclaw gateway --allow-unconfigured` which exposes only port 18789 (channel router) — port 18000 belongs to `openclaw serve` (a separate process not started by our recipe). Result: Gate A 0/3 for openclaw, total 12/15 instead of 15/15.
 
 **Decision: Path A — recipe rewrite to `docker_exec_cli`.**
@@ -187,16 +205,15 @@ REPLACE the entire `direct_interface:` block (from `direct_interface:` through `
 #            dmPolicy=allowlist, allowFrom=[tg:$TELEGRAM_ALLOWED_USER].
 #      Mechanism note: direct_interface's `openclaw config set
 #      agents.defaults.model "anthropic/{model}"` (Task 1 argv below) runs
-#      AGAINST the openclaw.json file the gateway already read at boot —
-#      `config set` performs a file write+read cycle, not an in-process state
-#      mutation. Same end-effect as if the persistent argv had used `config
-#      set` originally, but the actual mechanism is direct file overwrite.
-#      The override is necessary because the heredoc bakes the `openrouter/`
-#      prefix unconditionally — Gate A pairs openclaw with anthropic models,
-#      so we re-point the primary model right before invocation.
-#      So at the time direct_interface is invoked, the container has both auth
-#      env AND model config in place — `infer model run --local --json` runs
-#      against the (now anthropic-pointed) pre-configured state.
+#      Spike A 2026-04-19 PROVED that an even simpler path works: the
+#      `--model {model}` CLI flag on `infer model run` is RESPECTED and
+#      OVERRIDES the openclaw.json `agents.defaults.model` setting at
+#      invocation time — without mutating any in-container state. So
+#      direct_interface drops the `config set` step entirely and just passes
+#      the anthropic model on the CLI. (The recipe's `invoke.spec.argv_note`
+#      claiming `--model` is "decorative" is doc-debt — empirically false
+#      for openclaw 2026.4.15-beta.1 with `infer model run`. Flagged in
+#      objective for future doc-fix.)
 #   3. `infer model run --local` bypasses both the gateway and the
 #      embedded-agent path that breaks with the openrouter provider plugin
 #      (known_quirks.openrouter_provider_plugin_silent_fail below). With
@@ -218,36 +235,51 @@ REPLACE the entire `direct_interface:` block (from `direct_interface:` through `
 direct_interface:
   kind: docker_exec_cli
   spec:
-    # Two-stage sh chain:
-    #   1. `openclaw config set agents.defaults.model "anthropic/$MODEL"` —
-    #      the persistent /start writes openrouter/$MODEL by default; we override
-    #      to anthropic/$MODEL because (a) provider_compat.deferred=[openrouter]
-    #      and (b) Gate A's MATRIX always pairs openclaw with an anthropic model.
-    #      Idempotent — `config set` overwrites; no need to read previous value.
-    #      stderr suppressed (>/dev/null 2>&1) so progress/info chatter doesn't
-    #      pollute reply_text. The harness substitutes {model} as e.g.
-    #      "claude-haiku-4-5" before docker exec runs.
-    #   2. `openclaw infer model run --prompt "<prompt>" --local --json` — the
-    #      verified-PASS inference path. --json emits a structured envelope on
-    #      stdout. {prompt} is substituted as a single argv element by the
-    #      harness, so internal quotes/spaces are literal.
+    # Spike A 2026-04-19 PROVED: the `--model {model}` flag is MANDATORY.
+    # Without it, infer model run hits FailoverError("No API key found
+    # for provider 'openrouter'") because the gateway-baked openclaw.json
+    # defaults agents.defaults.model to `openrouter/anthropic/claude-haiku-4-5`
+    # and only ANTHROPIC_API_KEY is in env. The CLI flag overrides the
+    # config-file default — openclaw 2026.4.15-beta.1 IS responsive to it
+    # (contradicting the recipe's `invoke.spec.argv_note` doc-debt at lines
+    # 91-106 which claims --model is "decorative"; flagged in objective).
+    #
+    # Direct argv form (NO sh-chain needed). Previous version sh-chained a
+    # `config set` step to override the openrouter prefix; Spike A showed
+    # that's redundant — `--model` on the CLI achieves the same end-effect
+    # without mutating openclaw.json state inside the container.
+    #
+    # Optional perf knob: replacing `--local` with `--gateway` cut Spike A
+    # wall time from 84s to 42s (gateway warm-reuse). Plan defaults to
+    # `--local` for explicitness (no shared-state coupling between Gate A
+    # invocations); orchestrator may flip to `--gateway` if Gate B latency
+    # budget pressure surfaces. Both PASS empirically.
     argv_template:
-      - sh
-      - -c
-      - 'openclaw config set agents.defaults.model "anthropic/{model}" >/dev/null 2>&1 && openclaw infer model run --prompt "{prompt}" --local --json'
-    timeout_s: 90              # spike-01e measured first_reply_wall_s ~6s; 90s leaves headroom for cold model warm-up
+      - openclaw
+      - infer
+      - model
+      - run
+      - --prompt
+      - "{prompt}"
+      - --local
+      - --json
+      - --model
+      - "{model}"
+    timeout_s: 90              # Spike A measured 84s for --local cold model; 90s leaves 6s headroom. (--gateway path is 42s and would tolerate timeout_s: 60.)
     stdout_reply: true
-    # Pull the `outputs[0]` text out of the --json envelope. The envelope shape
-    # per spike-01e session-jsonl observation is roughly:
-    #   {"attempts":[...],"outputs":["...assistant text..."],"stopReason":"stop",...}
-    # `outputs[0]` is the assistant-rendered text including any echoed prompt
-    # content. The regex captures the FIRST quoted string inside `outputs":[`.
-    # Falls back to the full stdout when --json output drifts (the verdict
-    # check is substring-based so the FAIL-mode is contained).
-    reply_extract_regex: "(?s)\"outputs\"\\s*:\\s*\\[\\s*\"(?P<reply>[^\"]*)\""
+    # Pull the assistant text out of the --json envelope. The envelope shape
+    # per Spike A live transcripts (/tmp/spike-A-stdout-anthropic.txt) is:
+    #   {"ok":true,"capability":"model.run","transport":"local",
+    #    "provider":"anthropic","model":"claude-haiku-4-5","attempts":[],
+    #    "outputs":[{"text":"<assistant text>","mediaUrl":null}]}
+    # NOTE: outputs[0] is an OBJECT not a string. The regex captures the
+    # inner `text` field directly (the FIRST occurrence of `"text":"..."` in
+    # stdout — there is exactly one in the response shape). If the harness
+    # verdict check (substring `ok-{recipe}-{corr}`) finds the correlation
+    # id even when extraction misses, the test still PASSES — defense in
+    # depth.
+    reply_extract_regex: "(?s)\"text\"\\s*:\\s*\"(?P<reply>[^\"]*)\""
     exit_code_success: 0
-    # Strip leftover model-set status output if it leaks (defense in depth —
-    # `>/dev/null 2>&1` should already suppress).
 ```
 
 (Remove the entire previous `# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.` comment block AND the previous direct_interface YAML body, replacing both with the new comment + new block above.)
@@ -260,7 +292,7 @@ direct_interface:
 - `known_quirks` — preserve (the openrouter plugin failure documentation is still load-bearing).
   </action>
   <verify>
-    <automated>python3 -c "import yaml; r = yaml.safe_load(open('recipes/openclaw.yaml')); di = r['direct_interface']; assert di['kind'] == 'docker_exec_cli', f'kind={di[\"kind\"]!r}'; assert di['spec']['argv_template'][0] == 'sh', f'argv[0]={di[\"spec\"][\"argv_template\"][0]!r}'; assert 'infer model run' in di['spec']['argv_template'][2], 'argv missing infer model run'; assert 'anthropic/{model}' in di['spec']['argv_template'][2], 'argv missing anthropic/ model prefix'; assert di['spec'].get('timeout_s', 0) >= 60; assert 'reply_extract_regex' in di['spec']; print('OK direct_interface shape')"</automated>
+    <automated>python3 -c "import yaml; r = yaml.safe_load(open('recipes/openclaw.yaml')); di = r['direct_interface']; argv = di['spec']['argv_template']; assert di['kind'] == 'docker_exec_cli', f'kind={di[\"kind\"]!r}'; assert argv[0] == 'openclaw', f'argv[0]={argv[0]!r}'; assert argv[1:5] == ['infer','model','run','--prompt'], f'argv[1:5]={argv[1:5]!r}'; assert '--model' in argv, 'argv missing --model flag (Spike A: mandatory)'; assert '{model}' in argv, 'argv missing {model} substitution'; assert '--local' in argv or '--gateway' in argv, 'argv missing --local or --gateway'; assert '--json' in argv, 'argv missing --json'; assert di['spec'].get('timeout_s', 0) >= 60; assert 'reply_extract_regex' in di['spec'] and 'text' in di['spec']['reply_extract_regex'], 'reply_extract_regex must capture inner text field per Spike A shape'; print('OK direct_interface shape')"</automated>
   </verify>
   <acceptance_criteria>
     - `python3 -c "import yaml; r = yaml.safe_load(open('recipes/openclaw.yaml')); print(r['direct_interface']['kind'])"` outputs `docker_exec_cli`
@@ -268,8 +300,8 @@ direct_interface:
     - `grep -c "kind: http_chat_completions" recipes/openclaw.yaml` returns `0` (the dead path is gone)
     - `grep -c "port: 18000" recipes/openclaw.yaml` returns `0` (port 18000 is no longer referenced)
     - `grep -c "infer model run" recipes/openclaw.yaml` returns `>=2` (smoke argv lines 87-91 PRESERVED + new direct_interface lines)
-    - `grep -c "openclaw config set agents.defaults.model" recipes/openclaw.yaml` returns `>=2` (smoke argv preserved + new direct_interface)
-    - `grep -c "anthropic/{model}" recipes/openclaw.yaml` returns `1` (new direct_interface only — smoke uses literal `openrouter/$MODEL`)
+    - `grep -c "openclaw config set agents.defaults.model" recipes/openclaw.yaml` returns `>=1` (smoke argv preserved — direct_interface no longer needs config-set per Spike A: --model CLI flag overrides)
+    - `python3 -c "import yaml; r=yaml.safe_load(open('recipes/openclaw.yaml')); argv=r['direct_interface']['spec']['argv_template']; assert '--model' in argv and '{model}' in argv, f'missing --model {{model}} pair: {argv}'; print('--model flag present')"` succeeds (Spike A mandatory)
     - `grep -c "Gap 1 closure\|Phase 22b-07" recipes/openclaw.yaml` returns `>=1` (provenance comment retained)
     - `python3 -c "import yaml; r = yaml.safe_load(open('recipes/openclaw.yaml')); print(r['runtime']['process_env']['api_key_by_provider']['anthropic'])"` outputs `ANTHROPIC_API_KEY` (preservation guard)
     - `python3 -c "import yaml; r = yaml.safe_load(open('recipes/openclaw.yaml')); ch = r['channels']['telegram']; assert 'event_log_regex' in ch and 'event_source_fallback' in ch; print('channels intact')"` succeeds (Gap 3 fields preserved)
@@ -424,14 +456,14 @@ Replace the placeholders (`<ACTUAL FROM RUN>`, `<ACTUAL ECHO FROM RUN>`) with th
 | Boundary | Description |
 |----------|-------------|
 | Harness `--api-key` arg → docker exec env | The bearer is passed as a CLI arg to agent_harness.py, then NOT used in docker_exec_cli mode (only http_chat_completions consumed it). Switch to docker_exec_cli REMOVES the in-container `Bearer <api_key>` injection — the api_key is now only used by /v1/agents/:id/start to seed ANTHROPIC_API_KEY into the container at boot time. Lower attack surface. |
-| docker exec `openclaw config set` → ~/.openclaw/openclaw.json | The argv hardcodes `anthropic/{model}`. {model} is substituted by Python `.format(model=args.model)` from the harness; args.model comes from the e2e MATRIX (literal string per recipe row), not user input. No injection surface. |
+| docker exec `openclaw infer model run --model {model}` | The `{model}` placeholder is substituted by Python `.format(model=args.model)` from the harness; args.model comes from the e2e MATRIX (literal string per recipe row, e.g., `anthropic/claude-haiku-4-5`), not user input. No injection surface. (Spike A obviated the previous `openclaw config set` step — `--model` CLI flag overrides openclaw.json directly.) |
 | docker exec `openclaw infer model run --prompt {prompt}` | {prompt} is substituted by Python `.format(prompt=prompt)` where prompt is `f"Please reply with exactly this text and nothing else: ok-{recipe}-{corr}"`. recipe and corr are CLI args; subprocess.run uses argv list (shell=False) so quote/space injection is impossible. Verified pattern in Task 1 read_first §test/lib/agent_harness.py lines 187-230. |
 
 ## STRIDE Threat Register
 
 | Threat ID | Category | Component | Disposition | Mitigation Plan |
 |-----------|----------|-----------|-------------|-----------------|
-| T-22b-07-01 | Tampering | Recipe-side argv_template substitution | mitigate | argv_template uses Python `.format()` with named keys (`{prompt}`, `{model}`); no f-string concatenation; no shell expansion (subprocess.run shell=False per agent_harness lines 211-215) |
+| T-22b-07-01 | Tampering | Recipe-side argv_template substitution | mitigate | argv_template is a list of literal argv elements (no `sh -c` chain post-Spike A); Python `.format()` substitutes `{prompt}` and `{model}` as standalone argv elements; subprocess.run uses argv list (shell=False per agent_harness lines 211-215) so quote/space/metachar injection in prompt or model is impossible |
 | T-22b-07-02 | Information Disclosure | reply_text in JSON envelope leaks model rationale | accept | The harness already truncates reply_text to 400 chars (agent_harness line 290); openclaw's `infer model run --local --json` does NOT include any auth tokens or env-var names in its `outputs` field (verified in spike-01e session-jsonl format, line 81-90). The `outputs` array contains only assistant-rendered text. |
 | T-22b-07-03 | Denial of Service | timeout_s=90 holds container resources | accept | One Gate A round at a time per recipe (single-START orchestration in e2e script line 220). Cumulative budget is 5 recipes × 3 rounds × 90s = 22.5min worst case; the e2e script already runs cleanup on EXIT INT TERM (script lines 119-128). |
 | T-22b-07-04 | Elevation of Privilege | direct_interface gives Gate A docker-exec into the persistent container | accept | Pre-existing posture — every other recipe (hermes, picoclaw, nullclaw, nanobot) has the same docker_exec_cli direct_interface; the docker socket is the host-side authorization boundary, not the recipe shape. No new privilege introduced. |
@@ -439,7 +471,7 @@ Replace the placeholders (`<ACTUAL FROM RUN>`, `<ACTUAL ECHO FROM RUN>`) with th
 </threat_model>
 
 <verification>
-- Recipe parses cleanly + matches expected shape: `python3 -c "import yaml; r=yaml.safe_load(open('recipes/openclaw.yaml')); assert r['direct_interface']['kind']=='docker_exec_cli' and 'infer model run' in r['direct_interface']['spec']['argv_template'][2]"`
+- Recipe parses cleanly + matches expected shape: `python3 -c "import yaml; r=yaml.safe_load(open('recipes/openclaw.yaml')); argv=r['direct_interface']['spec']['argv_template']; assert r['direct_interface']['kind']=='docker_exec_cli' and argv[0]=='openclaw' and argv[1:4]==['infer','model','run'] and '--model' in argv"`
 - Dead port 18000 reference removed: `! grep -n "port:.*18000\|http://127.0.0.1:18000\|http://localhost:18000" recipes/openclaw.yaml`
 - MATRIX skip_smoke flipped: `grep -c "openclaw.*|true|false$" test/e2e_channels_v0_2.sh` returns `1`
 - Empirical Gate A 3/3 PASS captured in e2e-report.json (Task 2 acceptance criteria)
