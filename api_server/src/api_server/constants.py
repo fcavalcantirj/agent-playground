@@ -15,4 +15,10 @@ from uuid import UUID
 
 ANONYMOUS_USER_ID: UUID = UUID("00000000-0000-0000-0000-000000000001")
 
-__all__ = ["ANONYMOUS_USER_ID"]
+# Phase 22b-04: sysadmin bypass for event-stream auth (D-15).
+# Per-laptop / per-deploy state — mirrors AP_CHANNEL_MASTER_KEY discipline.
+# NEVER committed to .env* files. Route handler (Plan 22b-05) reads the
+# VALUE at handler time via os.environ.get(AP_SYSADMIN_TOKEN_ENV).
+AP_SYSADMIN_TOKEN_ENV = "AP_SYSADMIN_TOKEN"
+
+__all__ = ["ANONYMOUS_USER_ID", "AP_SYSADMIN_TOKEN_ENV"]

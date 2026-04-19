@@ -36,6 +36,7 @@ starved while the runner is spawning a 120s-boot container.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -472,6 +473,38 @@ async def start_agent(
                 f"agent {agent_id} already has a running container",
             )
 
+    # --- Step 8b (Phase 22b-04): spawn log-watcher task (fire-and-forget) ---
+    # Order: AFTER write_agent_container_running, BEFORE returning response.
+    # Spike-03 discipline: iterator ends cleanly when container is removed;
+    # no Task.cancel() needed at /stop. Failure to spawn is non-fatal — events
+    # are observability, not correctness, per 22b scope. Lifespan re-attach
+    # will retry on next API restart if the row still says 'running'.
+    #
+    # The watcher's `agent_id` slot is the agent_containers row PK
+    # (container_row_id) because event_store.insert_agent_events_batch FKs
+    # rows to agent_containers.id, NOT agent_instances.id. The watcher's
+    # event_poll_signals dict is also keyed on this same id (consumed by
+    # Plan 22b-05's long-poll handler).
+    try:
+        from ..services.watcher_service import run_watcher
+        asyncio.create_task(run_watcher(
+            request.app.state,
+            container_row_id=container_row_id,
+            container_id=container_id,
+            agent_id=container_row_id,
+            recipe=recipe,
+            channel=body.channel,
+            chat_id_hint=(
+                body.channel_inputs.get("TELEGRAM_ALLOWED_USER")
+                or body.channel_inputs.get("TELEGRAM_ALLOWED_USERS")
+            ),
+        ))
+    except Exception:
+        _log.exception(
+            "phase22b.watcher.spawn_failed",
+            extra={"agent_id": str(agent_id)},
+        )
+
     # --- Step 9: return response ---
     return AgentStartResponse(
         agent_id=agent_id,
@@ -546,6 +579,28 @@ async def stop_agent(
     persistent_spec = (recipe.get("persistent") or {}).get("spec") or {}
     graceful = int(persistent_spec.get("graceful_shutdown_s", 5))
     sigterm_handled = bool(persistent_spec.get("sigterm_handled", True))
+
+    # --- Phase 22b-04: signal watcher stop + await BEFORE execute_persistent_stop ---
+    # Order matters (spike-03 discipline): signal first so the watcher exits
+    # BEFORE docker rm -f reaps the container. Iterator ends cleanly in
+    # <270ms after rm -f, so the 2s budget is generous. Task.cancel() is the
+    # documented fallback that has never been observed in spike-03.
+    try:
+        _row_id = UUID(running["id"])
+        _watcher_entry = request.app.state.log_watchers.get(_row_id)
+        if _watcher_entry is not None:
+            _wtask, _wstop = _watcher_entry
+            _wstop.set()
+            try:
+                await asyncio.wait_for(_wtask, timeout=2.0)
+            except asyncio.TimeoutError:
+                _wtask.cancel()
+                _log.warning(
+                    "phase22b.watcher.cancel_on_timeout",
+                    extra={"container_row_id": str(_row_id)},
+                )
+    except Exception:
+        _log.exception("phase22b.watcher.drain_failed")
 
     # Long await — no DB held.
     try:
