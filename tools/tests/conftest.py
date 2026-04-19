@@ -235,3 +235,21 @@ def minimal_valid_recipe():
 def broken_recipes_dir():
     """Path to the broken_recipes directory."""
     return Path(__file__).parent / "broken_recipes"
+
+
+@pytest.fixture
+def real_recipes():
+    """Paths to the 5 committed recipes — used by TestLintRealRecipes regression guard.
+
+    Returns a list of (name, Path) tuples. Adding a new recipe to recipes/
+    means adding it here too — explicit list keeps the test deterministic
+    and surfaces the addition in code review.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    return [
+        ("hermes",   repo_root / "recipes" / "hermes.yaml"),
+        ("picoclaw", repo_root / "recipes" / "picoclaw.yaml"),
+        ("nullclaw", repo_root / "recipes" / "nullclaw.yaml"),
+        ("nanobot",  repo_root / "recipes" / "nanobot.yaml"),
+        ("openclaw", repo_root / "recipes" / "openclaw.yaml"),
+    ]

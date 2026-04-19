@@ -76,3 +76,22 @@ rule — out-of-scope items are documented, not fixed.
   (or similar) to the test's INSERT helper.
 - **Owner:** deferred — not caused by 22b-02 (no Plan 22b-02 file touches
   `tests/test_idempotency.py`).
+
+---
+
+## DI-05 — `tests/test_roundtrip.py::test_yaml_roundtrip_is_lossless[openclaw]` fails on baseline
+
+- **File:** `tools/tests/test_roundtrip.py`
+- **Symptom:** ruamel-rt round-trip diverges at char 16336 of openclaw.yaml
+  serialization. hermes/nanobot/nullclaw round-trip cleanly; only openclaw
+  fails. (picoclaw also runs in the parametrize but exits early because the
+  test fail-fast at openclaw — needs `--lf` continuation to confirm.)
+- **Pre-existing:** YES — verified via `git stash` round-trip 2026-04-19
+  during Plan 22b-09 Task 2 verification. Failure reproduces against
+  HEAD~1 (before any 22b-09 schema/test changes).
+- **Likely root cause:** openclaw.yaml carries the duplicate `category: PASS`
+  key from DI-01 (lines 308 vs 328), which changes serialization order
+  between safe-load and rt-dump. DI-01 fix would likely also unblock DI-05.
+- **Owner:** deferred — out of scope for 22b-09 (which only touches
+  schema + tests, not recipe files). The TestLintRealRecipes class added
+  in this plan uses safe-load (not rt) and is unaffected.
