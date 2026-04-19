@@ -421,7 +421,7 @@ direct_interface:
       - --json
       - --model
       - "{model}"
-    timeout_s: 90              # Spike A measured 84s for --local cold model; 90s leaves 6s headroom. (--gateway path is 42s and would tolerate timeout_s: 60.)
+    timeout_s: 120             # Spike A measured 84s for --local cold model; live Gate A run 2026-04-19 saw r1 hit 90s exactly (subprocess timeout) before r2/r3 settled at 80-84s. Bump to 120s for cold-start variance headroom. (--gateway path is 42s and would tolerate timeout_s: 60.)
     stdout_reply: true
     # Pull the assistant text out of the --json envelope. The envelope shape
     # per Spike A live transcripts (/tmp/spike-A-stdout-anthropic.txt) is:
