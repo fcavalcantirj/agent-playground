@@ -2,7 +2,7 @@
 phase: 22b
 plan: 06
 type: execute
-wave: 3
+wave: 4
 depends_on: ["22b-04", "22b-05"]
 files_modified:
   - recipes/hermes.yaml
@@ -261,17 +261,30 @@ direct_interface:
 
 **Part D — recipes/nanobot.yaml — add direct_interface (http_chat_completions) ONLY.**
 
-Before writing, CONFIRM the port. Read the recipe for any persistent.spec.port or similar; if ambiguous, use 8080 as a placeholder and add a TODO comment. The harness Task 2 will grep `docker exec <cid> netstat -lnp` during its first Gate A run to confirm; executor UPDATES the recipe if the actual port differs.
+BEFORE writing the recipe YAML, PROBE the port empirically (spike-01d did not document it explicitly; spike-06 refers to `<port>` as a placeholder). Run:
+
+```bash
+# Start a short-lived nanobot container to inspect its bound port.
+docker run --rm --entrypoint sh <nanobot_image_tag> -c 'nanobot --help 2>&1 | grep -iE "port|listen"' || true
+# If --help does not reveal a default, start the container normally and probe:
+CID=$(docker run -d <nanobot_image_tag>)
+sleep 2
+docker exec "$CID" sh -c 'netstat -lnp 2>/dev/null || ss -lnp 2>/dev/null || cat /proc/net/tcp' | tee /tmp/nanobot-port-probe.txt
+docker rm -f "$CID"
+```
+
+Capture the discovered port (most commonly `8080` for `nanobot serve`, but do NOT assume — the probe is the source of truth). Record the probe output as a YAML comment in the recipe block for future auditability. DO NOT leave a `TODO(harness-run): confirm the port` comment — the probe must have a definitive answer BEFORE this recipe is committed.
 
 ```
 # Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
 # Spike 06 PASS: nanobot serve exposes OpenAI-compatible /v1/chat/completions.
-# TODO(harness-run): confirm the port the running container binds and
-# update this block if it is not 8080.
+# Port: <PROBED_VALUE> (empirical — probed via `docker exec <cid> netstat -lnp`
+# in Plan 22b-06 Task 1 Part D; capture the probe command output in the
+# task SUMMARY for audit trail).
 direct_interface:
   kind: http_chat_completions
   spec:
-    port: 8080
+    port: <PROBED_VALUE>            # replace with the literal integer from the probe
     path: /v1/chat/completions
     auth:
       header: Authorization
@@ -334,6 +347,7 @@ All 5 print with a known kind.
     - grep -c "kind: docker_exec_cli" recipes/picoclaw.yaml returns 1
     - grep -c "kind: docker_exec_cli" recipes/nullclaw.yaml returns 1
     - grep -c "kind: http_chat_completions" recipes/nanobot.yaml returns 1
+    - `! grep -q 'TODO(harness-run): confirm the port' recipes/nanobot.yaml` — the probed port is committed as a literal; no deferred-confirmation placeholder remains
     - grep -c "kind: http_chat_completions" recipes/openclaw.yaml returns 1
     - grep -c "event_log_regex:" recipes/hermes.yaml returns at least 1 (newly added)
     - grep -c "event_source_fallback:" recipes/nullclaw.yaml returns 1 (UNCHANGED from spike 01c)
@@ -475,8 +489,18 @@ def cmd_send_direct_and_read(args) -> int:
     try:
         if di["kind"] == "docker_exec_cli":
             spec = di["spec"]
-            argv = [a.format(prompt=prompt, model=args.model)
-                    for a in spec["argv_template"]]
+            try:
+                argv = [a.format(prompt=prompt, model=args.model)
+                        for a in spec["argv_template"]]
+            except KeyError as e:
+                error = (f"recipe {args.recipe!r} direct_interface.spec.argv_template "
+                         f"references unsupported template var: {e}")
+                print(json.dumps({
+                    "gate": "A", "recipe": args.recipe, "correlation_id": corr,
+                    "sent_text": prompt, "reply_text": None, "wall_s": 0,
+                    "verdict": "FAIL", "error": error,
+                }))
+                return 1
             out = subprocess.run(
                 ["docker", "exec", args.container_id, *argv],
                 capture_output=True, text=True,
@@ -676,6 +700,7 @@ A full execution test requires a running container and the API server + (for Gat
     - grep -c "/v1/agents/.*/events" test/lib/agent_harness.py returns at least 1 (long-poll URL)
     - If telegram_harness.py still exists: `grep -q "DEPRECATED" test/lib/telegram_harness.py` returns 0 AND `python3 test/lib/telegram_harness.py send-and-wait --help` exits 3 with the deprecation error
     - grep -r "getUpdates" test/ returns 0 results (legacy pattern removed)
+    - `grep -q "except KeyError" test/lib/agent_harness.py` exits 0 (argv_template KeyError is caught and returned as FAIL verdict, not raised)
   </acceptance_criteria>
   <done>Harness renamed and rewritten; 2 new subcommands implemented with proper argparse + JSON stdout + exit codes; legacy send-and-wait path gracefully deprecated; stdlib-only (no requests dep); --help probe passes.</done>
 </task>

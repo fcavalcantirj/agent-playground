@@ -2,8 +2,8 @@
 phase: 22b
 plan: 05
 type: execute
-wave: 2
-depends_on: ["22b-02"]
+wave: 3
+depends_on: ["22b-02", "22b-04"]
 files_modified:
   - api_server/src/api_server/models/errors.py
   - api_server/src/api_server/routes/agent_events.py
@@ -429,7 +429,15 @@ async def get_events(
                     param="agent_id")
 
     async with poll_lock:
-        # Step 4 — DB scope 1 (fast path).
+        # Step 3b — CLEAR the wake signal BEFORE any fetch. If we cleared AFTER
+        # the fast-path fetch, a watcher INSERT between fetch and clear would
+        # have its .set() overwritten, causing a missed wake. Clear-then-fetch
+        # means any set() after the clear (i.e. any INSERT after our fetch)
+        # will survive for the subsequent signal.wait() to observe.
+        signal = _get_poll_signal(request.app.state, agent_id)
+        signal.clear()
+
+        # Step 4 — DB scope 1 (fast path), with the wake signal armed.
         async with pool.acquire() as conn:
             rows = await fetch_events_after_seq(conn, agent_id, since_seq, kinds_set)
         # Step 5 — immediate return if rows exist.
@@ -437,8 +445,6 @@ async def get_events(
             return _project(rows, since_seq, agent_id, timed_out=False)
 
         # Step 6 — NO DB held during the wait (Pitfall 4).
-        signal = _get_poll_signal(request.app.state, agent_id)
-        signal.clear()
         try:
             await asyncio.wait_for(signal.wait(), timeout=timeout_s)
         except asyncio.TimeoutError:
@@ -630,6 +636,7 @@ All 6 tests green.
     - `grep -c "async def get_events" api_server/src/api_server/routes/agent_events.py` returns `1`
     - `grep -c "pool.acquire()" api_server/src/api_server/routes/agent_events.py` returns `>=2` (two DB scopes per Pitfall 4)
     - `grep -c "asyncio.wait_for(signal.wait" api_server/src/api_server/routes/agent_events.py` returns `1`
+    - The FIRST `signal.clear()` in agent_events.py precedes the FIRST `fetch_events_after_seq` call: `awk '/signal\.clear\(\)/ {a=NR} /fetch_events_after_seq/ {b=NR} END {exit !(a && b && a < b)}' api_server/src/api_server/routes/agent_events.py` exits 0 (arms the wake signal before the fast-path fetch — prevents missed-wake race per the D-13 long-poll contract)
     - `grep -c "CONCURRENT_POLL_LIMIT" api_server/src/api_server/routes/agent_events.py` returns `>=1`
     - `grep -c "AP_SYSADMIN_TOKEN_ENV" api_server/src/api_server/routes/agent_events.py` returns `>=1`
     - `grep -c "VALID_KINDS" api_server/src/api_server/routes/agent_events.py` returns `>=1`

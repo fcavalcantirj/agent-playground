@@ -158,6 +158,7 @@ def real_db():
   <files>api_server/pyproject.toml, .env.example</files>
   <read_first>
     - api_server/pyproject.toml (the file being modified — extract current [project.dependencies] list and compare against known-versions to avoid duplication)
+    - .env.example (read current contents FIRST — if the file exists and documents other env vars, append only; do NOT overwrite)
     - .planning/phases/22b-agent-event-stream/22b-PATTERNS.md §"api_server/pyproject.toml (ADD-TO)" — confirms the add-only discipline
     - .planning/phases/22b-agent-event-stream/22b-RESEARCH.md §"Standard Stack > New dependencies to add" — specifies `docker>=7.0,<8`
     - .planning/phases/22b-agent-event-stream/22b-CONTEXT.md D-15 — `AP_SYSADMIN_TOKEN` discipline (per-laptop, mirrors AP_CHANNEL_MASTER_KEY)
@@ -173,13 +174,23 @@ Edit `api_server/pyproject.toml`:
 2. Add the literal line `  "docker>=7.0,<8",` in the same block, keeping sort order consistent with siblings (alphabetical after asgi-correlation-id, before fastapi if present).
 3. Do NOT touch `[project.optional-dependencies]` or `[tool.*]` blocks.
 
-Edit `.env.example` at the repository root:
-1. Append a commented block (use `#` prefix on every line) AT END OF FILE documenting:
-   - `AP_SYSADMIN_TOKEN` — what it is (sysadmin-bypass for GET /v1/agents/:id/events per CONTEXT.md D-15).
-   - Per-laptop discipline: mirrors `AP_CHANNEL_MASTER_KEY`; NEVER commit the value.
-   - Example shell export: `# export AP_SYSADMIN_TOKEN="<generate via: python3 -c 'import secrets; print(secrets.token_urlsafe(32))'>"`
-2. If `.env.example` does NOT exist at repo root, create it — include ONLY the commented block for AP_SYSADMIN_TOKEN. Do NOT copy other secrets.
-3. **NEVER touch `.env`, `.env.local`, `.env.prod`, `deploy/.env.prod`** — CLAUDE.md rule.
+Edit `.env.example` at the repository root (APPEND-ONLY — do NOT overwrite authoritative env docs):
+1. FIRST, snapshot the current `.env.example` line count: `LINES_BEFORE=$(wc -l < .env.example 2>/dev/null || echo 0)`.
+2. Branch on existence:
+   - **IF `.env.example` exists:** use append-only guard so reruns are idempotent and existing env docs are preserved:
+     ```
+     grep -q "^# AP_SYSADMIN_TOKEN" .env.example || cat >> .env.example <<'EOF'
+
+     # ---- Phase 22b: sysadmin bypass for GET /v1/agents/:id/events (D-15) ----
+     # AP_SYSADMIN_TOKEN — per-laptop / per-deploy state. Mirrors AP_CHANNEL_MASTER_KEY
+     # discipline: NEVER commit the value. The API reads the VALUE at handler time via
+     # os.environ.get("AP_SYSADMIN_TOKEN"). To generate:
+     #   export AP_SYSADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+     EOF
+     ```
+   - **IF `.env.example` does NOT exist:** flag to the user via a `_log.warning`-style echo in the task output (`echo "WARNING: .env.example is missing — creating it with ONLY the AP_SYSADMIN_TOKEN block. The repo previously had no .env.example; this is expected only on a fresh clone."`) and THEN create the file with the commented block above. Do NOT fabricate additional env vars.
+3. Verify line count did not decrease: `LINES_AFTER=$(wc -l < .env.example); [[ "$LINES_AFTER" -ge "$LINES_BEFORE" ]] || { echo "REGRESSION: .env.example shrank from $LINES_BEFORE to $LINES_AFTER"; exit 1; }`.
+4. **NEVER touch `.env`, `.env.local`, `.env.prod`, `deploy/.env.prod`** — CLAUDE.md rule.
 
 Verify:
 ```bash
@@ -197,6 +208,7 @@ Expected: docker imports cleanly, version is 7.x, grep count of `"docker>=7.0,<8
     - `grep -c 'docker>=7.0,<8' api_server/pyproject.toml` returns exactly `1`
     - `python3 -c "import docker; print(docker.__version__)"` prints a 7.x version
     - `grep -c "AP_SYSADMIN_TOKEN" .env.example` returns `>=1`
+    - `.env.example`'s line count did not decrease relative to the pre-task snapshot (the append-only guard preserved every pre-existing env var declaration)
     - `.env` / `.env.local` / `.env.prod` / `deploy/.env.prod` are UNCHANGED (`git diff -- .env* deploy/.env* | wc -l` prints `0`)
   </acceptance_criteria>
   <done>docker-py is importable from api_server, pyproject.toml is clean, .env.example documents AP_SYSADMIN_TOKEN, NO .env* files touched.</done>

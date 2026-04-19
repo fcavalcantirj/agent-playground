@@ -564,6 +564,7 @@ All green.
     - `grep -c "asyncio.wait_for(.*timeout=2" api_server/src/api_server/routes/agent_lifecycle.py` returns `>=1`
     - `grep -c "log_watchers" api_server/src/api_server/routes/agent_lifecycle.py` returns `>=1`
     - The `stop_event.set()` call appears BEFORE `execute_persistent_stop` — verify by line number: `grep -n "stop_event.set()\|_wstop.set()" api_server/src/api_server/routes/agent_lifecycle.py` line number < `grep -n "execute_persistent_stop" api_server/src/api_server/routes/agent_lifecycle.py` FIRST line number in stop_agent body (use awk to compare)
+    - The `asyncio.create_task(run_watcher(...))` spawn appears AFTER `write_agent_container_running` (Step 8): `awk '/write_agent_container_running/ {a=NR} /asyncio\.create_task\(run_watcher/ {b=NR} END {exit !(a && b && a < b)}' api_server/src/api_server/routes/agent_lifecycle.py` exits 0
     - `cd api_server && pytest -x tests/test_events_lifecycle_spawn_on_start.py tests/test_events_lifecycle_cancel_on_stop.py -v 2>&1 | grep -cE "PASSED"` returns `>=2`
     - `cd api_server && pytest -x tests/ -q 2>&1 | tail -3` shows no regression in existing tests
   </acceptance_criteria>

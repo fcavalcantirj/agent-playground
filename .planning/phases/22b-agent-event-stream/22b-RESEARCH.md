@@ -1011,29 +1011,29 @@ Per Golden Rule 1 (no mocks, no stubs), every test hits real Postgres via testco
 
 Claims tagged `[ASSUMED]` should be surfaced to the planner; claims A3, A4, A6 warrant a pre-execution micro-probe (one shell command each).
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `lifespan` re-attach successfully reconstruct `chat_id_hint` from the encrypted channel config?**
    - What we know: `agent_containers.channel_config_enc` is age-encrypted; decrypt requires `AP_CHANNEL_MASTER_KEY` in lifespan env.
    - What's unclear: whether the re-attach loop should decrypt (adds complexity + timing risk at startup) or degrade gracefully (watcher for docker_exec_poll / file_tail starts without a hint and uses a glob session match).
-   - Recommendation: **degrade gracefully** — lifespan re-attach starts watchers without hints; nullclaw / openclaw sources resolve session_id via manifest sweep rather than template interpolation. Simpler, no startup-decrypt race.
+   - RESOLVED: **degrade gracefully** — lifespan re-attach starts watchers without hints; nullclaw / openclaw sources resolve session_id via manifest sweep rather than template interpolation. Simpler, no startup-decrypt race.
 
 2. **Does `docker exec tail -F` via Popen.stdout stream line-by-line on Alpine BusyBox?**
    - What we know: Alpine's BusyBox tail supports `-F` but may buffer differently than GNU tail.
-   - Recommendation: planner adds a 10-line `tests/test_busybox_tail_line_buffer.py` in Wave 0 that writes a line to a file and asserts Popen.stdout.readline() returns within 100ms. If it fails, fallback is `docker exec sh -c "while :; do cat; sleep 0.2; done"` — less elegant but portable.
+   - RESOLVED: planner adds a 10-line `tests/test_busybox_tail_line_buffer.py` in Wave 0 that writes a line to a file and asserts Popen.stdout.readline() returns within 100ms. If it fails, fallback is `docker exec sh -c "while :; do cat; sleep 0.2; done"` — less elegant but portable.
 
 3. **Does Telegram accept bot→self `sendMessage` (bot's token to its own chat_id) and does the bot process it as an inbound?**
    - Spike 01a observed the inverse — `sendMessage` appears as bot-originated in the UI and the bot doesn't "receive" it back. So Gate B's premise — bot-originating-a-message to itself and observing `reply_sent` in our event stream — may need refinement.
    - Alternative Gate B: bot→bot's own `updates.chat` via `getMe` → NO — `sendMessage` with `chat_id` = bot's own user id is explicitly rejected by Telegram ("Bad Request: bots can't send messages to bots").
    - Real alternative: **Gate B tests the event pipeline synthetically** by having the harness manually emit a log line to the container's stdout (via `docker exec echo "...reply_sent pattern..."`) and verifying the watcher → event_store → long-poll path end-to-end. This proves the pipeline works without requiring a live Telegram turn. Pair with Gate C (manual) for real Telegram confirmation.
-   - Recommendation: planner probes this in Wave 3 before committing to the sendMessage approach; if it fails, the "synthetic log-inject" variant of Gate B is implementable in ~10 lines of harness.
+   - DEFERRED to execution (Wave 3 Plan 22b-06 Task 3 probe): planner probes this in Wave 3 before committing to the sendMessage approach; if it fails, the "synthetic log-inject" variant of Gate B is implementable in ~10 lines of harness. Resume trigger: Task 3 Gate B run emits FAIL verdict for all 5 recipes due to sendMessage-not-delivered-to-bot — pivot harness to the synthetic log-inject variant and re-run.
 
 4. **Partial-index `ix_agent_events_agent_seq PARTIAL WHERE ...?`**
-   - CONTEXT.md D-16 calls it "partial UNIQUE" but the conditions aren't listed. Pure `UNIQUE (agent_container_id, seq)` is sufficient (no partial filter needed — every row has both columns NOT NULL). Planner: drop the "partial" word, just a composite UNIQUE.
+   - RESOLVED: CONTEXT.md D-16 calls it "partial UNIQUE" but the conditions aren't listed. Pure `UNIQUE (agent_container_id, seq)` is sufficient (no partial filter needed — every row has both columns NOT NULL). Drop the "partial" word, just a composite UNIQUE.
 
 5. **Do we ingest `agent_ready` from docker_exec_poll / file_tail sources, or only from docker_logs_stream?**
    - `persistent.spec.ready_log_regex` is applied to docker logs today (by the runner during boot). For recipes using `event_source_fallback`, nullclaw and openclaw's readiness IS visible in docker logs (spike 01a-1e boot sequences). So: the watcher can treat `persistent.spec.ready_log_regex` as an ADDITIONAL docker_logs_stream matcher regardless of the primary event source (it's a different stream — run a lightweight secondary docker_logs_stream watcher for ready-only).
-   - Recommendation: keep `agent_ready` exclusively on docker_logs_stream, run in parallel to the primary event source for fallback recipes. Two cheap watchers per agent, not one.
+   - RESOLVED: keep `agent_ready` exclusively on docker_logs_stream, run in parallel to the primary event source for fallback recipes. Two cheap watchers per agent, not one.
 
 ## Substrate Reuse Map
 

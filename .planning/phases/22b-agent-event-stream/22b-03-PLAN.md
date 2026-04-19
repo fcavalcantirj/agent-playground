@@ -76,6 +76,8 @@ Three source kinds per RESEARCH §Pattern 1 + §D-23:
 
 **Parallelizable with Plan 22b-02** (no shared files — 22b-02 owns `services/event_store.py` + `models/events.py`; this plan owns `services/watcher_service.py`). 22b-02's exports (`insert_agent_events_batch`, `KIND_TO_PAYLOAD`, `VALID_KINDS`) are consumed by this plan; the merge order forces 22b-02's commits to land first, but the PLAN files may run in parallel execution waves.
 
+This plan is intentionally monolithic — splitting it introduces cross-wave dependency on the `EventSource` Protocol that Task 3 consumes, and all three tasks share `watcher_service.py`; a split into (e.g.) 22b-03a + 22b-03b would require circular-import discipline and forbid parallel file writes. The extra size is accepted in exchange for a single atomic merge of the watcher substrate.
+
 Purpose: SC-03 Gate B — for every running agent_container, produce a `reply_sent` row in `agent_events` within 10s of the bot's outbound Telegram delivery, correlatable by an embedded UUID.
 
 Output: One service module, five integration test files seeded from spike-02/spike-03/spike-01a/spike-01c/spike-01e reproducers, all passing against real Docker daemon via the `docker_client` + `running_alpine_container` fixtures from Plan 22b-01.
@@ -404,6 +406,8 @@ async def test_docker_logs_source_decodes_non_utf8_safely(running_alpine_contain
     assert "after" in collected[2]
 ```
 
+**Note on `Task.cancel` discipline (spike-03):** `Task.cancel` is forbidden on the docker source iterator (iterator ends naturally on `docker rm -f` in <270ms per spike-03). A single `consumer_task.cancel()` fallback in the `run_watcher` `finally` block is permitted and is introduced in Task 3 — it does NOT cancel the docker source; it only cancels the local consumer coroutine if the 2s drain budget is exceeded. That is why Task 1's acceptance criterion allows `grep -c Task.cancel` to return `<= 1`.
+
 **Verify:**
 ```bash
 cd api_server && pytest -x tests/test_events_watcher_docker_logs.py -v 2>&1 | tail -20
@@ -419,10 +423,10 @@ All 4 tests green.
     - `grep -c "asyncio.to_thread(next, it, None)" api_server/src/api_server/services/watcher_service.py` returns `>=1` (spike-02 sentinel pattern)
     - `grep -c "tail=0" api_server/src/api_server/services/watcher_service.py` returns `>=1` (D-11: no re-read of historical buffer)
     - `grep -cE "def _get_poll_lock\b|def _get_poll_signal\b" api_server/src/api_server/services/watcher_service.py` returns exactly `2`
-    - `grep -c "Task.cancel" api_server/src/api_server/services/watcher_service.py` returns `0` (spike-03: NO Task.cancel in watcher)
+    - `grep -c "Task.cancel" api_server/src/api_server/services/watcher_service.py` returns `<= 1` (the single allowed match is the `consumer_task.cancel()` timeout fallback in `run_watcher`'s `finally` block, introduced in Task 3; the docker source iterator is NOT cancelled per spike-03)
     - `cd api_server && pytest -x tests/test_events_watcher_docker_logs.py -v 2>&1 | grep -cE "PASSED"` returns `>=4`
   </acceptance_criteria>
-  <done>watcher_service.py module skeleton exists with EventSource Protocol + DockerLogsStreamSource + app-state helpers; 4 integration tests against live alpine green; no Task.cancel references (spike-03 discipline).</done>
+  <done>watcher_service.py module skeleton exists with EventSource Protocol + DockerLogsStreamSource + app-state helpers; 4 integration tests against live alpine green; no `Task.cancel` on the docker source iterator (spike-03 discipline — the single `consumer_task.cancel()` fallback is introduced in Task 3).</done>
 </task>
 
 <task type="auto" tdd="true">
