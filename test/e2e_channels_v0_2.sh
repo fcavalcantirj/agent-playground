@@ -89,15 +89,17 @@ TELEGRAM_ALLOWED_USER="${TELEGRAM_ALLOWED_USER:-${TELEGRAM_CHAT_ID:-}}"
 
 # --- recipe matrix ---
 # recipe_name|llm_provider|llm_key_env|llm_model|requires_pairing|skip_smoke
-# skip_smoke=true bypasses /v1/runs probe (e.g., openclaw — openrouter plugin
-# upstream-blocked; the anthropic-direct path needs config-set steps that
-# /v1/runs doesn't perform; documented in openclaw.yaml provider_compat).
+# skip_smoke=true bypasses the /v1/runs verdict assertion (only the existence
+# of agent_instance_id is checked). Reserved for documented upstream-blocked
+# recipes; openclaw was the only previous user but Phase 22b-07 closed that
+# gap by switching openclaw direct_interface + smoke to the
+# `infer model run --local` anthropic-direct path that is empirically PASS.
 declare -a MATRIX=(
   "hermes|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false|false"
   "picoclaw|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false|false"
   "nullclaw|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false|false"
   "nanobot|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false|false"
-  "openclaw|anthropic|ANTHROPIC_API_KEY|anthropic/claude-haiku-4-5|true|true"
+  "openclaw|anthropic|ANTHROPIC_API_KEY|anthropic/claude-haiku-4-5|true|false"
 )
 
 # --- helpers ---
