@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22c (oauth-google) IN PROGRESS — 2/9 plans complete (22c-01 Wave 0 gate CLEARED; 22c-02 alembic 005 applied to live PG); 22c-03 (Wave 1) still pending — 22c-04 (Wave 2) unblocks once 22c-03 lands
-stopped_at: 2026-04-19T23:45Z — 22c-02 shipped (alembic 005 sessions + users OAuth columns live), Wave 1 completed for migration track; 22c-03 still pending
-last_updated: "2026-04-19T23:45:00.000Z"
+status: Phase 22c (oauth-google) IN PROGRESS — 3/9 plans complete (22c-01 Wave 0 gate CLEARED; 22c-02 alembic 005 applied to live PG; 22c-03 OAuth config + authlib registry + helpers); Wave 1 COMPLETE — 22c-04 (Wave 2 SessionMiddleware) unblocked
+stopped_at: 2026-04-19T23:52Z — 22c-03 shipped (7 OAuth Pydantic fields + auth/oauth.py with get_oauth/upsert_user/mint_session + prod fail-loud); Wave 1 of phase 22c now fully done; Wave 2 (22c-04 SessionMiddleware) ready to execute
+last_updated: "2026-04-19T23:52:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
   total_plans: 41
-  completed_plans: 34
-  percent: 83
+  completed_plans: 35
+  percent: 85
 ---
 
 # Project State
@@ -37,12 +37,13 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 | Phase 22c (oauth-google) RESEARCH + PATTERNS + VALIDATION + 9 PLANs | **PLANNED** | `394fd7f` | 9 plans in 6 waves (Wave 0 gate: respx×authlib spike + TRUNCATE-CASCADE 8-table spike). 3 new AMDs added post-research (AMD-05 respx not responses; AMD-06 proxy.ts not middleware.ts; AMD-07 AP_OAUTH_STATE_SECRET env var). Plan-checker PASS iteration 3/3 (0 blockers). Covers R1..R8 + AMD-01..07 + 5 PATTERNS gap-closures. |
 | Phase 22c-01 (Wave 0 spike gate) | **COMPLETE** | `dc43879`, `4f37b58`, `9cf282c` | SPIKE-A green (respx 0.23.1 intercepts authlib 1.6.11's httpx 0.28.1 token-exchange; AMD-05 validated; Rule-3 deviation: respx pin bumped from 0.21 to 0.22+). SPIKE-B green Mode B (7 tables, alembic HEAD=004; auto-upgrades to Mode A when 22c-02 ships 005): single TRUNCATE CASCADE clears users + agent_instances + agent_containers + runs + agent_events + idempotency_keys + rate_limit_counters + preserves alembic_version. Evidence markdowns + SUMMARY committed. 3 Rule-3 deviations auto-fixed (respx pin, TESTCONTAINERS_RYUK_DISABLED, PG network attach). See `.planning/phases/22c-oauth-google/22c-01-SUMMARY.md`. |
 | Phase 22c-02 (alembic 005 — sessions + users OAuth) | **COMPLETE** | `ec19e7f`, `9e7db7e` | Additive schema migration applied live to `deploy-postgres-1` — alembic_version=005_sessions_and_oauth_users. Adds: users.sub/avatar_url/last_login_at (nullable); UNIQUE(provider, sub) partial index WHERE sub IS NOT NULL (preserves ANONYMOUS NULL-sub seed); sessions table (id UUID PK + user_id FK→users.id ON DELETE CASCADE + expires_at/revoked_at/last_seen_at/user_agent/ip_address INET + btree on user_id). Round-trip verified: upgrade → downgrade -1 → upgrade clean. Integration test `test_migration_005_sessions_and_users_columns` PASSED on host venv against fresh testcontainers PG 17. Zero deviations from plan. 3 pre-existing Phase-19 TestBaselineMigration failures + conftest DSN-gateway issue logged to `.planning/phases/22c-oauth-google/deferred-items.md` (all out of scope per plan line 39 pointer deferring conftest fix to 22c-06). See `.planning/phases/22c-oauth-google/22c-02-SUMMARY.md`. |
+| Phase 22c-03 (OAuth config + authlib registry) | **COMPLETE** | `4f5b01f`, `6fdde21`, `7428b86` | 7 new Pydantic settings on `api_server/src/api_server/config.py` (oauth_{google,github}_{client_id,client_secret,redirect_uri} + oauth_state_secret, all str\|None with None default). New `auth/` sub-package ships `get_oauth(settings)` — a cached authlib `OAuth()` registry with `google` (OIDC via `server_metadata_url`) + `github` (non-OIDC with hand-specified endpoints) — plus `upsert_user(conn, *, provider, sub, email, display_name, avatar_url) -> UUID` (ON CONFLICT target mirrors alembic 005 partial index verbatim) and `mint_session(conn, *, user_id, request) -> str` (returns sessions.id UUID directly; gen_random_uuid provides 122 bits of randomness, no separate token column needed). Prod fail-loud discipline mirrors `crypto/age_cipher.py::_master_key`: AP_ENV=prod + any missing OAuth var raises RuntimeError naming the var; AP_ENV=dev uses deterministic `not-for-prod` / `localhost` placeholders. `deploy/.env.prod.example` gains AP_OAUTH_STATE_SECRET stanza with `openssl rand -hex 32` hint; `deploy/.env.prod` NOT modified. 12 unit tests at `tests/auth/test_oauth_config.py` cover Settings fields, env aliases, dev placeholder path, dev override with real creds, idempotency, reset_for_tests, prod fail-loud on first-missing-var AND middle-missing-var (AP_OAUTH_STATE_SECRET regression trap) — all PASS in 0.21s. Zero deviations from plan. See `.planning/phases/22c-oauth-google/22c-03-SUMMARY.md`. |
 
 ### 📍 RESUME ANCHOR — READ AFTER /clear
 
 **The next command is:**
 ```
-/gsd-execute-phase 22c-oauth-google  # 22c-01 + 22c-02 COMPLETE; resume at 22c-03 (Wave 1 remainder — config.py + authlib registry), then Wave 2 (22c-04 SessionMiddleware)
+/gsd-execute-phase 22c-oauth-google  # 22c-01 + 22c-02 + 22c-03 COMPLETE; Wave 1 fully done; resume at Wave 2 (22c-04 SessionMiddleware + request.state.user_id wiring + log_redact docstring + 3 integration tests)
 ```
 
 **Read these files in this order on resume (after /clear):**
@@ -332,6 +333,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 19-api-foundation P04 | 8m | 2 tasks | 8 files |
 | Phase 19-api-foundation P05 | 17min | 2 tasks | 7 files |
 | Phase 19 P07 | 12min | 2 tasks | 12 files |
+| Phase 22c-03 | ~12min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
