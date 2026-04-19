@@ -96,7 +96,7 @@ async def test_watcher_backpressure_raw_flood_unmatched(
 ):
     """20k-line flood with no-match regex — queue stays empty, no events."""
     container = running_alpine_container(
-        ["sh", "-c", "for i in $(seq 1 20000); do echo line-$i; done; sleep 3"]
+        ["sh", "-c", "for i in $(seq 1 20000); do echo line-$i; done; sleep 30"]
     )
     recipe = {
         "channels": {
@@ -137,7 +137,7 @@ async def test_watcher_drops_coalesce_warn_on_saturation(
 ):
     """Permissive regex + flood — drops happen, but WARNs are coalesced."""
     container = running_alpine_container(
-        ["sh", "-c", "for i in $(seq 1 20000); do echo 'reply-x '$i; done; sleep 3"]
+        ["sh", "-c", "for i in $(seq 1 20000); do echo 'reply-x '$i; done; sleep 30"]
     )
     recipe = {
         "channels": {
