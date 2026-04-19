@@ -1,0 +1,9 @@
+# Extracted from spike-01b-picoclaw on 2026-04-18 (docker logs 45b6e9bc48d0)
+21:16:22  INF eventbus  loop.go:1049 > Agent event: llm_request agent_id=main event_kind=llm_request inbound_channel=telegram inbound_chat_id=152099202 inbound_sender_id=152099202 iteration=1 max_tokens=32768 messages=2 model=claude-haiku-4.5 route_channel=telegram
+21:16:25  INF eventbus  loop.go:1049 > Agent event: llm_response agent_id=main content_len=14 event_kind=llm_response inbound_channel=telegram inbound_chat_id=152099202
+21:16:25  INF agent     loop.go:2652 > LLM response without tool calls (direct answer) content_chars=14
+21:16:25  INF eventbus  loop.go:1049 > Agent event: turn_end duration_ms=3198 final_len=14
+21:16:25  INF agent     loop.go:1885 > Response: ok-picoclaw-01 agent_id=main final_length=14 iterations=1
+21:16:25  INF agent     loop.go:713  > Published outbound response channel=telegram chat_id=152099202 content_len=14
+21:16:25  DBG telego    bot.go:247   > API call to: "https://api.telegram.org/bot<redacted>/sendMessage"
+21:16:26  DBG telego    bot.go:173   > API response sendMessage: Ok: true, Err: [<nil>], Result: {"message_id":61,"text":"ok-picoclaw-01"}

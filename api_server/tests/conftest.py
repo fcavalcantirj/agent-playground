@@ -219,3 +219,62 @@ def mock_run_cell(monkeypatch):
         monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
     return _configure
+
+
+# ------ Phase 22b Wave 0 shared fixtures ------
+
+
+@pytest.fixture(scope="session")
+def docker_client():
+    """docker-py APIClient from-env. Skips test if daemon unavailable.
+
+    Source: RESEARCH.md Standard Stack — docker>=7.0,<8; from_env auto-negotiates.
+    """
+    import docker  # local import: keep startup cost off Docker-free unit runs
+
+    try:
+        client = docker.from_env()
+        client.ping()
+    except Exception as exc:  # pragma: no cover — environmental skip
+        pytest.skip(f"Docker daemon unavailable: {exc}")
+    yield client
+    client.close()
+
+
+@pytest.fixture
+def running_alpine_container(docker_client):
+    """Factory: spawn an alpine:3.19 container with a user-provided command.
+
+    Auto-removes on teardown. Returns the docker Container object.
+
+    Example::
+
+        container = running_alpine_container(
+            command=["sh", "-c", "echo hello; sleep 30"]
+        )
+    """
+    created = []
+
+    def _factory(command, **kwargs):
+        container = docker_client.containers.run(
+            "alpine:3.19",
+            command=command,
+            detach=True,
+            auto_remove=True,
+            **kwargs,
+        )
+        created.append(container)
+        return container
+
+    yield _factory
+    for c in created:
+        try:
+            c.remove(force=True)
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session")
+def event_log_samples_dir():
+    """Path to the 5 spike-derived event-log fixture files."""
+    return Path(__file__).parent / "fixtures" / "event_log_samples"
