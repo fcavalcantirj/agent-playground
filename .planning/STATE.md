@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Executing Phase 22b
-stopped_at: context exhaustion at 90% (2026-04-18)
-last_updated: "2026-04-19T01:00:26.862Z"
+status: Phase 22b complete — SC-03 GREEN (Gate A 15/15 + Gate B 5/5)
+stopped_at: 2026-04-19 — Phase 22b complete; SC-03 unblocked
+last_updated: "2026-04-19T19:30:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
