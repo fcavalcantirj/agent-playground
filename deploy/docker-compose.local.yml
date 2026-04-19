@@ -13,3 +13,11 @@ services:
     # On Linux Hetzner the socket is root:docker (gid 999) and apiuser (in docker group) can access it.
     # Run as root locally only — DO NOT apply this override on the prod box.
     user: root
+    # Phase 22b-08: AP_ENV=dev unlocks dev-only routes (notably
+    # POST /v1/agents/:id/events/inject-test-event for SC-03 Gate B).
+    # Production stays AP_ENV=prod via docker-compose.prod.yml; this
+    # override only applies when the local file is layered in. Leaves
+    # /docs + /redoc visible too (per D-10) which is desirable on a dev
+    # laptop. NEVER apply this override on the prod Hetzner box.
+    environment:
+      AP_ENV: dev
