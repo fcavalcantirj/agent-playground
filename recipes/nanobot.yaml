@@ -285,19 +285,18 @@ persistent:
 # stays accurate (it's still where /v1/chat/completions lives) and the
 # harness layer wires the docker-exec lifecycle.
 direct_interface:
-  kind: http_chat_completions
+  # Phase 22b-06 SC-03 gate revision: use `nanobot agent -m` (CLI) instead of
+  # `nanobot serve` HTTP. The persistent container runs `nanobot gateway`
+  # (Telegram channel mode) — it does NOT expose port 8900 (that's `nanobot
+  # serve` mode). The agent CLI reuses the same config.json and providers
+  # setup that gateway already wired during /v1/agents/:id/start, so a
+  # docker exec of `nanobot agent -m TEXT` produces the LLM reply on stdout.
+  kind: docker_exec_cli
   spec:
-    port: 8900
-    path: /v1/chat/completions
-    auth:
-      header: Authorization
-      value_template: "Bearer {api_key}"
-    request_template:
-      model: "nanobot:main"
-      messages:
-        - { role: user, content: "{prompt}" }
-    response_jsonpath: "$.choices[0].message.content"
+    argv_template: ["nanobot", "agent", "-m", "{prompt}"]
     timeout_s: 60
+    stdout_reply: true
+    exit_code_success: 0
 
 channels:
   telegram:
