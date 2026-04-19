@@ -104,3 +104,52 @@ class TestLintBrokenRecipes:
         assert len(errors) == len(set(errors)), (
             f"{filename} produced duplicate error messages: {errors}"
         )
+
+
+class TestLintRealRecipes:
+    """Regression guard for Phase 22b-09 (Gap 3 closure).
+
+    Asserts that every committed recipe in recipes/*.yaml lints clean
+    against tools/ap.recipe.schema.json. Phase 22b-06 added direct_interface
+    + event_log_regex to all 5 recipes; Phase 22b-08 (gap closure) carries
+    event_source_fallback for nullclaw + openclaw. The schema gained
+    direct_interface_block + event_source_fallback $defs (Phase 22b-09).
+
+    A FAIL here means either:
+      (a) the schema regressed (a future edit broke an existing field), OR
+      (b) a recipe gained a new field the schema doesn't declare yet (the
+          recipe needs additive schema work, NOT a relaxed `additionalProperties`).
+
+    The 5 recipes are an explicit list (not a glob) so adding a new recipe
+    forces a code review of this test. See conftest.py::real_recipes fixture.
+    """
+
+    @pytest.mark.parametrize("recipe_name,recipe_path", [
+        ("hermes",   None),
+        ("picoclaw", None),
+        ("nullclaw", None),
+        ("nanobot",  None),
+        ("openclaw", None),
+    ])
+    def test_real_recipe_lints_clean(self, real_recipes, schema, recipe_name, recipe_path):
+        # Resolve path from the fixture (parametrize ids are cosmetic; fixture
+        # is the source of truth).
+        match = next((p for n, p in real_recipes if n == recipe_name), None)
+        assert match is not None, f"recipe {recipe_name!r} not in real_recipes fixture"
+        recipe = _y.load(match.read_text())
+        errors = lint_recipe(recipe, schema)
+        assert errors == [], (
+            f"Real recipe {recipe_name!r} should lint clean against tools/ap.recipe.schema.json "
+            f"but produced {len(errors)} errors:\n  - " + "\n  - ".join(errors[:10])
+        )
+
+    def test_all_5_recipes_listed(self, real_recipes):
+        """Sanity: catch accidental fixture truncation."""
+        names = {n for n, _ in real_recipes}
+        assert names == {"hermes", "picoclaw", "nullclaw", "nanobot", "openclaw"}, \
+            f"real_recipes fixture missing or extra entries: {names}"
+
+    def test_all_5_recipe_files_exist(self, real_recipes):
+        """Sanity: catch accidental file deletion."""
+        for name, path in real_recipes:
+            assert path.exists(), f"recipe file missing: {name} at {path}"
