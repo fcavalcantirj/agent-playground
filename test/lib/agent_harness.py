@@ -229,30 +229,46 @@ def cmd_send_direct_and_read(args) -> int:
                     )
 
         elif kind == "http_chat_completions":
+            # Agent containers run on Docker's default network with no
+            # published ports — `127.0.0.1:<port>` from the host won't reach
+            # them. Use `docker exec <cid> curl` so the request is issued
+            # inside the container's own network namespace, matching the
+            # docker_exec_cli pattern.
             spec = di["spec"]
             url = f"http://127.0.0.1:{spec['port']}{spec['path']}"
             body = dict(spec["request_template"])
-            # Always overwrite messages with our correlation prompt;
-            # recipe's request_template.messages is a placeholder shape.
             body["messages"] = [{"role": "user", "content": prompt}]
-            headers: dict[str, str] = {}
+            curl_argv = [
+                "docker", "exec", args.container_id,
+                "curl", "-fsS", "--max-time", str(spec.get("timeout_s", 60)),
+                "-H", "Content-Type: application/json",
+            ]
             auth = spec.get("auth") or {}
             if auth:
-                headers[auth["header"]] = auth["value_template"].format(
-                    api_key=args.api_key
-                )
-            resp = _post(
-                url, body,
-                timeout=spec.get("timeout_s", 60),
-                headers=headers,
+                curl_argv += [
+                    "-H",
+                    f"{auth['header']}: "
+                    + auth["value_template"].format(api_key=args.api_key),
+                ]
+            curl_argv += ["-X", "POST", "-d", json.dumps(body), url]
+            out = subprocess.run(
+                curl_argv, capture_output=True, text=True,
+                timeout=spec.get("timeout_s", 60) + 5, check=False,
             )
-            try:
-                reply_text = str(_jsonpath_simple(resp, spec["response_jsonpath"]))
-            except (KeyError, IndexError, TypeError) as e:
-                error = (
-                    f"response_jsonpath {spec['response_jsonpath']!r} "
-                    f"failed against response keys={list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__}: {e}"
-                )
+            if out.returncode != 0:
+                error = f"docker exec curl exit {out.returncode}: {out.stderr[:200]!r}"
+            else:
+                try:
+                    resp = json.loads(out.stdout)
+                    reply_text = str(_jsonpath_simple(resp, spec["response_jsonpath"]))
+                except json.JSONDecodeError as e:
+                    error = f"non-JSON response (truncated): {out.stdout[:200]!r}"
+                except (KeyError, IndexError, TypeError) as e:
+                    error = (
+                        f"response_jsonpath {spec['response_jsonpath']!r} "
+                        f"failed against response keys="
+                        f"{list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__}: {e}"
+                    )
 
         else:
             error = f"unknown direct_interface.kind: {kind!r}"

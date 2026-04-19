@@ -254,7 +254,7 @@ persistent:
 direct_interface:
   kind: docker_exec_cli
   spec:
-    argv_template: ["hermes", "chat", "-q", "{prompt}", "-Q", "-m", "{model}", "--provider", "openrouter"]
+    argv_template: ["/opt/hermes/.venv/bin/hermes", "chat", "-q", "{prompt}", "-Q", "-m", "{model}", "--provider", "openrouter"]
     timeout_s: 60
     stdout_reply: true
     reply_extract_regex: "(?s)(?P<reply>.+?)(?=\\n\\s*session_id:|$)"
