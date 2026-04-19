@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,112 +9,128 @@ import { cn } from "@/lib/utils"
 import {
   Plus,
   Search,
-  Play,
   Square,
   MoreVertical,
-  Trash2,
-  Copy,
   ExternalLink,
   Activity,
-  MessageSquare,
   Clock,
   Zap,
   Terminal,
   Settings2,
+  Loader2,
 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { apiGet } from "@/lib/api"
+import {
+  parseApiError,
+  type AgentListResponse,
+  type AgentStatusResponse,
+  type AgentSummary,
+  type UiError,
+} from "@/lib/api-types"
 
-interface Agent {
-  id: string
-  name: string
-  clone: string
-  model: string
-  status: "running" | "stopped"
-  channels: string[]
-  messagesProcessed: number
-  uptime: string
-  lastActive: string
+// Local copy of timeAgo (mirrors frontend/components/my-agents-panel.tsx lines 37–48
+// — kept inline to keep the diff scoped to this file per plan instructions).
+function timeAgo(iso?: string | null): string {
+  if (!iso) return "—"
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return "just now"
+  const m = Math.floor(ms / 60_000)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d ago`
+  return new Date(iso).toLocaleDateString()
 }
 
-const mockAgents: Agent[] = [
-  {
-    id: "1",
-    name: "Customer Support Bot",
-    clone: "Hermes-agent",
-    model: "Claude 3 Sonnet",
-    status: "running",
-    channels: ["Discord", "Telegram"],
-    messagesProcessed: 12453,
-    uptime: "14d 6h",
-    lastActive: "2 min ago",
-  },
-  {
-    id: "2",
-    name: "Code Assistant",
-    clone: "ZeroClaw",
-    model: "GPT-4 Turbo",
-    status: "running",
-    channels: ["Slack", "CLI"],
-    messagesProcessed: 8721,
-    uptime: "7d 12h",
-    lastActive: "5 min ago",
-  },
-  {
-    id: "3",
-    name: "Research Agent",
-    clone: "OpenClaw",
-    model: "Claude 3 Opus",
-    status: "stopped",
-    channels: ["Webhook"],
-    messagesProcessed: 3412,
-    uptime: "-",
-    lastActive: "2 days ago",
-  },
-  {
-    id: "4",
-    name: "Data Analyst",
-    clone: "nanobot",
-    model: "Llama 3.1 70B",
-    status: "running",
-    channels: ["Telegram", "WhatsApp"],
-    messagesProcessed: 5678,
-    uptime: "3d 8h",
-    lastActive: "1 hour ago",
-  },
-]
+type StatusEntry = AgentStatusResponse | "loading" | "error"
 
 export default function DashboardPage() {
-  const [agents, setAgents] = useState(mockAgents)
+  const [agents, setAgents] = useState<AgentSummary[] | null>(null)
+  const [listError, setListError] = useState<UiError | null>(null)
+  const [statuses, setStatuses] = useState<Record<string, StatusEntry>>({})
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "stopped">("all")
 
-  const filteredAgents = agents.filter(agent => {
-    const matchesSearch = agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.clone.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesStatus = statusFilter === "all" || agent.status === statusFilter
-    return matchesSearch && matchesStatus
+  const loadAgents = useCallback(async () => {
+    try {
+      const data = await apiGet<AgentListResponse>("/api/v1/agents")
+      setAgents(data.agents)
+      setListError(null)
+
+      // Mark each row as "loading" up-front so the UI can render the
+      // checking… state without a flash. Then fan out parallel /status
+      // probes; each one updates its own slot. A single failed status
+      // MUST NOT prevent other agents from rendering.
+      setStatuses(prev => {
+        const next: Record<string, StatusEntry> = { ...prev }
+        for (const a of data.agents) next[a.id] = "loading"
+        return next
+      })
+
+      await Promise.allSettled(
+        data.agents.map(async (a) => {
+          try {
+            const s = await apiGet<AgentStatusResponse>(`/api/v1/agents/${a.id}/status`)
+            setStatuses(prev => ({ ...prev, [a.id]: s }))
+          } catch {
+            setStatuses(prev => ({ ...prev, [a.id]: "error" }))
+          }
+        }),
+      )
+    } catch (e) {
+      setListError(parseApiError(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAgents()
+  }, [loadAgents])
+
+  // Helpers that read the per-row status row safely.
+  function statusOf(id: string): StatusEntry | undefined {
+    return statuses[id]
+  }
+  function isRunning(id: string): boolean {
+    const s = statusOf(id)
+    return s !== undefined && s !== "loading" && s !== "error" && s.runtime_running === true
+  }
+  function isStopped(id: string): boolean {
+    const s = statusOf(id)
+    if (s === undefined || s === "loading" || s === "error") return false
+    return s.runtime_running === false && s.container_status != null
+  }
+
+  const filteredAgents = (agents ?? []).filter(agent => {
+    const q = searchQuery.toLowerCase()
+    const matchesSearch =
+      agent.name.toLowerCase().includes(q) ||
+      agent.recipe_name.toLowerCase().includes(q)
+    if (!matchesSearch) return false
+    if (statusFilter === "all") return true
+    if (statusFilter === "running") return isRunning(agent.id)
+    if (statusFilter === "stopped") return isStopped(agent.id)
+    return true
   })
 
-  const runningCount = agents.filter(a => a.status === "running").length
-  const totalMessages = agents.reduce((sum, a) => sum + a.messagesProcessed, 0)
-
-  const toggleAgentStatus = (id: string) => {
-    setAgents(agents.map(agent => 
-      agent.id === id 
-        ? { ...agent, status: agent.status === "running" ? "stopped" : "running" }
-        : agent
-    ))
-  }
-
-  const deleteAgent = (id: string) => {
-    setAgents(agents.filter(agent => agent.id !== id))
-  }
+  const allStatusesLoaded =
+    agents !== null &&
+    agents.every(a => {
+      const s = statuses[a.id]
+      return s !== undefined && s !== "loading"
+    })
+  const runningCount = agents
+    ? agents.filter(a => isRunning(a.id)).length
+    : 0
+  const totalRuns = agents
+    ? agents.reduce((s, a) => s + a.total_runs, 0)
+    : 0
 
   return (
     <div>
@@ -142,19 +158,10 @@ export default function DashboardPage() {
               <Activity className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{runningCount}</p>
+              <p className="text-2xl font-bold text-foreground">
+                {allStatusesLoaded ? runningCount : "—"}
+              </p>
               <p className="text-xs text-muted-foreground">Running Agents</p>
-            </div>
-          </div>
-        </div>
-        <div className="rounded-xl border border-border/50 bg-card/30 p-4 backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-              <MessageSquare className="h-5 w-5 text-green-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{totalMessages.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Messages Processed</p>
             </div>
           </div>
         </div>
@@ -164,8 +171,19 @@ export default function DashboardPage() {
               <Zap className="h-5 w-5 text-blue-500" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{agents.length}</p>
+              <p className="text-2xl font-bold text-foreground">{agents?.length ?? 0}</p>
               <p className="text-xs text-muted-foreground">Total Agents</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border/50 bg-card/30 p-4 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
+              <Zap className="h-5 w-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-foreground">{totalRuns.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">Total runs</p>
             </div>
           </div>
         </div>
@@ -200,140 +218,179 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Agents List */}
-      <ScrollArea className="h-[calc(100vh-400px)] min-h-[300px]">
-        <div className="space-y-3">
-          {filteredAgents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 py-12 text-center">
-              <Activity className="mb-3 h-10 w-10 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">No agents found</p>
-              <Button asChild variant="link" className="mt-2">
-                <Link href="/playground">Create your first agent</Link>
-              </Button>
-            </div>
-          ) : (
-            filteredAgents.map((agent) => (
-              <div
-                key={agent.id}
-                className={cn(
-                  "rounded-xl border p-4 transition-all sm:p-5",
-                  agent.status === "running"
-                    ? "border-green-500/30 bg-green-500/5"
-                    : "border-border/50 bg-card/30"
-                )}
-              >
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  {/* Agent Info */}
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-center gap-2">
-                      <h3 className="truncate font-semibold text-foreground">{agent.name}</h3>
-                      <span className={cn(
-                        "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                        agent.status === "running"
-                          ? "bg-green-500/20 text-green-400"
-                          : "bg-muted text-muted-foreground"
-                      )}>
-                        <span className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          agent.status === "running" ? "animate-pulse bg-green-500" : "bg-muted-foreground"
-                        )} />
-                        {agent.status}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {agent.clone} + {agent.model}
-                    </p>
-                    
-                    {/* Channels & Stats */}
-                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <MessageSquare className="h-3 w-3" />
-                        {agent.messagesProcessed.toLocaleString()} messages
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {agent.lastActive}
-                      </div>
-                      <div className="flex gap-1">
-                        {agent.channels.map((ch) => (
-                          <span key={ch} className="rounded bg-muted/50 px-1.5 py-0.5">
-                            {ch}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => toggleAgentStatus(agent.id)}
-                      className={cn(
-                        "gap-1.5",
-                        agent.status === "running" && "border-green-500/30 text-green-400 hover:bg-green-500/10"
-                      )}
-                    >
-                      {agent.status === "running" ? (
-                        <>
-                          <Square className="h-3 w-3" />
-                          Stop
-                        </>
-                      ) : (
-                        <>
-                          <Play className="h-3 w-3" />
-                          Start
-                        </>
-                      )}
-                    </Button>
-                    
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/dashboard/agents/${agent.id}`}>
-                            <ExternalLink className="mr-2 h-4 w-4" />
-                            View Details
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/dashboard/agents/${agent.id}/logs`}>
-                            <Terminal className="mr-2 h-4 w-4" />
-                            View Logs
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link href={`/dashboard/agents/${agent.id}/settings`}>
-                            <Settings2 className="mr-2 h-4 w-4" />
-                            Settings
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem 
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => deleteAgent(agent.id)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+      {/* Body — loading / error / empty / populated */}
+      {agents === null && !listError ? (
+        <div className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card/30 px-6 py-8 text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          <span className="text-sm">Loading your deployed agents…</span>
         </div>
-      </ScrollArea>
+      ) : listError ? (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 p-6 text-amber-200">
+          <p className="text-sm">Couldn&apos;t load your agents: {listError.message}</p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={loadAgents}>Retry</Button>
+        </div>
+      ) : agents !== null && agents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 py-12 text-center">
+          <Activity className="mb-3 h-10 w-10 text-muted-foreground/50" />
+          <p className="text-base font-semibold text-foreground">No agents deployed yet</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Head to the playground to deploy your first agent.
+          </p>
+          <Button asChild className="mt-4 bg-primary text-primary-foreground">
+            <Link href="/playground">Go to playground</Link>
+          </Button>
+        </div>
+      ) : (
+        <ScrollArea className="h-[calc(100vh-400px)] min-h-[300px]">
+          <div className="space-y-3">
+            {filteredAgents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 py-12 text-center">
+                <Activity className="mb-3 h-10 w-10 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">No agents match your filters</p>
+              </div>
+            ) : (
+              filteredAgents.map((agent) => {
+                const sEntry = statusOf(agent.id)
+                const running = isRunning(agent.id)
+                const channelChip =
+                  sEntry && sEntry !== "loading" && sEntry !== "error"
+                    ? sEntry.channel ?? null
+                    : null
+
+                let pill: { label: string; muted: boolean; pulse: boolean }
+                if (sEntry === undefined || sEntry === "loading") {
+                  pill = { label: "checking…", muted: true, pulse: false }
+                } else if (sEntry === "error") {
+                  pill = { label: "status unavailable", muted: true, pulse: false }
+                } else if (sEntry.runtime_running === true) {
+                  pill = { label: "running", muted: false, pulse: true }
+                } else if (sEntry.container_status == null) {
+                  pill = { label: "never started", muted: true, pulse: false }
+                } else {
+                  pill = { label: "stopped", muted: true, pulse: false }
+                }
+
+                return (
+                  <div
+                    key={agent.id}
+                    className={cn(
+                      "rounded-xl border p-4 transition-all sm:p-5",
+                      running
+                        ? "border-green-500/30 bg-green-500/5"
+                        : "border-border/50 bg-card/30"
+                    )}
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      {/* Agent Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex items-center gap-2">
+                          <h3 className="truncate font-semibold text-foreground">{agent.name}</h3>
+                          <span className={cn(
+                            "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                            pill.muted
+                              ? "bg-muted text-muted-foreground"
+                              : "bg-green-500/20 text-green-400"
+                          )}>
+                            {sEntry === "loading" ? (
+                              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            ) : (
+                              <span className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                pill.pulse
+                                  ? "animate-pulse bg-green-500"
+                                  : "bg-muted-foreground"
+                              )} />
+                            )}
+                            {pill.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Recipe: {agent.recipe_name} · {agent.model}
+                          {agent.last_verdict ? ` · last: ${agent.last_verdict}` : ""}
+                        </p>
+
+                        {/* Channels & Stats */}
+                        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Zap className="h-3 w-3" />
+                            {agent.total_runs} run{agent.total_runs === 1 ? "" : "s"}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {timeAgo(agent.last_run_at ?? agent.created_at)}
+                          </div>
+                          {channelChip ? (
+                            <div className="flex gap-1">
+                              <span className="rounded bg-muted/50 px-1.5 py-0.5">{channelChip}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2">
+                        {running ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {}}
+                            disabled={sEntry === "loading"}
+                            className="gap-1.5 border-green-500/30 text-green-400 hover:bg-green-500/10"
+                          >
+                            <Square className="h-3 w-3" />
+                            Stop
+                          </Button>
+                        ) : (
+                          // /start requires Bearer + channel_inputs (see AgentStartRequest);
+                          // /playground is where the user supplies them. Re-deploying via
+                          // /playground UPSERTs into the same agent_instances row keyed by
+                          // (user, recipe, model).
+                          <Button asChild variant="outline" size="sm" className="gap-1.5">
+                            <Link
+                              href={`/playground?recipe=${agent.recipe_name}&model=${encodeURIComponent(agent.model)}`}
+                            >
+                              <Plus className="h-3 w-3" />
+                              Start
+                            </Link>
+                          </Button>
+                        )}
+
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild>
+                              <Link href={`/dashboard/agents/${agent.id}`}>
+                                <ExternalLink className="mr-2 h-4 w-4" />
+                                View Details
+                              </Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Link href={`/dashboard/agents/${agent.id}/logs`}>
+                                <Terminal className="mr-2 h-4 w-4" />
+                                View Logs
+                              </Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Link href={`/dashboard/agents/${agent.id}/settings`}>
+                                <Settings2 className="mr-2 h-4 w-4" />
+                                Settings
+                              </Link>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </ScrollArea>
+      )}
     </div>
   )
 }
