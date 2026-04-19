@@ -272,6 +272,27 @@ persistent:
     ${OPENROUTER_API_KEY} and ${TELEGRAM_BOT_TOKEN} expand in sh at container
     runtime via docker -e injection (unquoted heredoc).
 
+# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
+# Spike 06 (2026-04-18) PASS: `nullclaw agent -m "<prompt>" --model "openrouter/<model>"`
+# produces the LLM reply on stdout. The --model flag is REQUIRED here even
+# though `nullclaw onboard` already wrote a default — `agent -m` re-resolves
+# the routing per-call; without --model nullclaw's LLM auto-route can pick
+# a different model than the user expected (spike-06 §nullclaw).
+# Persistent-mode coexistence: nullclaw's gateway daemon (`nullclaw gateway`)
+# runs separately from the agent CLI inside the container; spike-06 caveat
+# #2 documents this as plausible-but-not-empirically-proven against a
+# running persistent container — Gate A test in 22b-06 is the empirical
+# proof point. NB: nullclaw uses `--user root` for the persistent process
+# (see persistent.spec.user_override) so docker exec inherits root, which
+# is required to write the per-call session file under /nullclaw-data.
+direct_interface:
+  kind: docker_exec_cli
+  spec:
+    argv_template: ["nullclaw", "agent", "-m", "{prompt}", "--model", "openrouter/{model}"]
+    timeout_s: 60
+    stdout_reply: true
+    exit_code_success: 0
+
 channels:
   telegram:
     config_transport: file              # config.json (no env-var path available)

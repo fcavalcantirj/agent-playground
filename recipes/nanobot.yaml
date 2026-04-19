@@ -259,6 +259,46 @@ persistent:
     Runner substitutes $MODEL + $TELEGRAM_ALLOWED_USER before docker run.
     Health HTTP endpoint on 127.0.0.1:18790/health.
 
+# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
+# Spike 06 PASS: nanobot serve exposes the OpenAI-compatible
+# /v1/chat/completions endpoint (matches MSV's forward_to_agent.go pattern).
+#
+# Port: 8900 (empirical — probed in Plan 22b-06 Task 1 Part D via
+#   `docker run --rm --entrypoint sh ap-recipe-nanobot -c '<minimal config>; nanobot serve'`
+# then inspecting `/proc/net/tcp` inside the container, which showed a single
+# LISTEN socket at `0100007F:22C4` (= 127.0.0.1:8900). Cross-confirmed by
+# nanobot's own startup log line:
+#   `🐈 Starting OpenAI-compatible API server`
+#   `  Endpoint : http://127.0.0.1:8900/v1/chat/completions`
+# `nanobot serve --help` documents `--port` but no default value; 8900 is
+# the bake-time default. If a recipe ever needs to override it (port
+# collision, multi-tenant), add `--port` to the persistent argv and update
+# this block in lockstep.
+#
+# Note on persistent vs serve coexistence: this recipe's persistent block
+# runs `nanobot gateway` (Telegram daemon), NOT `nanobot serve`. For Gate A
+# direct_interface to actually answer, the persistent container must ALSO
+# expose the OpenAI HTTP — Plan 22b-06 Task 3's verification will confirm
+# whether `nanobot gateway` brings up the serve endpoint as a sibling, or
+# whether the recipe needs `--mode both` or the `agent_harness` needs to
+# `docker exec <cid> nanobot serve` separately. If the latter, this block
+# stays accurate (it's still where /v1/chat/completions lives) and the
+# harness layer wires the docker-exec lifecycle.
+direct_interface:
+  kind: http_chat_completions
+  spec:
+    port: 8900
+    path: /v1/chat/completions
+    auth:
+      header: Authorization
+      value_template: "Bearer {api_key}"
+    request_template:
+      model: "nanobot:main"
+      messages:
+        - { role: user, content: "{prompt}" }
+    response_jsonpath: "$.choices[0].message.content"
+    timeout_s: 60
+
 channels:
   telegram:
     config_transport: file

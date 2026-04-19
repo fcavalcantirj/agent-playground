@@ -240,6 +240,26 @@ persistent:
     (inside the gosu-dropped user). Container-exit-zero on SIGTERM after
     ~5s graceful (telegram.ext.Application shutdown hook).
 
+# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
+# Spike 01a (2026-04-18) proved this argv surface:
+#   `docker run --rm --entrypoint hermes ap-recipe-hermes chat -q "<prompt>" -Q -m "<model>" --provider openrouter`
+# returned the LLM reply on stdout (capturing `ok-spk42` verbatim).
+# {prompt} and {model} are substituted at invocation time by
+# test/lib/agent_harness.py before `docker exec <cid> ...` runs against
+# the already-running persistent container (config persists in /opt/data).
+# reply_extract_regex strips the trailing `session_id: ...` line that
+# `hermes chat` appends after the actual reply (existing
+# session_id_capture awk in invoke.spec.session_id_capture confirms this
+# tail format).
+direct_interface:
+  kind: docker_exec_cli
+  spec:
+    argv_template: ["hermes", "chat", "-q", "{prompt}", "-Q", "-m", "{model}", "--provider", "openrouter"]
+    timeout_s: 60
+    stdout_reply: true
+    reply_extract_regex: "(?s)(?P<reply>.+?)(?=\\n\\s*session_id:|$)"
+    exit_code_success: 0
+
 channels:
   telegram:
     # Transport: env-var only. No config file edit. The `.env` override
@@ -268,6 +288,24 @@ channels:
     ready_log_regex: "\\[Telegram\\] Connected to Telegram \\(polling mode\\)"
     response_routing: per_message_origin   # bot replies in the chat the sender messaged from
     multi_user_model: allowlist_or_dm_pairing
+    # Phase 22b-06 — event_log_regex from spike-01a-hermes.md (2026-04-18 verified).
+    # Three regexes captured against a real Telegram round-trip in
+    # `bd307cbb96d6` (hermes container, "oi" → 65-char reply to chat 152099202):
+    #   reply_sent       — fires when hermes calls Telegram sendMessage; gives
+    #                      chat_id + char count. Reply text is NOT in this line
+    #                      (only byte count); watcher attaches correlation_id by
+    #                      buffering the most-recent inbound_message per chat.
+    #   inbound_message  — fires when hermes processes an inbound DM; carries
+    #                      the user text (`msg='...'`) — source of correlation_id.
+    #   response_ready   — fires when the LLM call returns; useful for latency
+    #                      metrics (time_s, api_calls, char count) but optional.
+    # See .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01a-hermes.md
+    # for the verbatim 3-line stdout sequence + capture-group rationale.
+    event_log_regex:
+      reply_sent: "^INFO gateway\\.platforms\\.base: \\[Telegram\\] Sending response \\((?P<chars>\\d+) chars\\) to (?P<chat_id>\\d+)"
+      inbound_message: "^INFO gateway\\.run: inbound message: platform=telegram user=(?P<user>\\S+) chat=(?P<chat_id>\\d+) msg='(?P<text>[^']*)'"
+      response_ready: "^INFO gateway\\.run: response ready: platform=telegram chat=(?P<chat_id>\\d+) time=(?P<time_s>[\\d.]+)s api_calls=(?P<api_calls>\\d+) response=(?P<chars>\\d+) chars"
+      agent_error: "^(?:ERROR|CRITICAL) (?P<logger>\\S+): (?P<message>.+)"
     verified_cells:
       - date: "2026-04-17"
         bot_username: "@AgentPlayground_bot"
