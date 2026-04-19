@@ -625,6 +625,64 @@ channels:
       supported: [anthropic]      # empirically verified end-to-end 2026-04-18
       # other direct providers (openai, google) likely work — not tested
     verified_cells:
+      - date: "2026-04-19"
+        bot_username: "@AgentPlayground_bot"
+        allowed_user_id: 152099202
+        provider: anthropic
+        model: anthropic/claude-haiku-4-5
+        env_var: ANTHROPIC_API_KEY
+        boot_wall_s: 110.31              # measured from /tmp/22b-07-openclaw-gateA.log
+        first_reply_wall_s: 101.59       # r1 wall_s from e2e-report.json (cold)
+        # r2 / r3 wall_s for reference: 89.05 / 93.93 (warmer)
+        reply_sample: "ok-openclaw-ca0e" # r1 reply_text from e2e-report.json (correlation id echoed verbatim)
+        verdict: PASS
+        notes: |
+          Gap 1 closure (Phase 22b-07). direct_interface rewritten from
+          http_chat_completions:18000 (dead path — openclaw gateway
+          --allow-unconfigured does NOT bind 18000) to docker_exec_cli
+          targeting `openclaw infer model run --prompt {prompt} --local
+          --json --model {model}`. Spike A 2026-04-19 PROVED `--model`
+          CLI flag is mandatory: gateway-baked openclaw.json defaults
+          agents.defaults.model to openrouter/... and only ANTHROPIC_API_KEY
+          is in env, so without the CLI override the call hits
+          FailoverError("No API key found for provider 'openrouter'").
+
+          Validated end-to-end through:
+            bash test/e2e_channels_v0_2.sh --recipe openclaw --rounds 3 --skip-gate-b
+          Result: Gate A 3/3 PASS in /tmp/22b-07-openclaw-gateA.log:
+            r1 (cold): 101.59s wall, reply "ok-openclaw-ca0e"
+            r2 (warm): 89.05s wall, reply "ok-openclaw-5dbf"
+            r3 (warm): 93.93s wall, reply "ok-openclaw-8d2e"
+          Boot: 110.31s.
+
+          Two follow-on fixes were also required and applied as 22b-07
+          deviations (root-cause not fix-to-pass):
+            (a) recipe runtime.process_env.api_key OPENROUTER_API_KEY →
+                ANTHROPIC_API_KEY + invoke.spec.argv dropped hardcoded
+                openrouter/ prefix on config-set step + added explicit
+                --model {model} on infer-model-run for parity with
+                direct_interface (commit c2ce593). The original smoke
+                argv routed through the upstream-broken openrouter
+                plugin (known_quirks.openrouter_provider_plugin_silent_fail),
+                returning 401; this rewrite uses the same anthropic-
+                direct path that the spike-01e + Spike A transcripts
+                empirically verified.
+            (b) test/e2e_channels_v0_2.sh always injects Telegram
+                channel inputs at /v1/agents/:id/start when
+                TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USER are present,
+                regardless of GATE_B_ENABLED — previously --skip-gate-b
+                also disabled channel-input injection, returning 400
+                CHANNEL_INPUTS_INVALID (commit 7c54986).
+            (c) direct_interface.spec.timeout_s 90 → 120 because the
+                live r1 (cold) took 101.59s; Spike A's 84s measurement
+                + 6s headroom was insufficient (commit 924b7b4).
+
+          Closes .planning/phases/22b-agent-event-stream/22b-VERIFICATION.md
+          gap 1 (openclaw Gate A). Gate B for openclaw remains owned by
+          a separate plan (Gap 2) and is OUT OF SCOPE here. The openrouter
+          provider plugin upstream bug (known_quirks) is also unchanged —
+          this fix routes around it via anthropic-direct, NOT a fix.
+        category: PASS
       - date: "2026-04-18"
         bot_username: "@AgentPlayground_bot"
         allowed_user_id: 152099202
