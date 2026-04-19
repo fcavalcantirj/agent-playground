@@ -20,13 +20,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 22b — agent-event-stream
+**Current focus:** Phase 22 (channels-v0.2) parent close-out + next milestone phase selection
 
 ## Current Position
 
-Phase: 22b (agent-event-stream) — EXECUTING
-Plan: 1 of 6
-Next:  `/gsd-discuss-phase 22b-agent-event-stream` — see `.planning/phases/22b-agent-event-stream/CONTEXT.md`
+Phase 22b (agent-event-stream) — **COMPLETE 2026-04-19** at commit `eb06c5a`. SC-03 unblocked for the first time.
+
+**Live evidence (committed in `e2e-report.json`):**
+- Gate A: 15/15 PASS (5 recipes × 3 rounds direct_interface)
+- Gate B: 5/5 PASS (5 recipes × 1 inject-test-event round-trip)
+- Lint: 27/27 tests pass
+- Verifier: 21/21 truths PASSED at commit `4745129`
+
+**Next:**
+1. Flip Phase 22 (parent) checkbox in ROADMAP.md (SC-03 now satisfied)
+2. Run Gate C manual checklist before any release tag (`test/sc03-gate-c.md`)
+3. Pick next phase per `.planning/audit/ACTION-LIST.md` — likely OAuth track (unblocks the 11 mocked dashboard pages) or SC-04 (rich event kinds)
 
 Execution summary (2026-04-18):
 
