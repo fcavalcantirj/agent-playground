@@ -301,6 +301,36 @@ persistent:
     config migrations). OPENROUTER_API_KEY env var is inherited as the
     openrouter fallback.
 
+# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
+# MSV pattern: openclaw's persistent server exposes /v1/chat/completions on
+# port 18000 — confirmed by /Users/fcavalcanti/dev/meusecretariovirtual/messaging/activities/forward_to_agent.go:
+#   `agentURL := fmt.Sprintf("http://localhost:%d/v1/chat/completions", input.Port)`
+# where `input.Port` is per-pod and defaults to 18000+ in MSV's deployment topology.
+# Spike 06 smoke PASS via the smoke argv path (`openclaw infer model run --local --json`)
+# proves the inference engine works; this direct_interface block uses the
+# canonical MSV HTTP shape for persistent-mode invocation. Spike 01e
+# (PASS_WITH_FLAG) confirmed end-to-end via Anthropic-direct env-var path
+# — the openrouter plugin bug documented in known_quirks.openrouter_provider_plugin_silent_fail
+# means Gate A for openclaw MUST use the ANTHROPIC_API_KEY env path
+# (api_key passed from the harness is forwarded as `Bearer <key>`; the
+# recipe ships with provider_compat.deferred=[openrouter] for the same
+# reason). NB: openclaw's persistent gateway port (18789) is the channel
+# router; 18000 is the inference HTTP — separate listeners.
+direct_interface:
+  kind: http_chat_completions
+  spec:
+    port: 18000
+    path: /v1/chat/completions
+    auth:
+      header: Authorization
+      value_template: "Bearer {api_key}"
+    request_template:
+      model: "openclaw:main"
+      messages:
+        - { role: user, content: "{prompt}" }
+    response_jsonpath: "$.choices[0].message.content"
+    timeout_s: 60
+
 channels:
   telegram:
     config_transport: file              # openclaw.json (NOT .json5)

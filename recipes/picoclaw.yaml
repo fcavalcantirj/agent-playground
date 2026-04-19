@@ -249,6 +249,24 @@ persistent:
     run; ${OPENROUTER_API_KEY} and ${TELEGRAM_BOT_TOKEN} expand inside sh
     from the env vars docker -e injects (unquoted EOF delimiter).
 
+# Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
+# Spike 06 (2026-04-18) PASS: `picoclaw agent -m "<prompt>"` produces the
+# LLM reply on stdout (smoke verdict PASS, exit 0, filtered_payload non-empty
+# — see .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-06-direct-interface.md
+# §picoclaw + spike-01b-picoclaw.md). Persistent-mode coexistence note: the
+# gateway daemon (`picoclaw gateway -d`) and the one-shot `agent -m` CLI are
+# separate cobra subcommands inside the same image; spike-06 caveat #2 flags
+# the persistent-mode `docker exec` against a running gateway as untested at
+# spike time, but spike-01b's full Telegram round-trip implicitly proves they
+# coexist (gateway kept polling Telegram while agent loop processed each turn).
+direct_interface:
+  kind: docker_exec_cli
+  spec:
+    argv_template: ["picoclaw", "agent", "-m", "{prompt}"]
+    timeout_s: 60
+    stdout_reply: true
+    exit_code_success: 0
+
 channels:
   telegram:
     config_transport: file              # config.json + .security.yml split
