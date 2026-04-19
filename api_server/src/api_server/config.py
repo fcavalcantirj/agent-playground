@@ -49,6 +49,40 @@ class Settings(BaseSettings):
         False, validation_alias="AP_TRUSTED_PROXY"
     )
 
+    # --- OAuth (Phase 22c) ---
+    # Google OAuth2 (OIDC). Test-users mode in dev; confidential client creds
+    # required in prod. Fail-loud happens in ``auth/oauth.py::get_oauth()`` —
+    # Settings instantiation itself stays optional so dev boots without
+    # credentials. Mirrors ``AP_CHANNEL_MASTER_KEY`` discipline
+    # (``crypto/age_cipher.py::_master_key``).
+    oauth_google_client_id: str | None = Field(
+        None, validation_alias="AP_OAUTH_GOOGLE_CLIENT_ID"
+    )
+    oauth_google_client_secret: str | None = Field(
+        None, validation_alias="AP_OAUTH_GOOGLE_CLIENT_SECRET"
+    )
+    oauth_google_redirect_uri: str | None = Field(
+        None, validation_alias="AP_OAUTH_GOOGLE_REDIRECT_URI"
+    )
+
+    # GitHub OAuth (non-OIDC). Same discipline.
+    oauth_github_client_id: str | None = Field(
+        None, validation_alias="AP_OAUTH_GITHUB_CLIENT_ID"
+    )
+    oauth_github_client_secret: str | None = Field(
+        None, validation_alias="AP_OAUTH_GITHUB_CLIENT_SECRET"
+    )
+    oauth_github_redirect_uri: str | None = Field(
+        None, validation_alias="AP_OAUTH_GITHUB_REDIRECT_URI"
+    )
+
+    # Starlette SessionMiddleware signing secret (AMD-07).
+    # Required in prod; dev uses a fixed fallback so local tests boot
+    # without ops setup.
+    oauth_state_secret: str | None = Field(
+        None, validation_alias="AP_OAUTH_STATE_SECRET"
+    )
+
 
 def get_settings() -> Settings:
     """Return a fresh Settings snapshot from the current environment."""
