@@ -408,6 +408,145 @@ def cmd_send_telegram_and_watch_events(args) -> int:
     return 0 if verdict == "PASS" else 1
 
 
+# ---------- Gate B (revised — Phase 22b-08): inject-test-event ---------------
+
+def cmd_send_injected_test_event_and_watch(args) -> int:
+    """Gate B (Phase 22b-08 revision) — POST /events/inject-test-event then long-poll.
+
+    Replaces the bot-self ``sendMessage`` path which was filtered by every
+    recipe's ``channels.telegram.allowFrom`` (verifier gap 2). The injected
+    event is a REAL row in the REAL ``agent_events`` table — golden rule 1
+    holds — but the trigger is a sysadmin-only POST instead of a Telegram
+    delivery. Validates the long-poll → INSERT → signal-wake → handler-fetch
+    chain end-to-end. Real Telegram round-trip remains Gate C (manual,
+    per-release).
+
+    Per Spike B 2026-04-19 (URL-key contract): ``--agent-id`` MUST be the
+    container_row_id (``agent_containers.id``), NOT the agent_instance_id.
+    The /v1/agents/:id/start response returns this as ``container_row_id``.
+
+    JSON output schema (mirrors send-telegram-and-watch-events):
+      {"gate":"B","recipe":...,"correlation_id":...,"sent_text":...,
+       "reply_sent_event":<event-row>|null,"wall_s":...,
+       "verdict":"PASS"|"FAIL","error":null|<short str>}
+    """
+    corr = uuid.uuid4().hex[:4]
+    chat_id = str(args.chat_id)
+    inject_url = (
+        f"{args.api_base}/v1/agents/{args.agent_id}/events/inject-test-event"
+    )
+    sent_text = f"injected-event corr={corr} chat={chat_id}"
+    t0 = time.time()
+
+    # Pre-query: capture since_seq cursor so we only count events with
+    # seq > since_seq toward the verdict (mirrors the legacy subcommand's
+    # discipline; D-11 + D-16 semantics).
+    try:
+        resp = _get(
+            f"{args.api_base}/v1/agents/{args.agent_id}/events"
+            f"?since_seq=0&timeout_s=1",
+            headers={"Authorization": f"Bearer {args.bearer}"},
+            timeout=5,
+        )
+        since_seq = resp.get("next_since_seq", 0)
+    except Exception as e:
+        print(json.dumps({
+            "gate": "B", "recipe": args.recipe, "correlation_id": corr,
+            "sent_text": sent_text, "reply_sent_event": None,
+            "wall_s": round(time.time() - t0, 2), "verdict": "FAIL",
+            "error": f"pre-query failed: {type(e).__name__}: {e}",
+        }))
+        return 2
+
+    # Inject the synthetic event.
+    inject_body = {
+        "kind": "reply_sent",
+        "correlation_id": corr,
+        "chat_id": chat_id,
+        "length_chars": 12,
+    }
+    try:
+        injected = _post(
+            inject_url, inject_body, timeout=10,
+            headers={"Authorization": f"Bearer {args.bearer}"},
+        )
+    except Exception as e:
+        print(json.dumps({
+            "gate": "B", "recipe": args.recipe, "correlation_id": corr,
+            "sent_text": sent_text, "reply_sent_event": None,
+            "wall_s": round(time.time() - t0, 2), "verdict": "FAIL",
+            "error": f"inject failed: {type(e).__name__}: {e}",
+        }))
+        return 2
+    if not injected.get("test_event"):
+        # Either the route is invisible (prod-mode 404 with HTML body parsed
+        # to ok:false), or the response shape drifted. Either way, FAIL with
+        # the actual response so the operator can see what came back.
+        print(json.dumps({
+            "gate": "B", "recipe": args.recipe, "correlation_id": corr,
+            "sent_text": sent_text, "reply_sent_event": None,
+            "wall_s": round(time.time() - t0, 2), "verdict": "FAIL",
+            "error": (
+                f"inject returned non-test-event response: "
+                f"{json.dumps(injected)[:300]}"
+            ),
+        }))
+        return 1
+
+    # Long-poll the events endpoint for the injected reply_sent. The event
+    # is keyed by correlation_id="test:<corr>" per the inject handler's
+    # prefix discipline.
+    expected_corr_id = f"test:{corr}"
+    try:
+        url = (
+            f"{args.api_base}/v1/agents/{args.agent_id}/events"
+            f"?since_seq={since_seq}&kinds=reply_sent&timeout_s={args.timeout_s}"
+        )
+        resp = _get(
+            url,
+            headers={"Authorization": f"Bearer {args.bearer}"},
+            timeout=args.timeout_s + 5,
+        )
+    except Exception as e:
+        print(json.dumps({
+            "gate": "B", "recipe": args.recipe, "correlation_id": corr,
+            "sent_text": sent_text, "reply_sent_event": None,
+            "wall_s": round(time.time() - t0, 2), "verdict": "FAIL",
+            "error": f"long-poll failed: {type(e).__name__}: {e}",
+        }))
+        return 1
+
+    events = resp.get("events", []) or []
+    match = next(
+        (
+            e for e in events
+            if e.get("kind") == "reply_sent"
+            and e.get("correlation_id") == expected_corr_id
+        ),
+        None,
+    )
+    verdict = "PASS" if match else "FAIL"
+
+    print(json.dumps({
+        "gate": "B",
+        "recipe": args.recipe,
+        "correlation_id": corr,
+        "sent_text": sent_text,
+        "reply_sent_event": match,
+        "wall_s": round(time.time() - t0, 2),
+        "verdict": verdict,
+        "error": (
+            None if match
+            else (
+                f"no matching reply_sent event "
+                f"(expected correlation_id={expected_corr_id!r}); "
+                f"saw {len(events)} reply_sent events"
+            )
+        ),
+    }))
+    return 0 if verdict == "PASS" else 1
+
+
 # ---------- argparse --------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -453,6 +592,43 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--timeout-s", type=int, default=10,
                    help="Long-poll window in seconds (default 10)")
     b.set_defaults(func=cmd_send_telegram_and_watch_events)
+
+    c = sub.add_parser(
+        "send-injected-test-event-and-watch",
+        help="Gate B (Phase 22b-08): POST /inject-test-event + long-poll. "
+             "Validates the API plumbing (real DB INSERT + signal-wake + "
+             "long-poll cycle) without depending on Telegram bot-self "
+             "impersonation (which is filtered by allowFrom).",
+    )
+    c.add_argument(
+        "--api-base", required=True,
+        help="Base URL of the API server (e.g. http://localhost:8000)",
+    )
+    c.add_argument(
+        "--agent-id", required=True,
+        help="agent_containers.id (container_row_id) — long-poll target. "
+             "Per Spike B 2026-04-19, the events-router URL key is "
+             "container_row_id, NOT agent_instance_id. The /v1/agents/:id/start "
+             "response returns this as `container_row_id` in the JSON body.",
+    )
+    c.add_argument(
+        "--bearer", required=True,
+        help="AP_SYSADMIN_TOKEN value (POST /inject-test-event is sysadmin-only)",
+    )
+    c.add_argument(
+        "--recipe", required=True,
+        help="Recipe name (cosmetic — appears in JSON envelope)",
+    )
+    c.add_argument(
+        "--chat-id", required=True,
+        help="chat_id stored in the synthetic event payload "
+             "(cosmetic; not delivered to Telegram)",
+    )
+    c.add_argument(
+        "--timeout-s", type=int, default=10,
+        help="Long-poll window in seconds (default 10)",
+    )
+    c.set_defaults(func=cmd_send_injected_test_event_and_watch)
 
     return p
 

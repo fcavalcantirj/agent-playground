@@ -250,23 +250,56 @@ for entry in "${MATRIX[@]}"; do
   if [[ $GATE_B_ENABLED -eq 1 ]]; then
     GATE_B_TOTAL=$((GATE_B_TOTAL + 1))
     GATE_B_RAN=1
-    GATE_B_OUT=$(python3 test/lib/agent_harness.py send-telegram-and-watch-events \
-      --api-base "$API_BASE" \
-      --agent-id "$AGENT_ID" \
-      --bearer "$AP_SYSADMIN_TOKEN" \
-      --recipe "$RECIPE" \
-      --token "$TELEGRAM_BOT_TOKEN" \
-      --chat-id "$TELEGRAM_CHAT_ID" \
-      --timeout-s 10 2>/dev/null || echo '{"gate":"B","verdict":"ERROR","error":"harness crashed"}')
-    V=$(jq -r '.verdict // "ERROR"' <<<"$GATE_B_OUT")
-    if [[ "$V" == "PASS" ]]; then
-      WS=$(jq -r '.wall_s // 0' <<<"$GATE_B_OUT")
-      _pass "$RECIPE Gate B event-stream (${WS}s)"
-      GATE_B_PASS=$((GATE_B_PASS + 1))
+    # Phase 22b-08 Gap 2 closure: prefer inject-test-event path (real DB
+    # INSERT + signal-wake; no Telegram bot-self impersonation which the
+    # recipes' allowFrom filters out). Legacy send-telegram-and-watch-events
+    # is preserved as a fallback for AP_ENV=prod (where the inject route is
+    # invisible — 404) and for explicit opt-in via AP_USE_LEGACY_GATE_B=1.
+    #
+    # Spike B B2 (2026-04-19): the events-router URL key is
+    # agent_containers.id (container_row_id), NOT agent_instance_id.
+    # AGENT_ID extracted at smoke time is agent_instance_id (line 168);
+    # we need container_row_id from the /start response instead. The
+    # /v1/agents/:id/start response returns it as `container_row_id`.
+    CONTAINER_ROW_ID=$(jq -r '.container_row_id // ""' <<<"$START")
+    if [[ -z "$CONTAINER_ROW_ID" ]]; then
+      _fail "$RECIPE: /start response missing container_row_id (events router URL key per Spike B B2): $(jq -c '.' <<<"$START")"
+      REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" '{recipe:$r,gate:"B",verdict:"FAIL",error:"missing container_row_id"}')")
+      GATE_B_OUT=""
+    elif [[ -z "${AP_USE_LEGACY_GATE_B:-}" ]] && python3 test/lib/agent_harness.py send-injected-test-event-and-watch --help >/dev/null 2>&1; then
+      GATE_B_OUT=$(python3 test/lib/agent_harness.py send-injected-test-event-and-watch \
+        --api-base "$API_BASE" \
+        --agent-id "$CONTAINER_ROW_ID" \
+        --bearer "$AP_SYSADMIN_TOKEN" \
+        --recipe "$RECIPE" \
+        --chat-id "$TELEGRAM_CHAT_ID" \
+        --timeout-s 10 2>/dev/null || echo '{"gate":"B","verdict":"ERROR","error":"harness crashed"}')
     else
-      _fail "$RECIPE Gate B: $(jq -c '.' <<<"$GATE_B_OUT")"
+      _info "Gate B falling back to legacy send-telegram-and-watch-events (AP_USE_LEGACY_GATE_B set OR new subcommand unavailable). NOTE: this path will FAIL because every recipe's allowFrom filters bot-self; documented in 22b-VERIFICATION.md gap 2."
+      GATE_B_OUT=$(python3 test/lib/agent_harness.py send-telegram-and-watch-events \
+        --api-base "$API_BASE" \
+        --agent-id "$CONTAINER_ROW_ID" \
+        --bearer "$AP_SYSADMIN_TOKEN" \
+        --recipe "$RECIPE" \
+        --token "$TELEGRAM_BOT_TOKEN" \
+        --chat-id "$TELEGRAM_CHAT_ID" \
+        --timeout-s 10 2>/dev/null || echo '{"gate":"B","verdict":"ERROR","error":"harness crashed"}')
     fi
-    REPORT_LINES+=("$(jq -c --arg r "$RECIPE" '. + {recipe: $r}' <<<"$GATE_B_OUT")")
+    if [[ -z "$GATE_B_OUT" ]]; then
+      # The container_row_id-missing path already pushed a FAIL line into
+      # REPORT_LINES + called _fail above; nothing more to do here.
+      :
+    else
+      V=$(jq -r '.verdict // "ERROR"' <<<"$GATE_B_OUT")
+      if [[ "$V" == "PASS" ]]; then
+        WS=$(jq -r '.wall_s // 0' <<<"$GATE_B_OUT")
+        _pass "$RECIPE Gate B event-stream (${WS}s)"
+        GATE_B_PASS=$((GATE_B_PASS + 1))
+      else
+        _fail "$RECIPE Gate B: $(jq -c '.' <<<"$GATE_B_OUT")"
+      fi
+      REPORT_LINES+=("$(jq -c --arg r "$RECIPE" '. + {recipe: $r}' <<<"$GATE_B_OUT")")
+    fi
   else
     _skip "$RECIPE Gate B (need TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID + AP_SYSADMIN_TOKEN OR --skip-gate-b)"
     REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" '{gate:"B",recipe:$r,verdict:"SKIP",reason:"missing creds"}')")
