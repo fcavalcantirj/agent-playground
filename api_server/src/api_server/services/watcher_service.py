@@ -125,9 +125,274 @@ class DockerLogsStreamSource:
                 pass
 
 
+class DockerExecPollSource:
+    """Source kind: ``docker_exec_poll`` (nullclaw).
+
+    Evidence: spike-01c-nullclaw.md. Nullclaw's stdout is barren (9 lines
+    total across a full session including boot). The authoritative activity
+    log is ``nullclaw history show <session_id> --json`` which prints the
+    entire conversation as a JSON document. This source polls that CLI at
+    ``poll_interval_s`` cadence, diffs successive ``messages[]`` arrays,
+    and yields one synthetic JSON line per NEW entry.
+
+    Spec (from recipes/nullclaw.yaml event_source_fallback.spec)::
+
+        argv_template: ["nullclaw", "history", "show", "{session_id}", "--json"]
+        session_id_template: "agent:main:telegram:direct:{chat_id}"
+
+    Degrade-gracefully (A6 in RESEARCH §Open Questions): when chat_id_hint
+    is ``None`` (lifespan re-attach path), we cannot compute session_id;
+    the source emits a single ``_log.warning`` and returns immediately. The
+    harness's Gate B can be re-run after a real DM triggers session
+    creation on the next /start.
+    """
+
+    def __init__(
+        self,
+        container_id: str,
+        spec: dict,
+        chat_id_hint: str | None,
+        stop_event: asyncio.Event,
+        poll_interval_s: float = 0.5,
+    ):
+        self.container_id = container_id
+        self.argv_template: list[str] = list(spec.get("argv_template") or [])
+        self.session_id_template: str = spec.get("session_id_template") or ""
+        self.chat_id_hint = chat_id_hint
+        self.stop_event = stop_event
+        self.poll_interval_s = poll_interval_s
+
+    def _resolve_session_id(self) -> str | None:
+        if not self.chat_id_hint or not self.session_id_template:
+            return None
+        return self.session_id_template.format(chat_id=self.chat_id_hint)
+
+    async def lines(self) -> AsyncIterator[str]:
+        session_id = self._resolve_session_id()
+        if session_id is None:
+            _log.warning(
+                "docker_exec_poll source cannot resolve session_id "
+                "(chat_id_hint=None) — Gate B deferred until next /start",
+                extra={"container_id": self.container_id[:12]},
+            )
+            return
+
+        argv = [a.format(session_id=session_id) for a in self.argv_template]
+        prev_messages: list[dict] = []
+        while not self.stop_event.is_set():
+            try:
+                out = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "exec", self.container_id, *argv],
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                _log.warning(
+                    "docker exec poll timed out",
+                    extra={"container_id": self.container_id[:12]},
+                )
+                await asyncio.sleep(self.poll_interval_s)
+                continue
+            if out.returncode != 0:
+                # Container likely gone; let caller's stop_event loop end us.
+                _log.debug(
+                    "docker exec poll returncode=%s stderr=%s",
+                    out.returncode,
+                    (out.stderr or "")[:200],
+                )
+                await asyncio.sleep(self.poll_interval_s)
+                continue
+            try:
+                doc = json.loads(out.stdout)
+            except json.JSONDecodeError:
+                _log.warning(
+                    "docker exec poll produced non-JSON output",
+                    extra={"container_id": self.container_id[:12]},
+                )
+                await asyncio.sleep(self.poll_interval_s)
+                continue
+            current = doc.get("messages") or []
+            # Emit only the tail-extension (Pitfall 3 — lagging is fine; the
+            # synthetic line carries role + content so the watcher matcher
+            # does role-based extraction rather than regex).
+            for msg in current[len(prev_messages):]:
+                yield json.dumps(msg)
+            prev_messages = current
+            await asyncio.sleep(self.poll_interval_s)
+
+
+class FileTailInContainerSource:
+    """Source kind: ``file_tail_in_container`` (openclaw).
+
+    Evidence: spike-01e-openclaw.md. Openclaw's docker logs are barren;
+    the only authoritative record of per-message activity is the session
+    JSONL at ``/home/node/.openclaw/agents/main/sessions/<session_id>.jsonl``.
+    One JSON document per line; assistant replies carry the body in
+    ``message.content[].text`` (type=='text' entry).
+
+    Flow:
+      1. ``docker exec <cid> cat <sessions_manifest>`` → parse JSON.
+      2. Pick session whose ``origin.from`` matches ``telegram:<chat_id_hint>``.
+      3. Resolve tail path from ``session_log_template.format(session_id=...)``.
+      4. Spawn the tail subprocess via ``subprocess.Popen``.
+      5. Bridge ``proc.stdout.readline`` through ``asyncio.to_thread``.
+      6. On stop_event OR tail subprocess exit, terminate cleanly.
+
+    Pitfall 2 (session-id drift) — if the user creates a new chat with
+    openclaw, a new session JSONL is spawned; this source is scoped to
+    the session resolved at attach time. A second chat on the same
+    container needs a second FileTailInContainerSource (post-MVP, not
+    in 22b scope). The session resolution step emits a ``_log.warning``
+    when no match is found so ops can see the reason Gate B failed.
+
+    BusyBox tail -F line-buffering — Plan 22b-01 PROBED assumption A3
+    and the verdict was **FAIL** (BusyBox's tail -F has ~547ms first-emit
+    latency vs the 500ms SLA; verbatim from 22b-01-SUMMARY.md). The
+    fallback path ``sh -c 'while :; do cat <path>; sleep 0.2; done'`` is
+    therefore the DEFAULT for this class. Keep ``_USE_TAIL_FALLBACK = True``
+    until a future probe against a non-BusyBox tail flips the verdict.
+    """
+
+    # Plan 22b-01 SUMMARY.md verdict — A3 FAILED → fallback REQUIRED.
+    _USE_TAIL_FALLBACK = True
+
+    def __init__(
+        self,
+        container_id: str,
+        spec: dict,
+        chat_id_hint: str | None,
+        stop_event: asyncio.Event,
+    ):
+        self.container_id = container_id
+        self.sessions_manifest: str = spec.get("sessions_manifest") or ""
+        self.session_log_template: str = spec.get("session_log_template") or ""
+        self.chat_id_hint = chat_id_hint
+        self.stop_event = stop_event
+
+    async def _resolve_session_path(self) -> str | None:
+        if not self.sessions_manifest or not self.session_log_template:
+            return None
+        try:
+            out = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "exec", self.container_id, "cat", self.sessions_manifest],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if out.returncode != 0:
+            return None
+        try:
+            manifest = json.loads(out.stdout)
+        except json.JSONDecodeError:
+            return None
+        # Manifest shape (spike-01e):
+        # {"agent:main:main": {"sessionId":"...","origin":{"from":"telegram:152099202",...}}}
+        needle = f"telegram:{self.chat_id_hint}" if self.chat_id_hint else None
+        for _key, entry in manifest.items():
+            if not isinstance(entry, dict):
+                continue
+            origin = entry.get("origin") or {}
+            if needle is None or origin.get("from") == needle:
+                session_id = entry.get("sessionId")
+                if session_id:
+                    return self.session_log_template.format(session_id=session_id)
+        _log.warning(
+            "file_tail_in_container: no session matching chat_id_hint=%s "
+            "found in manifest (file has %d entries)",
+            self.chat_id_hint,
+            len(manifest),
+            extra={"container_id": self.container_id[:12]},
+        )
+        return None
+
+    async def lines(self) -> AsyncIterator[str]:
+        path = await self._resolve_session_path()
+        if path is None:
+            return
+        if self._USE_TAIL_FALLBACK:
+            # BusyBox tail -F A3 probe FAILED in Plan 22b-01 — use the
+            # cat-and-sleep loop instead. The loop emits the entire file
+            # every 200ms so the watcher dedupes via correlation_id /
+            # role-based extraction at the matcher layer (D-07 contract).
+            argv = [
+                "docker",
+                "exec",
+                self.container_id,
+                "sh",
+                "-c",
+                f"while :; do cat '{path}'; sleep 0.2; done",
+            ]
+        else:  # pragma: no cover — gated on a future BusyBox-replaced base image
+            argv = [
+                "docker",
+                "exec",
+                self.container_id,
+                "tail",
+                "-n0",
+                "-F",
+                path,
+            ]
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            while not self.stop_event.is_set():
+                line = await asyncio.to_thread(proc.stdout.readline)
+                if line == "":
+                    return  # tail subprocess exited (file gone / container reaped)
+                yield line.rstrip("\n")
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
+
+
+def _select_source(
+    recipe: dict,
+    channel: str,
+    container_id: str,
+    chat_id_hint: str | None,
+    stop_event: asyncio.Event,
+) -> EventSource:
+    """Dispatch per D-23. Default (no event_source_fallback) = DockerLogsStreamSource.
+
+    Verbatim shape from RESEARCH §D-23 Dispatch.
+    """
+    channel_spec = (recipe.get("channels") or {}).get(channel, {}) or {}
+    fallback = channel_spec.get("event_source_fallback")
+    if fallback is None:
+        return DockerLogsStreamSource(container_id, stop_event)
+    kind = fallback.get("kind")
+    spec = fallback.get("spec", {}) or {}
+    if kind == "docker_exec_poll":
+        return DockerExecPollSource(container_id, spec, chat_id_hint, stop_event)
+    if kind == "file_tail_in_container":
+        return FileTailInContainerSource(container_id, spec, chat_id_hint, stop_event)
+    raise ValueError(f"unknown event_source_fallback.kind: {kind!r}")
+
+
 __all__ = [
     "EventSource",
     "DockerLogsStreamSource",
+    "DockerExecPollSource",
+    "FileTailInContainerSource",
+    "_select_source",
     "_get_poll_lock",
     "_get_poll_signal",
     "BATCH_SIZE",
