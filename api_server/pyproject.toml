@@ -53,7 +53,17 @@ dev = [
   # Phase 22c-01: httpx-native mock library. Supersedes CONTEXT
   # D-22c-TEST-01's `responses` (which only intercepts `requests`).
   # Per AMD-05 + RESEARCH §Test-tier Additions.
-  "respx>=0.21,<0.22",
+  #
+  # NOTE: RESEARCH originally pinned `>=0.21,<0.22`, but respx 0.21 is
+  # NOT compatible with httpx 0.28 (which authlib 1.6.11 transitively
+  # requires). SPIKE-A empirically verified: respx 0.21.1 fails to match
+  # routes against httpx 0.28.1 requests ("AllMockedAssertionError:
+  # RESPX: <Request(b'POST', 'https://oauth2.googleapis.com/token')> not
+  # mocked!"); respx 0.23.1 intercepts the same request correctly.
+  # Bumped to `>=0.22,<0.24` per deviation Rule 3 (blocking issue: wrong
+  # version pin prevents the Wave 0 gate from passing). See Task 2
+  # spike-a evidence markdown for the full trace.
+  "respx>=0.22,<0.24",
 ]
 
 [tool.setuptools.packages.find]
