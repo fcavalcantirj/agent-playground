@@ -1,10 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import {
   Plus,
@@ -25,14 +33,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { apiGet } from "@/lib/api"
+import { apiGet, apiPost } from "@/lib/api"
 import {
   parseApiError,
   type AgentListResponse,
   type AgentStatusResponse,
+  type AgentStopResponse,
   type AgentSummary,
   type UiError,
 } from "@/lib/api-types"
+
+// Module-scope sleep helper — kept out of the component so it isn't recreated
+// on every render and Turbopack HMR can hot-swap component bodies cleanly.
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 // Local copy of timeAgo (mirrors frontend/components/my-agents-panel.tsx lines 37–48
 // — kept inline to keep the diff scoped to this file per plan instructions).
@@ -57,6 +70,27 @@ export default function DashboardPage() {
   const [statuses, setStatuses] = useState<Record<string, StatusEntry>>({})
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "stopped">("all")
+
+  // ---- Task 2 — Stop wiring state ----
+  const [stoppingId, setStoppingId] = useState<string | null>(null)
+  const [bearerPromptFor, setBearerPromptFor] = useState<string | null>(null)
+  const [bearerInput, setBearerInput] = useState("")
+  const [stopError, setStopError] = useState<{ id: string; message: string } | null>(null)
+
+  // Lifetime refs for the polling loop. The mountedRef gates every state setter
+  // inside async paths (status fetch, stop confirm, polling) so unmount during
+  // a long-running poll cannot trigger React "set state on unmounted" warnings.
+  // The pollAbortRef is the AbortController for the in-flight /status request
+  // inside pollUntilStopped — calling .abort() on unmount cancels the fetch.
+  const mountedRef = useRef(true)
+  const pollAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      pollAbortRef.current?.abort()
+    }
+  }, [])
 
   const loadAgents = useCallback(async () => {
     try {
@@ -92,6 +126,81 @@ export default function DashboardPage() {
   useEffect(() => {
     loadAgents()
   }, [loadAgents])
+
+  // ---- Task 2 — Stop click → Bearer prompt → POST /stop → poll /status ----
+
+  function onStopClick(agent: AgentSummary) {
+    if (stoppingId !== null) return // another stop in flight; UI also disables
+    setStopError(null)
+    setBearerInput("")
+    setBearerPromptFor(agent.id)
+  }
+
+  function onCancelBearer() {
+    setBearerPromptFor(null)
+    setBearerInput("")
+  }
+
+  // Poll /status every 2s until runtime_running=false or 60s ceiling.
+  // Transient fetch errors don't break the loop — only an abort cancels it.
+  const pollUntilStopped = useCallback(async (agentId: string) => {
+    pollAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    pollAbortRef.current = ctrl
+
+    for (let i = 0; i < 30; i++) {
+      await sleep(2000)
+      if (ctrl.signal.aborted || !mountedRef.current) return
+      try {
+        const s = await apiGet<AgentStatusResponse>(
+          `/api/v1/agents/${agentId}/status`,
+          { signal: ctrl.signal },
+        )
+        if (!mountedRef.current) return
+        setStatuses(prev => ({ ...prev, [agentId]: s }))
+        if (!s.runtime_running) return
+      } catch {
+        // Transient errors (mid-stop daemon flap, network blip) are expected;
+        // keep polling. The only exit paths are runtime_running=false, abort,
+        // or the 30-iteration ceiling.
+      }
+    }
+  }, [])
+
+  async function onConfirmStop(agentId: string) {
+    setStoppingId(agentId)
+    setBearerPromptFor(null)
+    setStopError(null)
+
+    // BYOK discipline (mirrors playground-form lines 374–376):
+    // clear the Bearer from React state BEFORE the await so an unmount,
+    // re-render, or devtools snapshot cannot capture it.
+    const key = bearerInput.trim()
+    setBearerInput("")
+
+    try {
+      await apiPost<AgentStopResponse>(
+        `/api/v1/agents/${agentId}/stop`,
+        undefined,
+        { Authorization: `Bearer ${key}` },
+      )
+    } catch (e) {
+      if (mountedRef.current) {
+        setStopError({ id: agentId, message: parseApiError(e).message })
+        setStoppingId(null)
+      }
+      return
+    }
+
+    // Stop request returned; poll /status until container is gone.
+    await pollUntilStopped(agentId)
+
+    if (!mountedRef.current) return
+    // Refresh the full list so total_runs / last_run_at / etc are fresh,
+    // then release the spinner.
+    await loadAgents()
+    if (mountedRef.current) setStoppingId(null)
+  }
 
   // Helpers that read the per-row status row safely.
   function statusOf(id: string): StatusEntry | undefined {
@@ -333,12 +442,24 @@ export default function DashboardPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {}}
-                            disabled={sEntry === "loading"}
+                            onClick={() => onStopClick(agent)}
+                            disabled={
+                              sEntry === "loading" ||
+                              (stoppingId !== null && stoppingId !== agent.id)
+                            }
                             className="gap-1.5 border-green-500/30 text-green-400 hover:bg-green-500/10"
                           >
-                            <Square className="h-3 w-3" />
-                            Stop
+                            {stoppingId === agent.id ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Stopping…
+                              </>
+                            ) : (
+                              <>
+                                <Square className="h-3 w-3" />
+                                Stop
+                              </>
+                            )}
                           </Button>
                         ) : (
                           // /start requires Bearer + channel_inputs (see AgentStartRequest);
@@ -384,6 +505,19 @@ export default function DashboardPage() {
                         </DropdownMenu>
                       </div>
                     </div>
+
+                    {stopError?.id === agent.id ? (
+                      <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-300">
+                        <span>Stop failed: {stopError.message}</span>
+                        <button
+                          type="button"
+                          onClick={() => setStopError(null)}
+                          className="underline underline-offset-2 hover:text-rose-200"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 )
               })
@@ -391,6 +525,59 @@ export default function DashboardPage() {
           </div>
         </ScrollArea>
       )}
+
+      {/* Bearer-prompt confirm dialog for /stop */}
+      <Dialog
+        open={bearerPromptFor !== null}
+        onOpenChange={(open) => {
+          if (!open) onCancelBearer()
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Confirm stop
+              {bearerPromptFor
+                ? ` for ${
+                    agents?.find(a => a.id === bearerPromptFor)?.name ?? bearerPromptFor
+                  }`
+                : ""}
+            </DialogTitle>
+            <DialogDescription>
+              The /stop endpoint requires an Authorization: Bearer header but
+              does not read its value. Your input is cleared from React state
+              immediately after the request.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            autoComplete="off"
+            placeholder="Bearer key (any non-empty value works for /stop — your provider key)"
+            value={bearerInput}
+            onChange={(e) => setBearerInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                bearerPromptFor &&
+                bearerInput.trim().length > 0
+              ) {
+                onConfirmStop(bearerPromptFor)
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={onCancelBearer}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => bearerPromptFor && onConfirmStop(bearerPromptFor)}
+              disabled={bearerInput.trim().length === 0 || !bearerPromptFor}
+            >
+              Stop
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
