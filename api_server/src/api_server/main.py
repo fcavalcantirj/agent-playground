@@ -232,6 +232,20 @@ def create_app() -> FastAPI:
     app.include_router(
         agent_events_route.router, prefix="/v1", tags=["agents"]
     )
+    # Phase 22b-08: dev-only POST /v1/agents/:id/events/inject-test-event.
+    # Conditional include keeps the route INVISIBLE in prod (FastAPI 404
+    # for any path not registered). Mirrors the openapi.json/docs gating
+    # at line 197-199 (D-10). Defense-in-depth gate #1 for T-22b-08-01.
+    if app.state.settings.env != "prod":
+        app.include_router(
+            agent_events_route.inject_router,
+            prefix="/v1",
+            tags=["agents", "dev-only"],
+        )
+        _log.info(
+            "phase22b.inject_test_event.route_registered",
+            extra={"env": app.state.settings.env},
+        )
     return app
 
 
