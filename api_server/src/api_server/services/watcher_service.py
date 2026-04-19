@@ -216,7 +216,7 @@ class DockerExecPollSource:
                 continue
             current = doc.get("messages") or []
             # Emit only the tail-extension (Pitfall 3 — lagging is fine; the
-            # synthetic line carries role + content so the watcher matcher
+            # synthetic line carries role + payload-text so the watcher matcher
             # does role-based extraction rather than regex).
             for msg in current[len(prev_messages):]:
                 yield json.dumps(msg)
@@ -228,10 +228,10 @@ class FileTailInContainerSource:
     """Source kind: ``file_tail_in_container`` (openclaw).
 
     Evidence: spike-01e-openclaw.md. Openclaw's docker logs are barren;
-    the only authoritative record of per-message activity is the session
+    the only authoritative record of per-turn activity is the session
     JSONL at ``/home/node/.openclaw/agents/main/sessions/<session_id>.jsonl``.
-    One JSON document per line; assistant replies carry the body in
-    ``message.content[].text`` (type=='text' entry).
+    One JSON document per line; assistant replies carry the text payload
+    inside the JSONL entry's nested-text field (type=='text' entry).
 
     Flow:
       1. ``docker exec <cid> cat <sessions_manifest>`` → parse JSON.
@@ -387,12 +387,252 @@ def _select_source(
     raise ValueError(f"unknown event_source_fallback.kind: {kind!r}")
 
 
+# ------------------ matcher + payload build ------------------
+
+
+def _compile_regexes(recipe: dict, channel: str) -> dict[str, "re.Pattern"]:
+    """Compile every non-null entry in ``channels.<channel>.event_log_regex``.
+
+    Unknown kinds (keys NOT in ``VALID_KINDS``) are discarded at compile
+    time with a WARN log; recipes SHOULD only declare the 4 canonical
+    kinds. The ``ready_log_regex`` (D-14) contributes ``agent_ready`` if
+    not already covered by ``event_log_regex``.
+
+    ``VALID_KINDS`` is imported lazily from Plan 22b-02's ``models.events``
+    so this module remains importable in worktrees where Plan 22b-02 has
+    not yet merged (Wave 1 parallel execution).
+    """
+    from ..models.events import VALID_KINDS  # deferred import — Plan 22b-02
+
+    channel_spec = (recipe.get("channels") or {}).get(channel, {}) or {}
+    regex_map = channel_spec.get("event_log_regex") or {}
+    compiled: dict[str, re.Pattern] = {}
+    for kind, pattern in regex_map.items():
+        if not pattern:
+            continue
+        if kind not in VALID_KINDS:
+            _log.warning(
+                "recipe declared non-canonical event_log_regex kind %r — discarding",
+                kind,
+            )
+            continue
+        try:
+            compiled[kind] = re.compile(pattern)
+        except re.error as exc:
+            _log.warning("recipe event_log_regex.%s failed to compile: %s", kind, exc)
+    # ready_log_regex (D-14) contributes agent_ready if not already covered.
+    ready_pattern = channel_spec.get("ready_log_regex") or (
+        recipe.get("persistent") or {}
+    ).get("spec", {}).get("ready_log_regex")
+    if ready_pattern and "agent_ready" not in compiled and "agent_ready" in VALID_KINDS:
+        try:
+            compiled["agent_ready"] = re.compile(ready_pattern)
+        except re.error as exc:
+            _log.warning("ready_log_regex failed to compile: %s", exc)
+    return compiled
+
+
+def _build_payload(kind: str, match: "re.Match", chat_id_hint: str | None) -> dict:
+    """Project a regex match into a typed-per-kind payload dict (D-08).
+
+    D-06 privacy: see PLAN.md threat T-22b-03-02 — the recipe-author capture
+    group named ``reply_text`` is read ONLY to compute ``length_chars`` and
+    is then discarded. No raw outbound text crosses into the payload dict;
+    Pydantic ``ConfigDict(extra='forbid')`` (Plan 22b-02) is the second-line
+    defense at validate time.
+    """
+    from datetime import datetime, timezone
+
+    groups = match.groupdict()
+    now = datetime.now(timezone.utc).isoformat()
+    if kind == "reply_sent":
+        outbound = groups.get("reply_text") or ""   # read-only — see D-06 above
+        chat_id = (groups.get("chat_id") or chat_id_hint or "").strip() or "unknown"
+        return {
+            "chat_id": chat_id,
+            "length_chars": len(outbound),
+            "captured_at": now,
+        }
+    if kind == "reply_failed":
+        return {
+            "chat_id": groups.get("chat_id") or chat_id_hint,
+            "reason": (groups.get("reason") or "unknown")[:256],
+            "captured_at": now,
+        }
+    if kind == "agent_ready":
+        ready = groups.get("ready_line") or (match.group(0)[:512])
+        return {"ready_log_line": ready, "captured_at": now}
+    if kind == "agent_error":
+        severity = (groups.get("severity") or "ERROR").upper()
+        if severity not in ("ERROR", "FATAL"):
+            severity = "ERROR"
+        detail = (groups.get("detail") or groups.get("message") or match.group(0))[:512]
+        return {"severity": severity, "detail": detail, "captured_at": now}
+    raise ValueError(f"unknown kind: {kind!r}")
+
+
+def _extract_correlation(
+    kind: str, raw_line: str, match: "re.Match"
+) -> str | None:
+    """Named capture group ``cid`` OR ``correlation_id`` OR None.
+
+    D-07 fallback (timestamp-window match) is the responsibility of the
+    consumer test harness, not this layer.
+    """
+    groups = match.groupdict()
+    return groups.get("cid") or groups.get("correlation_id")
+
+
+# ------------------ run_watcher ------------------
+
+
+async def run_watcher(
+    app_state,
+    *,
+    container_row_id: UUID,
+    container_id: str,
+    agent_id: UUID,
+    recipe: dict,
+    channel: str,
+    chat_id_hint: str | None,
+) -> None:
+    """Spawn point called from /start (Plan 22b-04) and lifespan re-attach.
+
+    Registers ``app_state.log_watchers[container_row_id] = (current_task,
+    stop_event)``. Runs producer (source → matcher → queue) and consumer
+    (batcher → event_store) until ``stop_event.is_set() and queue.empty()``.
+
+    On exit (natural source end OR ``stop_event`` + drain), removes the
+    registry entry in the ``finally`` block.
+    """
+    # Deferred imports (avoid cycles at module load; Plan 22b-02 owns these).
+    from ..models.events import KIND_TO_PAYLOAD
+    from ..services.event_store import insert_agent_events_batch
+    from pydantic import ValidationError
+
+    stop_event = asyncio.Event()
+    app_state.log_watchers[container_row_id] = (asyncio.current_task(), stop_event)
+    try:
+        source = _select_source(recipe, channel, container_id, chat_id_hint, stop_event)
+        regexes = _compile_regexes(recipe, channel)
+        if not regexes:
+            _log.warning(
+                "no event_log_regex declared for recipe/channel — watcher idles",
+                extra={"container_id": container_id[:12], "channel": channel},
+            )
+            return
+        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+
+        async def consumer():
+            pending: list[tuple[str, dict, str | None]] = []
+            last_flush = time.monotonic()
+            while True:
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=BATCH_WINDOW_MS / 1000
+                    )
+                except asyncio.TimeoutError:
+                    item = None
+                if item is not None:
+                    pending.append(item)
+                now = time.monotonic()
+                should_flush = pending and (
+                    len(pending) >= BATCH_SIZE
+                    or (now - last_flush) * 1000 >= BATCH_WINDOW_MS
+                )
+                if should_flush:
+                    async with app_state.db.acquire() as conn:
+                        try:
+                            await insert_agent_events_batch(conn, agent_id, pending)
+                        except Exception:
+                            _log.exception(
+                                "event_store batch insert failed; dropping %d rows",
+                                len(pending),
+                                extra={"agent_id": str(agent_id)},
+                            )
+                    _get_poll_signal(app_state, agent_id).set()
+                    pending = []
+                    last_flush = now
+                if stop_event.is_set() and queue.empty():
+                    # Drain any remaining pending before exit
+                    if pending:
+                        async with app_state.db.acquire() as conn:
+                            try:
+                                await insert_agent_events_batch(
+                                    conn, agent_id, pending
+                                )
+                            except Exception:
+                                _log.exception("final drain batch failed")
+                        _get_poll_signal(app_state, agent_id).set()
+                    return
+
+        consumer_task = asyncio.create_task(consumer())
+
+        drops = 0
+        try:
+            async for raw_line in source.lines():
+                for kind, pattern in regexes.items():
+                    m = pattern.search(raw_line)
+                    if not m:
+                        continue
+                    try:
+                        payload = _build_payload(kind, m, chat_id_hint)
+                    except ValueError:
+                        continue
+                    # Defense-in-depth validate via Pydantic (D-08) — a matcher
+                    # bug cannot sneak an invalid payload into the queue.
+                    cls = KIND_TO_PAYLOAD.get(kind)
+                    if cls is None:
+                        continue
+                    try:
+                        cls.model_validate(payload)
+                    except ValidationError:
+                        _log.warning(
+                            "payload failed pydantic validation — dropping",
+                            extra={"kind": kind},
+                        )
+                        continue
+                    corr = _extract_correlation(kind, raw_line, m)
+                    try:
+                        queue.put_nowait((kind, payload, corr))
+                    except asyncio.QueueFull:
+                        try:
+                            queue.get_nowait()  # drop oldest
+                        except asyncio.QueueEmpty:
+                            pass
+                        try:
+                            queue.put_nowait((kind, payload, corr))
+                        except asyncio.QueueFull:
+                            pass
+                        drops += 1
+                        if drops == 1 or drops % 100 == 0:
+                            _log.warning(
+                                "watcher queue drop",
+                                extra={
+                                    "agent_id": str(agent_id),
+                                    "drops": drops,
+                                },
+                            )
+        finally:
+            stop_event.set()
+            try:
+                await asyncio.wait_for(consumer_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                consumer_task.cancel()
+    finally:
+        app_state.log_watchers.pop(container_row_id, None)
+
+
 __all__ = [
     "EventSource",
     "DockerLogsStreamSource",
     "DockerExecPollSource",
     "FileTailInContainerSource",
+    "run_watcher",
     "_select_source",
+    "_compile_regexes",
+    "_build_payload",
+    "_extract_correlation",
     "_get_poll_lock",
     "_get_poll_signal",
     "BATCH_SIZE",
