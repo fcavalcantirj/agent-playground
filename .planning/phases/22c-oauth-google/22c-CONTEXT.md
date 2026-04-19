@@ -1,8 +1,9 @@
 # Phase 22c: oauth-google — Context
 
 **Gathered:** 2026-04-19
+**Amended:** 2026-04-19 (AMD-05/06/07 + D-22c-TEST-03 + D-22c-MIG-05 refinement, post-RESEARCH.md)
 **Status:** Ready for planning
-**Supersedes:** 22c-SPEC.md scope in four places — see `<spec_amendments>` below.
+**Supersedes:** 22c-SPEC.md scope in seven places — see `<spec_amendments>` below.
 **Blocks:** Multi-tenant dashboard (every /dashboard/* page behind real auth), BYOK per-user keys (/dashboard/api-keys), the ACTION-LIST frontend P1 rebuilds.
 **Blocked by:** Nothing — SPEC sealed, 8 reqs + 3 locked decisions, creds provisioned.
 
@@ -40,12 +41,20 @@ Replace the `setTimeout`-theater login + the `ANONYMOUS_USER_ID` placeholder wit
 <spec_amendments>
 ## SPEC.md Amendments from this discussion
 
-Four amendments decided on 2026-04-19. CONTEXT.md takes precedence over SPEC.md for these four items; planner must follow CONTEXT.md.
+Seven amendments. CONTEXT.md takes precedence over SPEC.md for these items; planner must follow CONTEXT.md.
+
+Four decided on 2026-04-19 (pre-research):
 
 - **AMD-01 — Scope expanded: GitHub OAuth moves from 22c.1 → 22c.** User decision: ship both providers in a single phase. Backend substrate is identical (authlib + `UNIQUE(provider, sub)` covers both), the incremental cost is small, and the login UI needs both buttons wired to avoid dead-theater. SPEC §Boundaries "GitHub OAuth — defer to Phase 22c.1" is overridden.
 - **AMD-02 — Refresh-token storage DROPPED.** SPEC R2 says "exchanges code for tokens (access + id + refresh)" + "encrypts refresh_token via age-KEK keyed by user_id". Amended: do NOT request `access_type=offline`; do NOT receive a refresh_token; do NOT reach for `crypto/age_cipher.py`. Justification: 22c only uses the providers for identity (email, sub, name, avatar). We never call Google/GitHub APIs on the user's behalf in this phase. SPEC's refresh-token acceptance criterion ("Refresh token round-trip: encrypt via age-KEK, store in PG, re-fetch + decrypt…") is DROPPED. When a future feature needs Google Calendar / GitHub repos on behalf of the user, add offline scope + refresh-token storage then.
 - **AMD-03 — ANONYMOUS users row DELETED in migration 006.** SPEC R8 said "may stay (audit trail) or also delete — operator's call". Decision: DELETE. The `ANONYMOUS_USER_ID` constant is removed from `constants.py`; any reference becomes a build error (the forcing function for complete cleanup).
 - **AMD-04 — Migration 006 purge scope WIDENED.** SPEC R8 said `DELETE FROM agent_instances WHERE user_id=ANONYMOUS_USER_ID`. Amended: migration 006 TRUNCATEs ALL data-bearing tables — `agent_instances`, `agent_containers`, `runs`, `agent_events`, `idempotency_keys`, `rate_limit_counters`, and the `users` row for ANONYMOUS. Every row in the live DB is mock dev data from Phase 19/22 execution; no real users exist yet. Clean slate. Schema and `alembic_version` are preserved.
+
+Three added 2026-04-19 (post-research, from RESEARCH.md findings):
+
+- **AMD-05 — Test stub library: `respx` (NOT `responses`).** D-22c-TEST-01 originally prescribed the `responses` library. Research surfaced that authlib's Starlette/FastAPI integration uses **httpx** (not `requests`), so `responses` cannot intercept authlib's outbound calls. Correct tool is **`respx`** (an httpx-native mock library, actively maintained). All integration-test stubbing for Google's `oauth2.googleapis.com/token` + `openidconnect.googleapis.com/v1/userinfo` AND GitHub's `/login/oauth/access_token` + `/user` + `/user/emails` uses `respx`. The "real authlib + network-layer stubs, NOT mocked authlib internals" rule from SPEC §Constraints still applies. Add `respx` to dev deps.
+- **AMD-06 — Next.js gate file: `frontend/proxy.ts` (NOT `middleware.ts`).** D-22c-FE-01 originally said "new file `frontend/middleware.ts` runs on every request matching `/dashboard/:path*`". Research surfaced that Next.js 16.2 renamed `middleware.ts` → `proxy.ts` (2025-10-21). Correct file is `frontend/proxy.ts` with the same matcher config and cookie-presence check. Any existing (incorrectly commented) `frontend/middleware.ts` is retired in this phase.
+- **AMD-07 — New env var: `AP_OAUTH_STATE_SECRET`.** authlib's OAuth2 flow REQUIRES Starlette's built-in `SessionMiddleware` for CSRF state storage (state lives in `request.session`, not our custom cookie). Our stack gains **two** session middlewares: Starlette's built-in (signed cookie `ap_oauth_state`, 10-minute TTL, holds the state token between authorize-redirect and callback) + our custom `SessionMiddleware` (opaque cookie `ap_session`, 30-day TTL, resolves `request.state.user_id` from PG). `AP_OAUTH_STATE_SECRET` is the Starlette signing key. Pattern mirrors `AP_CHANNEL_MASTER_KEY` / `AP_SYSADMIN_TOKEN`: required in prod (fail-loud at boot per `crypto/age_cipher.py::_master_key`), optional in dev (auto-generated fallback). Add to `config.py` Pydantic settings, to `deploy/.env.prod` (real value), and to `deploy/.env.prod.example` (placeholder + docstring).
 
 </spec_amendments>
 
@@ -58,26 +67,40 @@ Four amendments decided on 2026-04-19. CONTEXT.md takes precedence over SPEC.md 
 - **D-22c-MIG-02 — Alembic 005 = sessions table + users column additions in one atomic migration.** Columns added: `users.sub TEXT`, `users.avatar_url TEXT`, `users.last_login_at TIMESTAMPTZ`. Constraint: `UNIQUE (provider, sub)`. Sessions table per SPEC constraint. One file; atomic up+down.
 - **D-22c-MIG-03 — Alembic 006 = full-DB data purge.** TRUNCATE TABLE (or DELETE FROM with FK-aware ordering) on: `agent_events`, `runs`, `agent_containers`, `agent_instances`, `idempotency_keys`, `rate_limit_counters`, `sessions`, `users`. Schema + `alembic_version` preserved. Reversible downgrade is impossible (data is gone) — documented as an irreversible migration in the file docstring.
 - **D-22c-MIG-04 — Sessions table indexing: PK only + btree on `user_id`.** PK covers the hot-path `SELECT WHERE id=$1` auth lookup. `user_id` btree enables future admin "list my sessions" without a v2 migration. No partial WHERE index — Postgres handles the expiry filter cheaply on PK lookup. Claude's Discretion to add a partial index if profiling proves otherwise.
-- **D-22c-MIG-05 — `sessions.last_seen_at` throttled updates (60s granularity).** SessionMiddleware caches `last_seen_at` per request's resolved session; UPDATE fires only when `(now - last_seen_at) > 60s`. Reduces write rate ~100x at scale. Good enough for "recently active" queries; sub-second forensics deferred.
+- **D-22c-MIG-05 — `sessions.last_seen_at` throttled updates (60s granularity, per-worker in-memory dict).** SessionMiddleware uses a per-worker in-memory dict (NOT Redis — Redis isn't in the Python stack; `services/rate_limit.py` uses asyncpg). Shape: `_last_seen_cache: dict[UUID, datetime]` on the middleware instance. On each request: if `(now - cache.get(session_id)) > 60s` OR missing, fire the PG UPDATE + refresh the cache entry. Under Nx workers there is up to Nx write-amplification per 60s window — acceptable at current scale (single-worker dev, low-concurrency prod). Swappable for Redis if + when Redis lands in the stack. Reduces write rate ~60x per worker. Good enough for "recently active" queries; sub-second forensics deferred. Cache eviction: soft-bound at 10k entries via LRU (session expiry handles long-term growth).
 - **D-22c-MIG-06 — `ANONYMOUS_USER_ID` constant deleted from `constants.py` after migration 006.** `AP_SYSADMIN_TOKEN_ENV` stays (22b dependency). Any lingering reference = build failure = forced cleanup.
 
 ### Auth Middleware & Routes
 
 - **D-22c-AUTH-01 — SessionMiddleware placement.** Middleware order (request-in): `CorrelationId → AccessLog → Session → RateLimit → Idempotency → routers`. Session resolves `user_id` BEFORE rate_limit + idempotency so both key on the real user (not anonymous IP / global bucket).
 - **D-22c-AUTH-02 — `request.state.user_id: UUID | None`.** Starlette-idiomatic. `None` = anonymous (no cookie OR invalid session). Mirrors the `request.state.correlation_id` pattern in `middleware/correlation_id.py`. Zero new abstractions.
-- **D-22c-AUTH-03 — `require_user` FastAPI dependency for protected routes.**
+- **D-22c-AUTH-03 — `require_user` returns `JSONResponse | UUID` (inline, matching codebase `_err()` pattern).** NOT an `HTTPException`-raising dependency (decided post-research on 2026-04-19). Route handlers call `require_user(request)` at the top and early-return the JSONResponse if the result isn't a UUID. This preserves the Stripe-shape error envelope (`make_error_envelope("unauthorized", ...)`) consistently with every existing handler in `routes/agent_events.py`, `routes/runs.py`, `routes/agent_lifecycle.py`. No global exception_handler wrapper needed — zero new plumbing.
   ```python
-  async def require_user(request: Request) -> UUID:
-      if request.state.user_id is None:
-          raise HTTPException(401, detail=make_error_envelope("unauthorized", ...))
-      return request.state.user_id
+  # api_server/src/api_server/auth/deps.py
+  def require_user(request: Request) -> JSONResponse | UUID:
+      user_id = getattr(request.state, "user_id", None)
+      if user_id is None:
+          return JSONResponse(
+              status_code=401,
+              content=make_error_envelope("unauthorized", "Authentication required"),
+          )
+      return user_id
+
+  # usage in a route
+  @router.get("/v1/agents")
+  async def list_agents(request: Request):
+      result = require_user(request)
+      if isinstance(result, JSONResponse):
+          return result
+      user_id: UUID = result
+      ...
   ```
   Per-route explicit opt-in. Applied to: `/v1/runs`, `/v1/agents`, `/v1/agents/:id/*`, `/v1/users/me`, `/v1/auth/logout`. Public: `/healthz`, `/readyz`, `/v1/recipes`, `/v1/schemas`, `/v1/lint`, `/v1/auth/{google,github}`, `/v1/auth/{google,github}/callback`.
 - **D-22c-AUTH-04 — Complete ANONYMOUS_USER_ID cleanup across 5 files.** Routes `runs.py`, `agents.py`, `agent_lifecycle.py`, `agent_events.py` + `middleware/idempotency.py` all migrate to `request.state.user_id` (via `require_user` for protected routes; via direct attribute read for idempotency middleware). The `ANONYMOUS_USER_ID` import is removed from every file. Constant deletion from `constants.py` is the forcing function.
 
 ### Frontend Auth Gating & Error UX
 
-- **D-22c-FE-01 — Next.js `middleware.ts` gates `/dashboard/:path*`.** New file `frontend/middleware.ts` runs on every request matching `/dashboard/:path*`. Reads `ap_session` cookie PRESENCE (not validity — validation stays server-side). Absent → 307 redirect to `/login` BEFORE React renders. Zero auth-flash. Expired/revoked cookies get a 401 from the subsequent `/v1/users/me` fetch and the layout redirects.
+- **D-22c-FE-01 — Next.js `proxy.ts` gates `/dashboard/:path*`.** New file `frontend/proxy.ts` (NOT `middleware.ts` — superseded by AMD-06; Next 16.2 renamed the file 2025-10-21) runs on every request matching `/dashboard/:path*`. Reads `ap_session` cookie PRESENCE (not validity — validation stays server-side). Absent → 307 redirect to `/login` BEFORE React renders. Zero auth-flash. Expired/revoked cookies get a 401 from the subsequent `/v1/users/me` fetch and the layout redirects. Any pre-existing `frontend/middleware.ts` (including stale comments asserting the rename didn't happen) is retired in this phase.
 - **D-22c-FE-02 — Eager dashboard render; navbar skeleton until userinfo resolves.** Dashboard layout renders immediately with full content. Navbar user slot shows a name/avatar skeleton until `apiGet<SessionUser>('/api/v1/users/me')` returns. 401 on the fetch → client-side `router.push('/login')`. No Suspense boundary; no full-page spinner. Matches Phase 20 alicerce's eager-render discipline.
 - **D-22c-FE-03 — OAuth error paths → `/login?error=<code>` + toast.** Backend callback handler catches `?error=access_denied` (Google denies consent), state-mismatch (400), token-exchange 5xx, and redirects to `/login?error=access_denied | state_mismatch | oauth_failed`. Frontend `/login` reads `?error=` param on mount and displays a toast. Error code enum is Claude's Discretion (suggested: `access_denied`, `state_mismatch`, `oauth_failed`).
 - **D-22c-FE-04 — Callback always redirects to `/dashboard`.** No `?next=` deep-link preservation in v1. Matches SPEC R2. User re-navigates from dashboard home.
@@ -99,8 +122,12 @@ Four amendments decided on 2026-04-19. CONTEXT.md takes precedence over SPEC.md 
 
 ### CI Test Strategy
 
-- **D-22c-TEST-01 — Integration tests via real authlib + `responses` library stubs for provider endpoints.** Test stack: real FastAPI + real asyncpg + testcontainers PG + real authlib. The `responses` library (Python) intercepts network calls to Google's `oauth2.googleapis.com/token` + `openidconnect.googleapis.com/v1/userinfo` AND GitHub's `github.com/login/oauth/access_token` + `api.github.com/user` + `api.github.com/user/emails` — returning canned payloads. Real authlib flows end-to-end; only the provider HTTPs are replayed. Matches SPEC constraint: "real authlib + a stubbed token endpoint at the network layer, NOT mocked authlib internals."
+- **D-22c-TEST-01 — Integration tests via real authlib + `respx` library stubs for provider endpoints.** Test stack: real FastAPI + real asyncpg + testcontainers PG + real authlib. **`respx`** (NOT `responses` — superseded by AMD-05) intercepts httpx calls to Google's `oauth2.googleapis.com/token` + `openidconnect.googleapis.com/v1/userinfo` AND GitHub's `github.com/login/oauth/access_token` + `api.github.com/user` + `api.github.com/user/emails` — returning canned payloads. Real authlib flows end-to-end; only the provider HTTPs are replayed. Matches SPEC constraint: "real authlib + a stubbed token endpoint at the network layer, NOT mocked authlib internals."
 - **D-22c-TEST-02 — One manual smoke per release.** Developer clicks real Google button + real GitHub button on `http://localhost:3000/login` and verifies `/dashboard` shows the real email. Single checkbox in the SPEC acceptance criteria; not a per-commit gate.
+- **D-22c-TEST-03 — Wave 0 spikes MANDATORY before PLAN is sealed (golden rule 5).** Two spikes, both must pass before downstream waves execute. Evidence captured as a committed spike artifact under `.planning/phases/22c-oauth-google/spike-evidence/`.
+  - **Spike A: respx × authlib 1.6.11 interop.** ~10-line pytest that registers an authlib `StarletteOAuth2App`, calls its token-exchange path, and uses `respx` to intercept Google's `oauth2.googleapis.com/token`. Pass = the stub fires and authlib parses the canned payload successfully (no network call escapes).
+  - **Spike B: TRUNCATE CASCADE on 8-table FK graph.** Against testcontainers PG with schema from alembic 001..005: seed each data table with one row, run `TRUNCATE TABLE agent_events, runs, agent_containers, agent_instances, idempotency_keys, rate_limit_counters, sessions, users CASCADE`, then assert all 8 tables have COUNT=0 AND `alembic_version` table still holds the expected revision. Pass = clean truncate, FK order not a problem, `alembic_version` preserved.
+  - If either spike fails, the phase returns to discuss — do NOT execute downstream plans against a red spike.
 
 ### Claude's Discretion
 

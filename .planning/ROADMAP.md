@@ -102,7 +102,7 @@ Plans:
 **Reshape note**: REC-01/02/06/07 moved from Phase 4 to Phase 02.5 as substrate. REC-03/04/05/08 (full)/09/10/11/12 remain in Phase 4. See `.planning/REQUIREMENTS.md` updated traceability.
 
 ### Phase 3: Auth, Secrets & BYOK Key Handling
-**Goal**: A user can log in with Google or GitHub, manage BYOK keys safely, and the whole secret-handling pipeline (storage, injection, log scrubbing, audit) is hardened before the first BYOK-using session is ever spawned.
+**Goal**: A user can log in with Google or GitHub OAuth via goth, land on the dashboard, refresh the browser and stay signed in (HTTP-only signed cookie -> Postgres session row), click sign-out on any page and have the server-side session row invalidated; unauthenticated access to a protected route redirects to the provider picker.
 **Depends on**: Phase 1 (API + DB + Next.js) and Phase 2 (the sandbox that will later consume the injected secrets).
 **Requirements**: AUTH-01, AUTH-02, AUTH-03, AUTH-04, AUTH-05, AUTH-06, SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10, SEC-11
 **Success Criteria** (what must be TRUE):
@@ -225,7 +225,7 @@ Plans:
 | Pitfall | Phase | Rationale |
 |---------|-------|-----------|
 | CRIT-1 (bootstrap sandbox escape) | Phase 7.5 + Phase 8 | gVisor + custom seccomp + egress allowlist land in 7.5 against a known-working substrate; Phase 8 is the first phase that actually introduces untrusted code, so 7.5 lands immediately before it |
-| CRIT-2 (BYOK env leak) | Phase 3 | Secrets pipeline (SEC-*) lands with BYOK settings UI; no BYOK surface exposed before safe injection proven. **File-based injection mechanism** (`/run/secrets/*_key` tmpfs) is plumbed in Phase 2 via dev env var; Phase 3 populates it from the encrypted vault -- same mechanism, different source. |
+| CRIT-2 (BYOK env leak) | Phase 3 | Secrets pipeline (SEC-*) lands with BYOK settings UI; no BYOK surface exposed before safe injection proven. **File-based injection mechanism** (`/run/secrets/*_key` tmpfs) is plumbed in Phase 2 via dev env var; Phase 3 replaces it with the encrypted vault -- same mechanism, different source. |
 | CRIT-3 (runaway loop) | Phase 6 | Circuit breakers (MET-08, MET-09) ship with the metering layer -- never "later" |
 | CRIT-4 (cross-tenant kernel escape) | Phase 1 (userns-remap active) + Phase 2 (cap-drop/read-only/no-new-privs defaults) + Phase 7.5 (custom seccomp + Falco) | Layered: the cheap defense-in-depth lands as Phase 2 runner.go defaults; the custom seccomp profile + anomaly detection land in 7.5 |
 | CRIT-5 (Stripe webhook race) | Phase 6 | Idempotent ledger + BIL-02/03/04 land with the first Stripe call |
@@ -345,6 +345,26 @@ Plans:
 Plans:
 - [ ] TBD (run /gsd-plan-phase 21 to break down)
 
+### Phase 22c: OAuth (Google + GitHub) — Multi-tenant auth substrate
+
+**Inserted 2026-04-19** as the unblocker for every `/dashboard/*` page + ~8 backend endpoints (per `.planning/audit/ACTION-LIST.md` line 108). SPEC locks 8 requirements + CONTEXT adds 7 amendments + 21+ locked implementation decisions.
+
+**Goal:** Replace the `setTimeout`-theater login + the `ANONYMOUS_USER_ID` placeholder with a real Google AND GitHub (AMD-01) OAuth flow that mints a server-side session and resolves a real `user_id` on every API request. Scope: backend auth routes + session middleware + `/v1/users/me` + `/v1/auth/logout` + `sessions` table + `users` column expansion, full data purge migration (alembic 006 TRUNCATEs all 8 tables per AMD-04), frontend login rewrite + dashboard layout rewrite + sign-out wire-up + dead-theater cleanup (/signup + /forgot-password redirects). Refresh-token storage DROPPED (AMD-02); identity-only flow.
+**Requirements**: Bound to `22c-SPEC.md` R1..R8 + `22c-CONTEXT.md` AMD-01..AMD-07.
+**Depends on:** Phase 19 (FastAPI substrate); does NOT depend on Phase 20 / 21 — parallel track.
+**Plans:** 9 plans across 5 waves
+
+Plans:
+- [ ] 22c-01-PLAN.md — Wave 0 spikes (respx × authlib interop + TRUNCATE CASCADE 8-table FK graph) + deps + test dir scaffolds [Wave 0 GATE]
+- [ ] 22c-02-PLAN.md — Alembic migration 005: sessions table + users.{sub,avatar_url,last_login_at} + UNIQUE(provider,sub) partial index [Wave 1]
+- [ ] 22c-03-PLAN.md — config.py Pydantic fields + auth/oauth.py authlib registry (google + github) + upsert_user + mint_session + deploy/.env.prod.example update [Wave 1]
+- [ ] 22c-04-PLAN.md — SessionMiddleware (ap_session cookie → request.state.user_id) + last_seen throttle + log_redact docstring + 3 integration tests [Wave 2]
+- [ ] 22c-05-PLAN.md — auth/deps.py require_user + routes/auth.py (5 endpoints) + routes/users.py + main.py middleware stack + 12 integration tests [Wave 3]
+- [ ] 22c-06-PLAN.md — Alembic migration 006 destructive purge + ANONYMOUS_USER_ID deletion + 4 route files migrated + idempotency/rate_limit user_id wiring [Wave 4]
+- [ ] 22c-07-PLAN.md — Frontend useUser hook + rewrite login/page.tsx + dashboard/layout.tsx + navbar.tsx real logout button [Wave 4]
+- [ ] 22c-08-PLAN.md — Frontend proxy.ts (Next 16 rename per AMD-06) + next.config.mjs redirects(/signup → /login, /forgot-password → /login) + delete stale middleware.ts [Wave 4]
+- [ ] 22c-09-PLAN.md — Cross-user isolation integration test + test/22c-manual-smoke.md + manual smoke gate (D-22c-TEST-02) + STATE.md close-out [Wave 5 (blocking checkpoint)]
+
 ---
 *Roadmap created: 2026-04-11*
 *Phase 1 planned: 2026-04-13*
@@ -352,3 +372,4 @@ Plans:
 *Phase 2 reshaped + Phase 7.5 inserted: 2026-04-14 (see `.planning/phases/02-container-sandbox-spine/02-CONTEXT.md` `<domain>` for rationale)*
 *Phase 2 plans split (W1 fix): Plan 04 split into 04 (foundations) + 05 (API surface); existing Plan 05 renumbered to 06 — 2026-04-14*
 *Phase 20 planned: 2026-04-17 — 5 plans in 3 waves; D-14 testing decision DEFERRED to Phase 20.1*
+*Phase 22c planned: 2026-04-19 — 9 plans in 5 waves (Wave 0 mandatory spike gate); inserted post-pivot, not in 1–8 numbered list*

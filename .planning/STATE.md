@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22b complete — SC-03 GREEN (Gate A 15/15 + Gate B 5/5)
-stopped_at: 2026-04-19 — Phase 22b complete; SC-03 unblocked
-last_updated: "2026-04-19T19:30:00.000Z"
+status: Phase 22c (oauth-google) PLANNED — 9 plans in 6 waves, Wave 0 gate + checker PASS
+stopped_at: 2026-04-19 — Phase 22c ready for execution
+last_updated: "2026-04-19T22:00:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-**Phase 22c (oauth-google) — SPEC'd, ready for /gsd-discuss-phase** at commit `d9863d2`.
+**Phase 22c (oauth-google) — PLANNED (9 plans, 6 waves), ready for /gsd-execute-phase** at current uncommitted state (see stack below).
 
 ### Stack of completed work this session (2026-04-19)
 
@@ -32,26 +32,40 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 |---|---|---|---|
 | Phase 22b (agent-event-stream) | COMPLETE | `eb06c5a` | SC-03 unblocked: Gate A 15/15 + Gate B 5/5 PASS in `e2e-report.json`; verifier 21/21 truths PASSED; 9 plans across 5 waves |
 | Quick task `260419-moq` (dashboard real-API) | COMPLETE | `2260dad`, `3520834`, `2e9e3be` | `frontend/app/dashboard/page.tsx` now fetches real `/v1/agents` (59 real rows); Stop button wired to POST /v1/agents/:id/stop with Bearer prompt + 2s status polling; mockAgents + Agent interface + toggleAgentStatus + deleteAgent removed |
-| Phase 22c (oauth-google) | SPEC'd | `d9863d2` | 8 falsifiable requirements + 12 acceptance criteria + 3 locked decisions (server-table sessions, purge ANONYMOUS via alembic 006, authlib); ambiguity 0.16 |
+| Phase 22c (oauth-google) SPEC | COMPLETE | `d9863d2` | 8 falsifiable requirements + 12 acceptance criteria + 3 locked decisions; ambiguity 0.16 |
+| Phase 22c (oauth-google) CONTEXT | COMPLETE | `62ff031` | 19 locked decisions + 4 AMDs (GitHub scope, refresh-token drop, ANONYMOUS purge) |
+| Phase 22c (oauth-google) RESEARCH + PATTERNS + VALIDATION + 9 PLANs | **PLANNED** | pending commit | 9 plans in 6 waves (Wave 0 gate: respx×authlib spike + TRUNCATE-CASCADE 8-table spike). 3 new AMDs added post-research (AMD-05 respx not responses; AMD-06 proxy.ts not middleware.ts; AMD-07 AP_OAUTH_STATE_SECRET env var). Plan-checker PASS iteration 3/3 (0 blockers). Covers R1..R8 + AMD-01..07 + 5 PATTERNS gap-closures. |
 
 ### 📍 RESUME ANCHOR — READ AFTER /clear
 
 **The next command is:**
 ```
-/gsd-discuss-phase 22c-oauth-google
+/gsd-execute-phase 22c-oauth-google
 ```
 
 **Read these files in this order on resume (after /clear):**
 
 1. `memory/MEMORY.md` (auto-loaded; index of all memories)
-2. `memory/project_phase_22c_handoff.md` — full Phase 22c handoff, locked decisions, OAuth credentials location
-3. `.planning/phases/22c-oauth-google/22c-SPEC.md` — sealed contract (8 requirements + 3 decisions + boundaries)
-4. `memory/project_phase_22b_handoff.md` — what just shipped (Phase 22b SC-03 GREEN)
-5. `memory/feedback_worktree_breaks_for_live_infra.md` — Option B pattern for live-infra plans (use when applicable in 22c)
-6. `memory/feedback_test_everything_before_planning.md` — golden rule #5 (spike-first); apply BEFORE sealing 22c plans
-7. `.planning/audit/ACTION-LIST.md` — line 108 says OAuth is the single biggest unblocker (gates 4 frontend pages + 8 backend endpoints)
-8. `api_server/src/api_server/services/crypto.py` — reusable age-KEK pattern for refresh-token encryption-at-rest
-9. `frontend/app/dashboard/layout.tsx` — currently hardcodes "Alex Chen"; 22c replaces with real `/v1/users/me`
+2. `memory/project_phase_22c_handoff.md` — full Phase 22c handoff + latest planning state
+3. `.planning/phases/22c-oauth-google/22c-SPEC.md` — 8 locked requirements + 3 decisions
+4. `.planning/phases/22c-oauth-google/22c-CONTEXT.md` — 7 AMDs (01–07) + 21+ D-22c-* decisions; **OVERRIDES SPEC in 7 places**
+5. `.planning/phases/22c-oauth-google/22c-RESEARCH.md` — authlib/respx/alembic/Next 16.2/GitHub-non-OIDC research + Validation Architecture
+6. `.planning/phases/22c-oauth-google/22c-PATTERNS.md` — 29 files classified, 26 analogs, 5 gap-closures enforced in plans
+7. `.planning/phases/22c-oauth-google/22c-VALIDATION.md` — 30+ test rows → R/AMD/D-22c-* coverage matrix
+8. `.planning/phases/22c-oauth-google/22c-01-PLAN.md` through `22c-09-PLAN.md` — the 9 plans (Wave 0 gate at 22c-01)
+9. `memory/feedback_test_everything_before_planning.md` — golden rule #5 (Wave 0 spikes are MANDATORY; no downstream wave against red spike)
+10. `memory/feedback_worktree_breaks_for_live_infra.md` — Option B pattern; 22c-01 Wave 0 spikes run against real testcontainer PG
+
+**Phase 22c plan map:**
+
+| Wave | Plans | Notes |
+|------|-------|-------|
+| 0 (gate) | 22c-01 | Spike A (respx×authlib) + Spike B (TRUNCATE CASCADE 8-table) — MUST PASS before Wave 1 |
+| 1 | 22c-02, 22c-03 | Parallel: migration 005 ∥ OAuth config + authlib clients |
+| 2 | 22c-04 | SessionMiddleware + log redaction + Starlette built-in SessionMiddleware for OAuth state |
+| 3 | 22c-05 | 5 auth routes + /users/me + require_user + 13 integration tests (autonomous: false; human-verify checkpoint between T3/T4) |
+| 4 | 22c-06, 22c-07, 22c-08 | Parallel: migration 006 + ANONYMOUS purge ∥ frontend login/dashboard ∥ proxy.ts + redirects |
+| 5 | 22c-09 | Cross-user isolation test + manual smoke + STATE close-out (autonomous: false) |
 
 ### Live infra state (preserved between /clear)
 
