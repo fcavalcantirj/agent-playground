@@ -184,8 +184,13 @@ for entry in "${MATRIX[@]}"; do
 
   # 2. Start channel — Gate B needs Telegram wired; Gate A only needs the
   #    container running. We always start with Telegram inputs if creds are
-  #    present so a single START supports both gates.
-  if [[ $GATE_B_ENABLED -eq 1 ]]; then
+  #    present so a single START supports both gates. Phase 22b-07 fix:
+  #    --skip-gate-b previously also disabled channel-input injection, which
+  #    broke /v1/agents/:id/start (recipes declare TELEGRAM_BOT_TOKEN +
+  #    TELEGRAM_ALLOWED_USER as required_user_input — start returns 400
+  #    CHANNEL_INPUTS_INVALID without them). Now: inject channel inputs
+  #    whenever the env vars are present, regardless of GATE_B_ENABLED.
+  if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_ALLOWED_USER:-}" ]]; then
     START_BODY=$(jq -cn \
       --arg tok "$TELEGRAM_BOT_TOKEN" \
       --arg uid "$TELEGRAM_ALLOWED_USER" \
