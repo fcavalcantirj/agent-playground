@@ -23,6 +23,9 @@ dependencies = [
   "python-ulid>=3.1.0,<4",
   "structlog>=25.5.0,<26",
   "asgi-correlation-id>=4.3.4,<5",
+  # Phase 22b-01 Task 1: docker-py SDK for log-watcher (Wave 1)
+  # and conftest fixtures (docker_client, running_alpine_container).
+  "docker>=7.0,<8",
   "ruamel.yaml>=0.17.21",
   "jsonschema>=4.23",
   # Phase 22-02: age-based encryption for channel credentials at rest.
