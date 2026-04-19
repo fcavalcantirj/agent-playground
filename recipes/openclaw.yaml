@@ -30,12 +30,18 @@ build:
     argv to `docker run`, which becomes the full command.
 
 runtime:
-  provider: openrouter
+  provider: anthropic                     # Phase 22b-07: switched from openrouter to anthropic
+                                          # per known_quirks.openrouter_provider_plugin_silent_fail
+                                          # (openrouter path is upstream-broken; anthropic-direct
+                                          # is the empirically-verified PASS path used by smoke
+                                          # verified_cells[0] + spike-01e + Spike A 2026-04-19).
   process_env:
-    api_key: OPENROUTER_API_KEY           # default / legacy callers
-    api_key_by_provider:                  # Phase 22b: per-D-21 env-var mapping
+    api_key: ANTHROPIC_API_KEY            # default for /v1/runs + tools/run_recipe.py CLI
+                                          # (was OPENROUTER_API_KEY pre-22b-07; that path
+                                          # silent-fails per upstream openrouter plugin bug).
+    api_key_by_provider:                  # Phase 22b: per-D-21 env-var mapping for /start
       openrouter: OPENROUTER_API_KEY      # plugin bug, known-flaky — see known_quirks
-      anthropic: ANTHROPIC_API_KEY        # verified working (spike 01e)
+      anthropic: ANTHROPIC_API_KEY        # verified working (spike 01e + Spike A)
     api_key_fallback: OPENAI_API_KEY
     base_url: null
     model: null
@@ -73,37 +79,74 @@ runtime:
 invoke:
   mode: cli-passthrough
   spec:
+    # Phase 22b-07: REWRITTEN to anthropic-direct path.
+    #
     # The Dockerfile sets no ENTRYPOINT (default CMD starts the gateway).
     # `openclaw` is symlinked into /usr/local/bin at build time. We use
     # bash -c to chain TWO commands inside a single `docker run`:
-    #   1. `openclaw config set agents.defaults.model openrouter/<model>` —
-    #      required because --model on `infer model run` only populates
-    #      the capability envelope; the embedded agent runtime still
-    #      resolves `agents.defaults.model` from config for its lane
-    #      dispatch. Setting this key is the only way to actually route.
-    #   2. `openclaw infer model run --prompt ... --local --json` —
-    #      the actual inference call. --local forces bypass of the
-    #      gateway. --json emits structured output.
+    #   1. `openclaw config set agents.defaults.model "$MODEL"` — required
+    #      because /v1/runs spawns a FRESH ephemeral container with NO
+    #      pre-existing openclaw.json. Without `config set`, the embedded
+    #      agent runtime falls back to the baked-in default
+    #      (openrouter/anthropic/claude-haiku-4-5) and routes through the
+    #      upstream-broken openrouter plugin even when --model is on the
+    #      CLI. (Spike A's `--model` override only worked against an
+    #      ALREADY-RUNNING container previously booted by /v1/agents/:id/
+    #      start which writes openclaw.json with the heredoc — that
+    #      pre-config primed the anthropic plugin loader. Fresh container
+    #      via /v1/runs has no such priming.)
+    #   2. `openclaw infer model run --prompt ... --local --json
+    #       --model "$MODEL"` — the actual inference. `--model` is also
+    #      passed for defense-in-depth alignment with direct_interface
+    #      (Spike A: --model is RESPECTED in this image version, not
+    #      decorative as previous doc-debt claimed).
+    #
+    # Combined with runtime.process_env.api_key=ANTHROPIC_API_KEY (also
+    # changed in 22b-07), this routes through openclaw's anthropic plugin
+    # directly and bypasses the upstream-broken openrouter plugin
+    # (known_quirks.openrouter_provider_plugin_silent_fail).
+    #
+    # Caller (smoke / /v1/runs / CLI) supplies $MODEL with a provider
+    # prefix (e.g. "anthropic/claude-haiku-4-5"). The $MODEL substitution
+    # happens at runner-substitute-argv time (BEFORE docker run); the
+    # runner replaces $MODEL/$PROMPT inside the bash -c string literal so
+    # bash sees literal values inside the double quotes.
     argv:
       - bash
       - -c
-      - 'openclaw config set agents.defaults.model "openrouter/$MODEL" >/dev/null && openclaw infer model run --prompt "$PROMPT" --local --json'
+      - 'openclaw config set agents.defaults.model "$MODEL" >/dev/null && openclaw infer model run --prompt "$PROMPT" --local --json --model "$MODEL"'
     argv_note: |
-      WHY bash -c chain: `infer model run --model <x>` is empirically a
-      decorative field in the capability envelope. The embedded agent
-      runtime reads its lane model from `agents.defaults.model` in the
-      config, NOT from the CLI flag. Without `config set` first, the
-      agent loop tries to use the baked-in default (openai/gpt-5.4),
-      fails to resolve auth, and returns
-        { attempts: [], outputs: ["⚠️ Agent couldn't generate a response"] }
-      with `stopReason=stop payloads=0` in stderr. `config set` writes
-      to /home/node/.openclaw/openclaw.json which is on the ephemeral
-      volume, so the state is thrown away at container teardown.
+      Phase 22b-07 rewrite: dropped hardcoded `openrouter/` prefix on
+      `config set`; $MODEL now flows verbatim from the caller (already
+      includes its own provider prefix per the v0.2 model schema, e.g.
+      `anthropic/claude-haiku-4-5`). `--model "$MODEL"` is also passed
+      to `infer model run` for parity with direct_interface (Spike A
+      empirically PROVED --model is respected by openclaw 2026.4.15-
+      beta.1 — contradicts pre-22b-07 doc-debt that called it decorative).
+
+      Combined with runtime.process_env.api_key=ANTHROPIC_API_KEY, the
+      runner injects ANTHROPIC_API_KEY=<bearer> at container boot.
+      openclaw's plugin loader sees the anthropic env + the anthropic/-
+      prefixed model and routes through its anthropic plugin (NOT the
+      upstream-broken openrouter plugin per
+      known_quirks.openrouter_provider_plugin_silent_fail).
 
       Runner substitution note: $PROMPT and $MODEL are replaced by the
-      runner BEFORE docker run, so bash sees literal values inside the
-      double quotes. Prompts containing double quotes would need
-      escaping — v0 smoke is "who are you?" which is safe.
+      runner BEFORE docker run via tools/run_recipe.py::substitute_argv,
+      so bash sees literal values inside the double quotes. Prompts
+      containing double quotes would need escaping — v0.2 smoke prompt
+      ("What is OpenClaw? Reply...") is safe.
+
+      HISTORICAL doc-debt (preserved for context, partially contradicted):
+        > `infer model run --model <x>` is empirically a decorative field;
+        > the embedded agent runtime reads its lane model from
+        > `agents.defaults.model` in the config, NOT from the CLI flag.
+      Spike A 2026-04-19 showed --model IS respected by openclaw
+      2026.4.15-beta.1 against pre-warmed containers (transcripts
+      /tmp/spike-A-stdout-anthropic.txt + /tmp/spike-A-stdout-gateway.txt).
+      For ephemeral fresh containers (the /v1/runs case here), the
+      `config set` step is still needed to prime the plugin loader; the
+      `--model` CLI flag alone is insufficient on a cold image.
     stdout_filter:
       engine: awk
       program: "{print}"  # v0 pass-through; --json is already structured
