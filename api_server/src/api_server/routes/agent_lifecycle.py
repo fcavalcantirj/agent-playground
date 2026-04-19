@@ -131,6 +131,56 @@ def _redact_creds(text: str, channel_inputs: dict[str, str]) -> str:
     return out
 
 
+def _detect_provider(model: str | None, recipe: dict) -> str:
+    """Return the canonical provider name for a given model id.
+
+    Heuristic per RESEARCH §Openclaw /start Env-Var Gap (Phase 22b D-21):
+
+    - ``anthropic/...`` → ``anthropic``
+    - ``openai/...`` → ``openai``
+    - ``google/...`` → ``google``
+    - ``openrouter/...`` → ``openrouter``
+    - bare ``<vendor>/<model>`` with no recognized prefix → OpenRouter
+      (its model catalogue uses ``vendor/model`` without a leading
+      ``openrouter/``)
+    - empty / None / falsey model → fallback to
+      ``recipe.provider_compat.supported[0]`` (or ``"openrouter"``).
+    """
+    if not model:
+        supported = (recipe.get("provider_compat") or {}).get("supported") or []
+        return supported[0] if supported else "openrouter"
+    prefix = model.split("/", 1)[0].lower() if "/" in model else ""
+    if prefix in ("anthropic", "openai", "openrouter", "google"):
+        return prefix
+    # No namespaced prefix → OpenRouter (vendor/model shape).
+    supported = (recipe.get("provider_compat") or {}).get("supported") or []
+    return supported[0] if supported else "openrouter"
+
+
+def _resolve_api_key_var(recipe: dict, model: str | None) -> str | None:
+    """Pick the env-var NAME (e.g. ``ANTHROPIC_API_KEY``) that will receive
+    the bearer token for this recipe+model combination.
+
+    Resolution order:
+
+    1. If ``recipe.runtime.process_env.api_key_by_provider`` is declared,
+       dispatch by :func:`_detect_provider` (Phase 22b D-21).
+    2. Else fall back to ``recipe.runtime.process_env.api_key`` (legacy
+       behavior — preserved so recipes without a provider map keep working
+       unchanged).
+    3. Return ``None`` if neither is declared; the caller surfaces a
+       500 "recipe missing runtime.process_env.api_key".
+    """
+    process_env = (recipe.get("runtime") or {}).get("process_env") or {}
+    by_provider = process_env.get("api_key_by_provider") or {}
+    if by_provider:
+        provider = _detect_provider(model, recipe)
+        var = by_provider.get(provider)
+        if var:
+            return var
+    return process_env.get("api_key")
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/agents/:id/start
 # ---------------------------------------------------------------------------
@@ -245,9 +295,13 @@ async def start_agent(
             f"missing required channel inputs: {missing}",
             param="channel_inputs",
         )
-    api_key_var = (
-        recipe.get("runtime", {}).get("process_env", {}).get("api_key")
-    )
+    # Phase 22b D-21: dispatch env-var by model provider so that an
+    # anthropic/... model on the openclaw recipe injects ANTHROPIC_API_KEY
+    # (NOT OPENROUTER_API_KEY, which would auto-enable openclaw's broken
+    # openrouter plugin — see recipes/openclaw.yaml known_quirks).
+    # Recipes without `api_key_by_provider` fall back to legacy `api_key`
+    # unchanged.
+    api_key_var = _resolve_api_key_var(recipe, agent.get("model"))
     if not api_key_var:
         return _err(
             500,

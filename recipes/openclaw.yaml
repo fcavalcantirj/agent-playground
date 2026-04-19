@@ -32,7 +32,10 @@ build:
 runtime:
   provider: openrouter
   process_env:
-    api_key: OPENROUTER_API_KEY
+    api_key: OPENROUTER_API_KEY           # default / legacy callers
+    api_key_by_provider:                  # Phase 22b: per-D-21 env-var mapping
+      openrouter: OPENROUTER_API_KEY      # plugin bug, known-flaky — see known_quirks
+      anthropic: ANTHROPIC_API_KEY        # verified working (spike 01e)
     api_key_fallback: OPENAI_API_KEY
     base_url: null
     model: null
