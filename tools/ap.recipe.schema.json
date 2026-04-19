@@ -41,7 +41,8 @@
         "INFRA_FAIL",
         "STOCHASTIC",
         "SKIP",
-        "BLOCKED_UPSTREAM"
+        "BLOCKED_UPSTREAM",
+        "PASS_WITH_FLAG"
       ],
       "description": "Channel-scoped category enum (v0.2). Superset of smoke `category` enum + BLOCKED_UPSTREAM, which flags cells where channel wiring proved correct but an upstream provider bug blocks the LLM round-trip (e.g. openclaw openrouter plugin silent-fail documented in channels.telegram.known_quirks)."
     },
@@ -140,6 +141,188 @@
         }
       }
     },
+    "direct_interface_block": {
+      "type": "object",
+      "required": ["kind", "spec"],
+      "description": "v0.2 direct_interface declaration (Phase 22b D-19..D-22). Top-level sibling of `persistent` + `channels`. Declares the recipe's primary programmatic invocation surface — a docker exec CLI invocation OR an HTTP POST to an in-container endpoint. Used by SC-03 Gate A (test/lib/agent_harness.py send-direct-and-read) to invoke the agent directly without involving the channel layer (Telegram bot-self impersonation is filtered by allowFrom; direct_interface bypasses the gateway entirely). Spike C 2026-04-19: outer `additionalProperties: false` was REMOVED — JSON Schema does not propagate oneOf-branch property declarations to the outer level, so an outer additionalProperties:false would reject `kind` and `spec` BEFORE oneOf branches validate. Each oneOf branch carries its own `additionalProperties: false` which is the actual closure mechanism.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "docker_exec_cli" },
+            "spec": {
+              "type": "object",
+              "required": ["argv_template"],
+              "additionalProperties": false,
+              "properties": {
+                "argv_template": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 1,
+                  "description": "argv list passed after `docker exec <cid>`. {prompt} and {model} are substituted by the harness via Python str.format() before invocation. SUBSTITUTION IS LITERAL — no shell expansion (subprocess.run(shell=False)). For sh-chained recipes, use the explicit form ['sh', '-c', '<single-string-pipeline>'] (openclaw post-22b-07 example)."
+                },
+                "timeout_s": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300,
+                  "description": "Wall-time budget for the docker exec. Range [1, 300] seconds. Default 60 if omitted by harness logic."
+                },
+                "stdout_reply": {
+                  "type": "boolean",
+                  "description": "true → reply text is captured from stdout (typical). false reserved for future stderr-only modes."
+                },
+                "reply_extract_regex": {
+                  "type": "string",
+                  "description": "Optional regex applied to stdout. If the regex matches AND has a named group `reply`, harness uses m.group('reply'); else uses m.group(0); else falls back to full stdout. Used to strip trailing session_id lines (hermes), strip JSON envelope wrappers (openclaw), etc."
+                },
+                "exit_code_success": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255,
+                  "description": "Expected exit code for a successful invocation. Defaults to 0; some agents emit non-zero in success states (none currently in catalog, reserved)."
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "http_chat_completions" },
+            "spec": {
+              "type": "object",
+              "required": ["port", "path", "request_template", "response_jsonpath"],
+              "additionalProperties": false,
+              "properties": {
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "description": "TCP port inside the container exposing the OpenAI-compatible chat completions endpoint."
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "URL path; must begin with '/'. Typical: /v1/chat/completions"
+                },
+                "auth": {
+                  "type": "object",
+                  "required": ["header", "value_template"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "header": { "type": "string", "description": "HTTP header name carrying the credential. Typical: Authorization." },
+                    "value_template": { "type": "string", "description": "Template string. {api_key} is substituted with the harness --api-key value at invocation time. Typical: 'Bearer {api_key}'." }
+                  }
+                },
+                "request_template": {
+                  "type": "object",
+                  "description": "OpenAI-compatible request body template. The harness merges {prompt} into messages[].content at invocation time; other fields (model, temperature, etc.) flow through verbatim. additionalProperties:true to accommodate per-recipe model parameters."
+                },
+                "response_jsonpath": {
+                  "type": "string",
+                  "pattern": "^\\$",
+                  "description": "Tiny JSONPath subset (must start with '$'). Resolves to the assistant's reply text in the JSON response. Typical: $.choices[0].message.content"
+                },
+                "timeout_s": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300,
+                  "description": "Wall-time budget for the curl invocation. Range [1, 300] seconds. Default 60 if omitted."
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "event_source_fallback": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes hoisted to the outer block (nullclaw + openclaw both carry a `notes:` field — Spike C 2026-04-19 verified the field is load-bearing in those recipes; declared here at the outer level so it applies to ALL oneOf branches without per-branch repetition)."
+        }
+      },
+      "description": "v0.2 channel-scoped event source dispatcher (Phase 22b D-23). Declares the alternate observation path when docker logs do NOT carry per-message events for this recipe. Watcher_service _select_source() (api_server/src/api_server/services/watcher_service.py line 380-387) dispatches on `kind`. When this block is ABSENT entirely, the watcher defaults to docker_logs_stream (the typical case for hermes/picoclaw/nanobot whose docker logs DO carry events). Spike C 2026-04-19: outer `additionalProperties: false` REMOVED for the same reason as direct_interface_block (oneOf branch properties don't propagate); outer-level `notes` property hoisted to allow nullclaw + openclaw's load-bearing notes field. Inner branches retain `additionalProperties: false`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "docker_logs_stream" },
+            "notes": { "type": "string" },
+            "spec": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "No required spec — docker_logs_stream uses Docker SDK logs(follow=True) directly. spec field reserved for future tuning (buffer size, etc.)."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "docker_exec_poll" },
+            "notes": { "type": "string" },
+            "spec": {
+              "type": "object",
+              "required": ["argv_template"],
+              "additionalProperties": false,
+              "properties": {
+                "argv_template": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 1,
+                  "description": "argv passed to docker exec. {session_id} and {chat_id} are substituted at watcher invocation time."
+                },
+                "session_id_template": {
+                  "type": "string",
+                  "description": "Template producing the session_id from chat_id. {chat_id} is substituted. nullclaw example: 'agent:main:telegram:direct:{chat_id}'."
+                },
+                "tail_file": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "Optional alternative observation surface — a file path the watcher can `docker exec tail -f`. Currently used by nullclaw as a 'something happened' signal even when the per-turn JSON poll is unreliable."
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "spec"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "file_tail_in_container" },
+            "notes": { "type": "string" },
+            "spec": {
+              "type": "object",
+              "required": ["session_log_template"],
+              "additionalProperties": false,
+              "properties": {
+                "sessions_manifest": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "Container-path to the JSON file mapping chat_ids to session_ids. openclaw example: /home/node/.openclaw/agents/main/sessions/sessions.json"
+                },
+                "session_log_template": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "description": "Container-path template for per-session JSONL files. {session_id} is substituted at watcher invocation time."
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "user_input_entry": {
       "type": "object",
       "required": ["env", "hint"],
@@ -182,7 +365,7 @@
     },
     "channel_verified_cell": {
       "type": "object",
-      "required": ["date", "bot_username", "allowed_user_id", "verdict", "category", "notes"],
+      "required": ["date", "bot_username", "allowed_user_id", "verdict", "notes"],
       "additionalProperties": false,
       "description": "v0.2 channel-scoped empirical evidence cell.",
       "properties": {
@@ -201,8 +384,8 @@
         },
         "verdict": {
           "type": "string",
-          "enum": ["PASS", "FULL_PASS", "CHANNEL_PASS_LLM_FAIL"],
-          "description": "Channel verdict enum. Distinct from smoke.verified_cells[*].verdict ({PASS, FAIL})."
+          "enum": ["PASS", "FULL_PASS", "CHANNEL_PASS_LLM_FAIL", "PASS_WITH_FLAG"],
+          "description": "Channel verdict enum. Distinct from smoke.verified_cells[*].verdict ({PASS, FAIL}). PASS_WITH_FLAG (added Spike C 2026-04-19): semantic for nullclaw + openclaw recipes whose channel + LLM both work but a non-blocking quirk is documented (e.g., openclaw openrouter plugin upstream-blocked, anthropic-direct path PASSes; the `_WITH_FLAG` suffix signals the cell is functionally green but the operator should read the notes)."
         },
         "category": {
           "$ref": "#/$defs/channel_category"
@@ -224,16 +407,26 @@
           "description": "Which env var supplied the provider key (disambiguates multi-provider recipes)."
         },
         "boot_wall_s": {
-          "type": "integer",
-          "description": "Observed wall time from docker run -d to ready_log_regex match."
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string", "pattern": "^~?[0-9]+(?:\\.[0-9]+)?$" }
+          ],
+          "description": "Observed wall time from docker run -d to ready_log_regex match. Accepts integer (12), float (2.85), or YAML literal-string approximations (`~3`, `~6` — note YAML parses unquoted ~3 as the string '~3', not the number 3) for human-friendly recon notes."
         },
         "first_reply_wall_s": {
-          "type": "integer",
-          "description": "Observed wall time from first user message to first agent reply."
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string", "pattern": "^~?[0-9]+(?:\\.[0-9]+)?$" }
+          ],
+          "description": "Observed wall time from first user message to first agent reply. Same accepted shapes as boot_wall_s."
         },
         "reply_sample": {
           "type": "string",
           "description": "Verbatim or lightly redacted sample of the first reply."
+        },
+        "spike_artifact": {
+          "type": "string",
+          "description": "Optional path to a related spike artifact (e.g., .planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01e-openclaw.md) for full evidence trail. Used by 4 of 5 v0.2 recipes (Spike C 2026-04-19: picoclaw + nullclaw + nanobot + openclaw)."
         }
       }
     },
@@ -336,6 +529,23 @@
           "type": "array",
           "items": { "$ref": "#/$defs/channel_verified_cell" },
           "description": "Empirical PASS evidence."
+        },
+        "event_log_regex": {
+          "type": "object",
+          "description": "v0.2 channel-scoped log-line regex map (Phase 22b D-04). Keys: event kind names (reply_sent, reply_failed, agent_ready, agent_error from VALID_KINDS, plus optional inbound_message + response_ready for the hermes-style metric pipeline). Values: regex string (Python re syntax) OR null (signals 'this kind is NOT observable via docker logs for this recipe' — consumer must use event_source_fallback). additionalProperties allowed because some recipes add bespoke metric kinds (response_ready in hermes).",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "null" }
+            ]
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "event_source_fallback": {
+          "$ref": "#/$defs/event_source_fallback",
+          "description": "v0.2 channel-scoped event source dispatcher (Phase 22b D-23). Optional — defaults to docker_logs_stream when absent. REQUIRED in practice when ANY event_log_regex.<kind> is null (the watcher needs an alternative observation path for the null kinds; nullclaw + openclaw use this today)."
         }
       }
     },
@@ -1033,7 +1243,12 @@
                 "api_key": { "type": "string" },
                 "api_key_fallback": { "type": ["string", "null"] },
                 "base_url": { "type": ["string", "null"] },
-                "model": { "type": ["string", "null"] }
+                "model": { "type": ["string", "null"] },
+                "api_key_by_provider": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "v0.2 (Phase 22b D-21) — per-provider env-var override map. Keys are LLM provider IDs (anthropic, openrouter, openai, ...); values are the env-var name to inject. Used by openclaw to declare `anthropic: ANTHROPIC_API_KEY` so the persistent /start handler's _resolve_api_key_var can pick the right env-var when the user-selected model uses the anthropic-direct provider. Verified verbatim in recipes/openclaw.yaml lines 36-39."
+                }
               }
             },
             "volumes": {
@@ -1256,6 +1471,9 @@
         },
         "channels": {
           "$ref": "#/$defs/channels_block"
+        },
+        "direct_interface": {
+          "$ref": "#/$defs/direct_interface_block"
         }
       },
       "allOf": [
