@@ -365,7 +365,6 @@ channels:
           directly from reply (like picoclaw). 4 regexes authored.
         category: PASS
         spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01d-nanobot.md"
-        category: PASS
 
   # Discord, Slack, WhatsApp, Email, Matrix (not installed by default,
   # needs pip install nanobot-ai[matrix]) — all channels nanobot supports
