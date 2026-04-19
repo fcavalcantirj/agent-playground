@@ -1,49 +1,69 @@
 #!/usr/bin/env bash
-# Phase 22a SC-03 gate — end-to-end Telegram round-trip for all 5 v0.2-channel recipes.
+# Phase 22b SC-03 gate — Gate A (direct_interface) + Gate B (event-stream long-poll).
+#
+# REPLACES the legacy update-polling round-trip step (Phase 22a) which spike-01a
+# proved unautomatable via Bot API. The new flow has TWO gates:
+#
+#   Gate A — direct_interface round-trip via test/lib/agent_harness.py
+#            send-direct-and-read. Hits the agent's programmatic surface
+#            directly (docker exec or HTTP). 5 recipes × ROUNDS = 15 by default.
+#            MANDATORY for SC-03 phase exit.
+#
+#   Gate B — bot->self sendMessage + long-poll GET /v1/agents/:id/events
+#            kinds=reply_sent. 5 recipes × 1 = 5 invocations. SKIPS cleanly
+#            when AP_SYSADMIN_TOKEN / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+#            are missing.
+#
+#   Gate C — manual user-in-the-loop (test/sc03-gate-c.md). Once per release.
+#            NOT executed by this script.
 #
 # Requirements:
 #   - Local API server running (default http://localhost:8000)
 #   - Postgres + docker daemon healthy
-#   - deploy/.env.local (gitignored) OR .env.local with:
-#       TELEGRAM_BOT_TOKEN=...
-#       TELEGRAM_ALLOWED_USER=152099202
-#       TELEGRAM_CHAT_ID=152099202
+#   - All 5 recipe images built locally: `docker images | grep ap-recipe`
+#   - deploy/.env.local (gitignored) OR .env.local with at minimum:
 #       OPENROUTER_API_KEY=...
 #       ANTHROPIC_API_KEY=...
+#     For Gate B (optional):
+#       AP_SYSADMIN_TOKEN=...   # per-laptop, NEVER committed (D-15)
+#       TELEGRAM_BOT_TOKEN=...
+#       TELEGRAM_CHAT_ID=...
+#       TELEGRAM_ALLOWED_USER=152099202   # defaults to TELEGRAM_CHAT_ID
 #
 # Usage:
-#   bash test/e2e_channels_v0_2.sh
-#   bash test/e2e_channels_v0_2.sh --recipe hermes        # single recipe
-#   bash test/e2e_channels_v0_2.sh --rounds 1             # fewer rounds for smoke
+#   bash test/e2e_channels_v0_2.sh                    # all 5 recipes × 3 rounds
+#   bash test/e2e_channels_v0_2.sh --recipe hermes    # single recipe (3 rounds)
+#   bash test/e2e_channels_v0_2.sh --rounds 1         # fewer rounds for smoke
+#   bash test/e2e_channels_v0_2.sh --skip-gate-b      # explicitly skip Gate B
 #   API_BASE=http://localhost:8000 bash test/e2e_channels_v0_2.sh
 #
 # Exit codes:
-#   0  all round-trips PASS (5 recipes x ROUNDS, or just --recipe x ROUNDS)
-#   1  any round-trip failed
-#   2  missing env / infra
+#   0  Gate A 15/15 PASS (and Gate B 5/5 OR cleanly skipped)
+#   1  any Gate A round-trip FAILED, OR Gate B attempted but partially failed
+#   2  missing env / infra (no OPENROUTER + ANTHROPIC keys, no docker, etc.)
 #
-# Design notes:
-#   - Each round creates a FRESH agent_instance (unique name suffix by
-#     timestamp + round index) so partial-index 409s can't happen.
-#   - Stop + cleanup runs in a trap so Ctrl-C or assertion failure still
-#     tears down the spawned container.
-#   - A JSON report lands at .planning/phases/22-channels-v0.2/22-e2e-report.json
-#     for retrospectives.
+# Output:
+#   stdout — colorized PASS/FAIL/INFO/SKIP per round
+#   $REPORT_PATH (default e2e-report.json at repo root) — JSON array of every
+#                gate envelope, one per element, for retrospectives + summary.
 
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://localhost:8000}"
 ROUNDS="${ROUNDS:-3}"
 RECIPE_FILTER=""
-REPORT_PATH="${REPORT_PATH:-.planning/phases/22-channels-v0.2/22-e2e-report.json}"
+SKIP_GATE_B="${SKIP_GATE_B:-}"
+REPORT_PATH="${REPORT_PATH:-e2e-report.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --recipe)   RECIPE_FILTER="$2"; shift 2;;
-    --rounds)   ROUNDS="$2"; shift 2;;
-    --api-base) API_BASE="$2"; shift 2;;
+    --recipe)      RECIPE_FILTER="$2"; shift 2;;
+    --rounds)      ROUNDS="$2"; shift 2;;
+    --api-base)    API_BASE="$2"; shift 2;;
+    --report-path) REPORT_PATH="$2"; shift 2;;
+    --skip-gate-b) SKIP_GATE_B=1; shift;;
     -h|--help)
-      sed -n '2,32p' "$0"
+      sed -n '2,55p' "$0"
       exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -56,18 +76,19 @@ elif [[ -f .env.local ]]; then
   set -a; source .env.local; set +a
 fi
 
-for var in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID OPENROUTER_API_KEY ANTHROPIC_API_KEY; do
+# Gate A requires the per-recipe BYOK keys. Gate B's creds are optional
+# and policed inline.
+for var in OPENROUTER_API_KEY ANTHROPIC_API_KEY; do
   if [[ -z "${!var:-}" ]]; then
     echo "missing $var (put in deploy/.env.local or .env.local)" >&2
     exit 2
   fi
 done
 
-# TELEGRAM_ALLOWED_USER falls back to TELEGRAM_CHAT_ID (user's own DM).
-TELEGRAM_ALLOWED_USER="${TELEGRAM_ALLOWED_USER:-$TELEGRAM_CHAT_ID}"
+TELEGRAM_ALLOWED_USER="${TELEGRAM_ALLOWED_USER:-${TELEGRAM_CHAT_ID:-}}"
 
 # --- recipe matrix ---
-# Each row: recipe_name|llm_provider|llm_key_env|llm_model|requires_pairing
+# recipe_name|llm_provider|llm_key_env|llm_model|requires_pairing
 declare -a MATRIX=(
   "hermes|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
   "picoclaw|openrouter|OPENROUTER_API_KEY|anthropic/claude-haiku-4.5|false"
@@ -79,10 +100,14 @@ declare -a MATRIX=(
 # --- helpers ---
 _pass() { printf "  \033[32mPASS\033[0m %s\n" "$1"; }
 _fail() { printf "  \033[31mFAIL\033[0m %s\n" "$1"; }
+_skip() { printf "  \033[33mSKIP\033[0m %s\n" "$1"; }
 _info() { printf "  \033[36mINFO\033[0m %s\n" "$1"; }
 
-TOTAL=0
-PASSED=0
+GATE_A_TOTAL=0
+GATE_A_PASS=0
+GATE_B_TOTAL=0
+GATE_B_PASS=0
+GATE_B_RAN=0
 declare -a REPORT_LINES=()
 ACTIVE_AGENT_ID=""
 ACTIVE_CONTAINER_ID=""
@@ -99,12 +124,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Drain Telegram backlog once so getUpdates doesn't see pre-existing messages.
-python3 test/lib/telegram_harness.py drain --token "$TELEGRAM_BOT_TOKEN" >/dev/null || {
-  echo "warning: initial Telegram drain failed — proceeding anyway" >&2
-}
+# Gate B preflight — capture creds presence in one place.
+GATE_B_ENABLED=1
+if [[ -n "$SKIP_GATE_B" ]]; then
+  GATE_B_ENABLED=0
+elif [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" || -z "${AP_SYSADMIN_TOKEN:-}" ]]; then
+  GATE_B_ENABLED=0
+fi
 
-echo "e2e: API_BASE=$API_BASE ROUNDS=$ROUNDS RECIPE_FILTER=${RECIPE_FILTER:-all}"
+echo "e2e: API_BASE=$API_BASE ROUNDS=$ROUNDS RECIPE_FILTER=${RECIPE_FILTER:-all} GATE_B=$([[ $GATE_B_ENABLED -eq 1 ]] && echo on || echo off)"
 
 for entry in "${MATRIX[@]}"; do
   IFS='|' read -r RECIPE PROVIDER KEY_ENV MODEL REQ_PAIR <<<"$entry"
@@ -115,118 +143,143 @@ for entry in "${MATRIX[@]}"; do
   echo ""
   echo "=== $RECIPE (provider=$PROVIDER model=$MODEL pair=$REQ_PAIR) ==="
 
-  for R in $(seq 1 "$ROUNDS"); do
-    TOTAL=$((TOTAL + 1))
-    STAMP=$(date +%s)
-    AGENT_NAME="e2e-$RECIPE-$STAMP-$R"
-    _info "round $R/$ROUNDS  agent_name=$AGENT_NAME"
+  # ---------------------------------------------------------------
+  # Per-recipe lifecycle: smoke→start→pair-if-needed→Gate-A×ROUNDS
+  # →Gate-B (once)→stop. Gate B reuses the same running container that
+  # Gate A drove, so we don't re-pay the boot cost.
+  # ---------------------------------------------------------------
 
-    # 1. Smoke (creates agent_instance)
-    SMOKE_BODY=$(jq -cn --arg rn "$RECIPE" --arg m "$MODEL" --arg n "$AGENT_NAME" \
-      '{recipe_name:$rn, model:$m, agent_name:$n, personality:"polite-thorough"}')
-    SMOKE=$(curl -fsS -X POST "$API_BASE/v1/runs" \
-      -H "Authorization: Bearer $BEARER" \
-      -H "Content-Type: application/json" \
-      -d "$SMOKE_BODY" 2>/dev/null || echo "{}")
-    SMOKE_VERDICT=$(jq -r '.verdict // "ERROR"' <<<"$SMOKE")
-    AGENT_ID=$(jq -r '.agent_instance_id // ""' <<<"$SMOKE")
-    if [[ "$SMOKE_VERDICT" != "PASS" || -z "$AGENT_ID" ]]; then
-      _fail "$RECIPE r$R smoke: $SMOKE_VERDICT"
-      REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"smoke\",\"verdict\":\"$SMOKE_VERDICT\"}")
-      continue
-    fi
-    ACTIVE_AGENT_ID="$AGENT_ID"; ACTIVE_BEARER="$BEARER"
+  STAMP=$(date +%s)
+  AGENT_NAME="e2e-$RECIPE-$STAMP"
 
-    # 2. Start channel
+  # 1. Smoke (creates agent_instance)
+  SMOKE_BODY=$(jq -cn --arg rn "$RECIPE" --arg m "$MODEL" --arg n "$AGENT_NAME" \
+    '{recipe_name:$rn, model:$m, agent_name:$n, personality:"polite-thorough"}')
+  SMOKE=$(curl -fsS -X POST "$API_BASE/v1/runs" \
+    -H "Authorization: Bearer $BEARER" \
+    -H "Content-Type: application/json" \
+    -d "$SMOKE_BODY" 2>/dev/null || echo "{}")
+  SMOKE_VERDICT=$(jq -r '.verdict // "ERROR"' <<<"$SMOKE")
+  AGENT_ID=$(jq -r '.agent_instance_id // ""' <<<"$SMOKE")
+  if [[ "$SMOKE_VERDICT" != "PASS" || -z "$AGENT_ID" ]]; then
+    _fail "$RECIPE smoke: $SMOKE_VERDICT"
+    REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" --arg s "$SMOKE_VERDICT" '{recipe:$r,stage:"smoke",verdict:$s}')")
+    continue
+  fi
+  ACTIVE_AGENT_ID="$AGENT_ID"; ACTIVE_BEARER="$BEARER"
+
+  # 2. Start channel — Gate B needs Telegram wired; Gate A only needs the
+  #    container running. We always start with Telegram inputs if creds are
+  #    present so a single START supports both gates.
+  if [[ $GATE_B_ENABLED -eq 1 ]]; then
     START_BODY=$(jq -cn \
       --arg tok "$TELEGRAM_BOT_TOKEN" \
       --arg uid "$TELEGRAM_ALLOWED_USER" \
       '{channel:"telegram", channel_inputs: {TELEGRAM_BOT_TOKEN:$tok, TELEGRAM_ALLOWED_USERS:$uid, TELEGRAM_ALLOWED_USER:$uid}}')
-    START=$(curl -fsS -X POST "$API_BASE/v1/agents/$AGENT_ID/start" \
-      -H "Authorization: Bearer $BEARER" \
-      -H "Content-Type: application/json" \
-      -d "$START_BODY" 2>/dev/null || echo "{}")
-    START_STATUS=$(jq -r '.container_status // "ERROR"' <<<"$START")
-    ACTIVE_CONTAINER_ID=$(jq -r '.container_id // ""' <<<"$START")
-    if [[ "$START_STATUS" != "running" ]]; then
-      _fail "$RECIPE r$R start: $(jq -c '.' <<<"$START")"
-      REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"start\",\"status\":\"$START_STATUS\"}")
-      cleanup
-      continue
-    fi
-    BOOT_S=$(jq -r '.boot_wall_s // 0' <<<"$START")
-    _info "booted in ${BOOT_S}s, container=${ACTIVE_CONTAINER_ID:0:12}"
+  else
+    START_BODY='{"channel":"telegram"}'
+  fi
+  START=$(curl -fsS -X POST "$API_BASE/v1/agents/$AGENT_ID/start" \
+    -H "Authorization: Bearer $BEARER" \
+    -H "Content-Type: application/json" \
+    -d "$START_BODY" 2>/dev/null || echo "{}")
+  START_STATUS=$(jq -r '.container_status // "ERROR"' <<<"$START")
+  ACTIVE_CONTAINER_ID=$(jq -r '.container_id // ""' <<<"$START")
+  if [[ "$START_STATUS" != "running" ]]; then
+    _fail "$RECIPE start: $(jq -c '.' <<<"$START")"
+    REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" --arg s "$START_STATUS" '{recipe:$r,stage:"start",status:$s}')")
+    cleanup
+    continue
+  fi
+  BOOT_S=$(jq -r '.boot_wall_s // 0' <<<"$START")
+  _info "booted in ${BOOT_S}s, container=${ACTIVE_CONTAINER_ID:0:12}"
 
-    # 3. If pairing required, approve it (openclaw).
-    #    First DM triggers the bot's pairing-code reply; we extract the code
-    #    and POST /channels/telegram/pair.  After that the channel is
-    #    authenticated for subsequent messages.
-    if [[ "$REQ_PAIR" == "true" ]]; then
-      PAIR_POLL=$(python3 test/lib/telegram_harness.py send-and-wait \
-        --token "$TELEGRAM_BOT_TOKEN" --chat-id "$TELEGRAM_CHAT_ID" \
-        --text "hi" --timeout-s 30)
-      REPLY=$(jq -r '.reply_text // ""' <<<"$PAIR_POLL")
-      # openclaw replies "Pairing code: XXXX" — grab the first 4-8 char token.
-      CODE=$(echo "$REPLY" | grep -oE '[A-Za-z0-9]{4,8}' | head -1 || true)
-      if [[ -z "$CODE" ]]; then
-        _fail "$RECIPE r$R pair: no code in reply: $REPLY"
-        REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"pair-no-code\"}")
-        cleanup; continue
-      fi
-      _info "pair code = $CODE"
-      PAIR_BODY=$(jq -cn --arg c "$CODE" '{code:$c}')
-      PAIR=$(curl -fsS -X POST "$API_BASE/v1/agents/$AGENT_ID/channels/telegram/pair" \
-        -H "Authorization: Bearer $BEARER" \
-        -H "Content-Type: application/json" \
-        -d "$PAIR_BODY" 2>/dev/null || echo "{}")
-      PAIR_EXIT=$(jq -r '.exit_code // -1' <<<"$PAIR")
-      if [[ "$PAIR_EXIT" != "0" ]]; then
-        _fail "$RECIPE r$R pair: exit=$PAIR_EXIT body=$(jq -c '.' <<<"$PAIR")"
-        REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"pair-exit\",\"exit\":$PAIR_EXIT}")
-        cleanup; continue
-      fi
-    fi
+  # 3. Pairing (openclaw only).
+  if [[ "$REQ_PAIR" == "true" && $GATE_B_ENABLED -eq 1 ]]; then
+    # Gate B is enabled and we have Telegram creds; the existing pair flow
+    # uses Telegram to deliver the code. Without Gate B (no creds), we
+    # skip pairing — Gate A still works because direct_interface bypasses
+    # the channel layer entirely.
+    _info "$RECIPE: pairing flow not exercised in 22b harness — pair via /v1/agents/:id/channels/telegram/pair from external script if needed"
+  fi
 
-    # 4. Real round-trip
-    MSG="ping $RECIPE r$R $(date +%H%M%S)"
-    ROUNDTRIP=$(python3 test/lib/telegram_harness.py send-and-wait \
-      --token "$TELEGRAM_BOT_TOKEN" --chat-id "$TELEGRAM_CHAT_ID" \
-      --text "$MSG" --timeout-s 30)
-    RT_OK=$(jq -r '.reply_text // "null"' <<<"$ROUNDTRIP")
-    RT_WALL=$(jq -r '.reply_wall_s // "null"' <<<"$ROUNDTRIP")
-    if [[ "$RT_OK" == "null" ]]; then
-      _fail "$RECIPE r$R round-trip: $(jq -c '.' <<<"$ROUNDTRIP")"
-      REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"roundtrip-timeout\"}")
-      cleanup; continue
+  # ---------------------------------------------------------------
+  # 4. Gate A — direct_interface × ROUNDS
+  # ---------------------------------------------------------------
+  for R in $(seq 1 "$ROUNDS"); do
+    GATE_A_TOTAL=$((GATE_A_TOTAL + 1))
+    GATE_A=$(python3 test/lib/agent_harness.py send-direct-and-read \
+      --recipe "$RECIPE" \
+      --container-id "$ACTIVE_CONTAINER_ID" \
+      --model "$MODEL" \
+      --api-key "$BEARER" \
+      --timeout-s 60 2>/dev/null || echo '{"gate":"A","verdict":"ERROR","error":"harness crashed"}')
+    VERDICT=$(jq -r '.verdict // "ERROR"' <<<"$GATE_A")
+    if [[ "$VERDICT" == "PASS" ]]; then
+      WS=$(jq -r '.wall_s // 0' <<<"$GATE_A")
+      _pass "$RECIPE r$R Gate A direct_interface (${WS}s)"
+      GATE_A_PASS=$((GATE_A_PASS + 1))
+    else
+      _fail "$RECIPE r$R Gate A: $(jq -c '.' <<<"$GATE_A")"
     fi
-    _pass "$RECIPE r$R round-trip (${RT_WALL}s)"
-    PASSED=$((PASSED + 1))
-    REPORT_LINES+=("{\"recipe\":\"$RECIPE\",\"round\":$R,\"stage\":\"pass\",\"boot_wall_s\":$BOOT_S,\"reply_wall_s\":$RT_WALL}")
-
-    # 5. Stop
-    curl -fsS -X POST "$API_BASE/v1/agents/$AGENT_ID/stop" \
-      -H "Authorization: Bearer $BEARER" >/dev/null 2>&1 || true
-    ACTIVE_AGENT_ID=""; ACTIVE_CONTAINER_ID=""
-    sleep 2
+    REPORT_LINES+=("$(jq -c --arg r "$RECIPE" --arg round "$R" '. + {round: ($round|tonumber), recipe: $r}' <<<"$GATE_A")")
   done
+
+  # ---------------------------------------------------------------
+  # 5. Gate B — event-stream long-poll (once per recipe)
+  # ---------------------------------------------------------------
+  if [[ $GATE_B_ENABLED -eq 1 ]]; then
+    GATE_B_TOTAL=$((GATE_B_TOTAL + 1))
+    GATE_B_RAN=1
+    GATE_B_OUT=$(python3 test/lib/agent_harness.py send-telegram-and-watch-events \
+      --api-base "$API_BASE" \
+      --agent-id "$AGENT_ID" \
+      --bearer "$AP_SYSADMIN_TOKEN" \
+      --recipe "$RECIPE" \
+      --token "$TELEGRAM_BOT_TOKEN" \
+      --chat-id "$TELEGRAM_CHAT_ID" \
+      --timeout-s 10 2>/dev/null || echo '{"gate":"B","verdict":"ERROR","error":"harness crashed"}')
+    V=$(jq -r '.verdict // "ERROR"' <<<"$GATE_B_OUT")
+    if [[ "$V" == "PASS" ]]; then
+      WS=$(jq -r '.wall_s // 0' <<<"$GATE_B_OUT")
+      _pass "$RECIPE Gate B event-stream (${WS}s)"
+      GATE_B_PASS=$((GATE_B_PASS + 1))
+    else
+      _fail "$RECIPE Gate B: $(jq -c '.' <<<"$GATE_B_OUT")"
+    fi
+    REPORT_LINES+=("$(jq -c --arg r "$RECIPE" '. + {recipe: $r}' <<<"$GATE_B_OUT")")
+  else
+    _skip "$RECIPE Gate B (need TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID + AP_SYSADMIN_TOKEN OR --skip-gate-b)"
+    REPORT_LINES+=("$(jq -cn --arg r "$RECIPE" '{gate:"B",recipe:$r,verdict:"SKIP",reason:"missing creds"}')")
+  fi
+
+  # 6. Stop
+  curl -fsS -X POST "$API_BASE/v1/agents/$AGENT_ID/stop" \
+    -H "Authorization: Bearer $BEARER" >/dev/null 2>&1 || true
+  ACTIVE_AGENT_ID=""; ACTIVE_CONTAINER_ID=""
+  sleep 2
 done
 
-# Final report
+# --- Final report ---
 REPORT_DIR=$(dirname "$REPORT_PATH")
-mkdir -p "$REPORT_DIR"
+[[ -n "$REPORT_DIR" && "$REPORT_DIR" != "." ]] && mkdir -p "$REPORT_DIR"
 {
-  printf '{\n  "total": %d,\n  "passed": %d,\n  "rounds": [\n' "$TOTAL" "$PASSED"
-  for i in "${!REPORT_LINES[@]}"; do
-    sep=","
-    [[ "$i" -eq $((${#REPORT_LINES[@]} - 1)) ]] && sep=""
-    printf '    %s%s\n' "${REPORT_LINES[$i]}" "$sep"
-  done
-  printf '  ]\n}\n'
-} > "$REPORT_PATH"
+  printf '%s\n' "${REPORT_LINES[@]}"
+} | jq -s '.' > "$REPORT_PATH"
 
 echo ""
 echo "================================================================"
-echo "  e2e: $PASSED / $TOTAL round-trips passed"
+echo "  SC-03 Gate A: $GATE_A_PASS / $GATE_A_TOTAL PASS"
+if [[ $GATE_B_RAN -eq 1 ]]; then
+  echo "  SC-03 Gate B: $GATE_B_PASS / $GATE_B_TOTAL PASS"
+else
+  echo "  SC-03 Gate B: SKIPPED (Gate C manual checklist still required per release)"
+fi
+echo "  Gate C: see test/sc03-gate-c.md (manual; once per release)"
 echo "  report: $REPORT_PATH"
 echo "================================================================"
-if [[ "$PASSED" -eq "$TOTAL" ]]; then exit 0; else exit 1; fi
+
+# Phase exit gate: Gate A 15/15 is MANDATORY; Gate B PASS-or-SKIP is acceptable.
+if [[ "$GATE_A_PASS" -ne "$GATE_A_TOTAL" ]]; then exit 1; fi
+if [[ $GATE_B_RAN -eq 1 && "$GATE_B_PASS" -ne "$GATE_B_TOTAL" ]]; then exit 1; fi
+exit 0
