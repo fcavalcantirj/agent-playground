@@ -2,66 +2,45 @@
   {
     "gate": "A",
     "recipe": "hermes",
-    "correlation_id": "40ba",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-40ba",
-    "reply_text": "OCI runtime exec failed: exec failed: unable to start container process: exec: \"hermes\": executable file not found in $PATH: unknown",
-    "wall_s": 0.13,
-    "verdict": "FAIL",
-    "error": "exit_code=127 stderr=''",
+    "correlation_id": "0827",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-0827",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-0827",
+    "wall_s": 10.17,
+    "verdict": "PASS",
+    "error": null,
     "round": 1
   },
   {
     "gate": "A",
-    "verdict": "ERROR",
-    "error": "harness crashed",
-    "round": 1,
-    "recipe": "hermes"
-  },
-  {
-    "gate": "A",
     "recipe": "hermes",
-    "correlation_id": "31b9",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-31b9",
-    "reply_text": "OCI runtime exec failed: exec failed: unable to start container process: exec: \"hermes\": executable file not found in $PATH: unknown",
-    "wall_s": 0.09,
-    "verdict": "FAIL",
-    "error": "exit_code=127 stderr=''",
+    "correlation_id": "59ed",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-59ed",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-59ed",
+    "wall_s": 6.02,
+    "verdict": "PASS",
+    "error": null,
     "round": 2
   },
   {
     "gate": "A",
-    "verdict": "ERROR",
-    "error": "harness crashed",
-    "round": 2,
-    "recipe": "hermes"
-  },
-  {
-    "gate": "A",
     "recipe": "hermes",
-    "correlation_id": "1218",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-1218",
-    "reply_text": "OCI runtime exec failed: exec failed: unable to start container process: exec: \"hermes\": executable file not found in $PATH: unknown",
-    "wall_s": 0.08,
-    "verdict": "FAIL",
-    "error": "exit_code=127 stderr=''",
+    "correlation_id": "fe7c",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-hermes-fe7c",
+    "reply_text": "\n╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮\nok-hermes-fe7c",
+    "wall_s": 8.08,
+    "verdict": "PASS",
+    "error": null,
     "round": 3
-  },
-  {
-    "gate": "A",
-    "verdict": "ERROR",
-    "error": "harness crashed",
-    "round": 3,
-    "recipe": "hermes"
   },
   {
     "gate": "B",
     "recipe": "hermes",
-    "correlation_id": "ff80",
-    "sent_text": "ping-22b-test-ff80",
+    "correlation_id": "16dd",
+    "sent_text": "ping-22b-test-16dd",
     "reply_sent_event": null,
-    "wall_s": 0.03,
+    "wall_s": 12.14,
     "verdict": "FAIL",
-    "error": "pre-query failed: HTTPError: HTTP Error 404: Not Found"
+    "error": "no matching reply_sent event in window"
   },
   {
     "gate": "B",
@@ -72,10 +51,10 @@
   {
     "gate": "A",
     "recipe": "picoclaw",
-    "correlation_id": "33f8",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-33f8",
+    "correlation_id": "a979",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-a979",
     "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
-    "wall_s": 3.35,
+    "wall_s": 2.3,
     "verdict": "PASS",
     "error": null,
     "round": 1
@@ -83,10 +62,10 @@
   {
     "gate": "A",
     "recipe": "picoclaw",
-    "correlation_id": "68c5",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-68c5",
+    "correlation_id": "3edb",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-3edb",
     "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
-    "wall_s": 1.47,
+    "wall_s": 1.87,
     "verdict": "PASS",
     "error": null,
     "round": 2
@@ -94,10 +73,10 @@
   {
     "gate": "A",
     "recipe": "picoclaw",
-    "correlation_id": "afde",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-afde",
+    "correlation_id": "b2a7",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-picoclaw-b2a7",
     "reply_text": "\n\u001b[1;38;2;62;93;185m██████╗ ██╗ ██████╗ ██████╗ \u001b[1;38;2;213;70;70m ██████╗██╗      █████╗ ██╗    ██╗\n\u001b[1;38;2;62;93;185m██╔══██╗██║██╔════╝██╔═══██╗\u001b[1;38;2;213;70;70m██╔════╝██║     ██╔══██╗██║    ██║\n\u001b[1;38;2;62;93;185m██████╔╝██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ███████║██║ █╗ ██║\n\u001b[1;38;2;62;93;185m██╔═══╝ ██║██║     ██║   ██║\u001b[1;38;2;213;70;70m██║     ██║     ██╔══██║██║███",
-    "wall_s": 3.19,
+    "wall_s": 1.45,
     "verdict": "PASS",
     "error": null,
     "round": 3
@@ -105,12 +84,12 @@
   {
     "gate": "B",
     "recipe": "picoclaw",
-    "correlation_id": "1e56",
-    "sent_text": "ping-22b-test-1e56",
+    "correlation_id": "c0de",
+    "sent_text": "ping-22b-test-c0de",
     "reply_sent_event": null,
-    "wall_s": 0.04,
+    "wall_s": 12.0,
     "verdict": "FAIL",
-    "error": "pre-query failed: HTTPError: HTTP Error 404: Not Found"
+    "error": "no matching reply_sent event in window"
   },
   {
     "gate": "B",
@@ -121,10 +100,10 @@
   {
     "gate": "A",
     "recipe": "nullclaw",
-    "correlation_id": "c639",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-c639",
-    "reply_text": "ok-nullclaw-c639\n",
-    "wall_s": 2.65,
+    "correlation_id": "f8be",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-f8be",
+    "reply_text": "ok-nullclaw-f8be\n",
+    "wall_s": 2.73,
     "verdict": "PASS",
     "error": null,
     "round": 1
@@ -132,10 +111,10 @@
   {
     "gate": "A",
     "recipe": "nullclaw",
-    "correlation_id": "334f",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-334f",
-    "reply_text": "ok-nullclaw-334f\n",
-    "wall_s": 3.11,
+    "correlation_id": "0de0",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-0de0",
+    "reply_text": "ok-nullclaw-0de0\n",
+    "wall_s": 2.26,
     "verdict": "PASS",
     "error": null,
     "round": 2
@@ -143,10 +122,10 @@
   {
     "gate": "A",
     "recipe": "nullclaw",
-    "correlation_id": "0aba",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-0aba",
-    "reply_text": "ok-nullclaw-0aba\n",
-    "wall_s": 2.64,
+    "correlation_id": "2a8c",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nullclaw-2a8c",
+    "reply_text": "ok-nullclaw-2a8c\n",
+    "wall_s": 1.95,
     "verdict": "PASS",
     "error": null,
     "round": 3
@@ -154,12 +133,12 @@
   {
     "gate": "B",
     "recipe": "nullclaw",
-    "correlation_id": "e679",
-    "sent_text": "ping-22b-test-e679",
+    "correlation_id": "8ffc",
+    "sent_text": "ping-22b-test-8ffc",
     "reply_sent_event": null,
-    "wall_s": 0.07,
+    "wall_s": 12.01,
     "verdict": "FAIL",
-    "error": "pre-query failed: HTTPError: HTTP Error 404: Not Found"
+    "error": "no matching reply_sent event in window"
   },
   {
     "gate": "B",
@@ -170,12 +149,61 @@
   {
     "gate": "A",
     "recipe": "nanobot",
-    "correlation_id": "b9b3",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-b9b3",
-    "reply_text": null,
-    "wall_s": 0.02,
+    "correlation_id": "c859",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-c859",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠹\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠼\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠦\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 9.74,
+    "verdict": "PASS",
+    "error": null,
+    "round": 1
+  },
+  {
+    "gate": "A",
+    "recipe": "nanobot",
+    "correlation_id": "0436",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-0436",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠹\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠏\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠋\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 8.11,
+    "verdict": "PASS",
+    "error": null,
+    "round": 2
+  },
+  {
+    "gate": "A",
+    "recipe": "nanobot",
+    "correlation_id": "4f0b",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-4f0b",
+    "reply_text": "\u001b[?25l\u001b[32m⠋\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠙\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠸\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠴\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠦\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠧\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠇\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠏\u001b[0m \u001b[2mnanobot is thinking...\u001b[0m\n\u001b[2K\u001b[32m⠋\u001b[0m \u001b[2mnanobot is ",
+    "wall_s": 13.06,
+    "verdict": "PASS",
+    "error": null,
+    "round": 3
+  },
+  {
+    "gate": "B",
+    "recipe": "nanobot",
+    "correlation_id": "3666",
+    "sent_text": "ping-22b-test-3666",
+    "reply_sent_event": null,
+    "wall_s": 12.18,
     "verdict": "FAIL",
-    "error": "URLError: <urlopen error [Errno 61] Connection refused>",
+    "error": "no matching reply_sent event in window"
+  },
+  {
+    "gate": "B",
+    "verdict": "ERROR",
+    "error": "harness crashed",
+    "recipe": "nanobot"
+  },
+  {
+    "gate": "A",
+    "recipe": "openclaw",
+    "correlation_id": "27f2",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-27f2",
+    "reply_text": null,
+    "wall_s": 0.11,
+    "verdict": "FAIL",
+    "error": "docker exec curl exit 7: \"curl: (7) Failed to connect to 127.0.0.1 port 18000 after 0 ms: Couldn't connect to server\\n\"",
     "round": 1
   },
   {
@@ -183,17 +211,17 @@
     "verdict": "ERROR",
     "error": "harness crashed",
     "round": 1,
-    "recipe": "nanobot"
+    "recipe": "openclaw"
   },
   {
     "gate": "A",
-    "recipe": "nanobot",
-    "correlation_id": "17bb",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-17bb",
+    "recipe": "openclaw",
+    "correlation_id": "a0f9",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-a0f9",
     "reply_text": null,
-    "wall_s": 0.01,
+    "wall_s": 0.18,
     "verdict": "FAIL",
-    "error": "URLError: <urlopen error [Errno 61] Connection refused>",
+    "error": "docker exec curl exit 7: \"curl: (7) Failed to connect to 127.0.0.1 port 18000 after 0 ms: Couldn't connect to server\\n\"",
     "round": 2
   },
   {
@@ -201,17 +229,17 @@
     "verdict": "ERROR",
     "error": "harness crashed",
     "round": 2,
-    "recipe": "nanobot"
+    "recipe": "openclaw"
   },
   {
     "gate": "A",
-    "recipe": "nanobot",
-    "correlation_id": "cb05",
-    "sent_text": "Please reply with exactly this text and nothing else: ok-nanobot-cb05",
+    "recipe": "openclaw",
+    "correlation_id": "7bf1",
+    "sent_text": "Please reply with exactly this text and nothing else: ok-openclaw-7bf1",
     "reply_text": null,
-    "wall_s": 0.02,
+    "wall_s": 0.22,
     "verdict": "FAIL",
-    "error": "URLError: <urlopen error [Errno 61] Connection refused>",
+    "error": "docker exec curl exit 7: \"curl: (7) Failed to connect to 127.0.0.1 port 18000 after 0 ms: Couldn't connect to server\\n\"",
     "round": 3
   },
   {
@@ -219,27 +247,22 @@
     "verdict": "ERROR",
     "error": "harness crashed",
     "round": 3,
-    "recipe": "nanobot"
+    "recipe": "openclaw"
   },
   {
     "gate": "B",
-    "recipe": "nanobot",
-    "correlation_id": "7181",
-    "sent_text": "ping-22b-test-7181",
+    "recipe": "openclaw",
+    "correlation_id": "ca65",
+    "sent_text": "ping-22b-test-ca65",
     "reply_sent_event": null,
-    "wall_s": 0.09,
+    "wall_s": 12.09,
     "verdict": "FAIL",
-    "error": "pre-query failed: HTTPError: HTTP Error 404: Not Found"
+    "error": "no matching reply_sent event in window"
   },
   {
     "gate": "B",
     "verdict": "ERROR",
     "error": "harness crashed",
-    "recipe": "nanobot"
-  },
-  {
-    "recipe": "openclaw",
-    "stage": "smoke",
-    "verdict": "FAIL"
+    "recipe": "openclaw"
   }
 ]
