@@ -24,18 +24,68 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase 22b (agent-event-stream) — **COMPLETE 2026-04-19** at commit `eb06c5a`. SC-03 unblocked for the first time.
+**Phase 22c (oauth-google) — SPEC'd, ready for /gsd-discuss-phase** at commit `d9863d2`.
 
-**Live evidence (committed in `e2e-report.json`):**
-- Gate A: 15/15 PASS (5 recipes × 3 rounds direct_interface)
-- Gate B: 5/5 PASS (5 recipes × 1 inject-test-event round-trip)
-- Lint: 27/27 tests pass
-- Verifier: 21/21 truths PASSED at commit `4745129`
+### Stack of completed work this session (2026-04-19)
 
-**Next:**
-1. Flip Phase 22 (parent) checkbox in ROADMAP.md (SC-03 now satisfied)
-2. Run Gate C manual checklist before any release tag (`test/sc03-gate-c.md`)
-3. Pick next phase per `.planning/audit/ACTION-LIST.md` — likely OAuth track (unblocks the 11 mocked dashboard pages) or SC-04 (rich event kinds)
+| Phase / Task | Status | Commit | What landed |
+|---|---|---|---|
+| Phase 22b (agent-event-stream) | COMPLETE | `eb06c5a` | SC-03 unblocked: Gate A 15/15 + Gate B 5/5 PASS in `e2e-report.json`; verifier 21/21 truths PASSED; 9 plans across 5 waves |
+| Quick task `260419-moq` (dashboard real-API) | COMPLETE | `2260dad`, `3520834`, `2e9e3be` | `frontend/app/dashboard/page.tsx` now fetches real `/v1/agents` (59 real rows); Stop button wired to POST /v1/agents/:id/stop with Bearer prompt + 2s status polling; mockAgents + Agent interface + toggleAgentStatus + deleteAgent removed |
+| Phase 22c (oauth-google) | SPEC'd | `d9863d2` | 8 falsifiable requirements + 12 acceptance criteria + 3 locked decisions (server-table sessions, purge ANONYMOUS via alembic 006, authlib); ambiguity 0.16 |
+
+### 📍 RESUME ANCHOR — READ AFTER /clear
+
+**The next command is:**
+```
+/gsd-discuss-phase 22c-oauth-google
+```
+
+**Read these files in this order on resume (after /clear):**
+
+1. `memory/MEMORY.md` (auto-loaded; index of all memories)
+2. `memory/project_phase_22c_handoff.md` — full Phase 22c handoff, locked decisions, OAuth credentials location
+3. `.planning/phases/22c-oauth-google/22c-SPEC.md` — sealed contract (8 requirements + 3 decisions + boundaries)
+4. `memory/project_phase_22b_handoff.md` — what just shipped (Phase 22b SC-03 GREEN)
+5. `memory/feedback_worktree_breaks_for_live_infra.md` — Option B pattern for live-infra plans (use when applicable in 22c)
+6. `memory/feedback_test_everything_before_planning.md` — golden rule #5 (spike-first); apply BEFORE sealing 22c plans
+7. `.planning/audit/ACTION-LIST.md` — line 108 says OAuth is the single biggest unblocker (gates 4 frontend pages + 8 backend endpoints)
+8. `api_server/src/api_server/services/crypto.py` — reusable age-KEK pattern for refresh-token encryption-at-rest
+9. `frontend/app/dashboard/layout.tsx` — currently hardcodes "Alex Chen"; 22c replaces with real `/v1/users/me`
+
+### Live infra state (preserved between /clear)
+
+- API server runs at http://localhost:8000 with `{"ok":true}` healthz
+- Postgres at deploy-postgres-1; agent_events table exists (alembic 004 applied)
+- 59 agents currently in `agent_instances` keyed to `00000000-0000-0000-0000-000000000001` — Phase 22c alembic 006 will purge these
+- Frontend dev server may or may not be running; restart with: `cd frontend && pnpm dev`
+- All required env vars present in `deploy/.env.prod` (gitignored): POSTGRES_PASSWORD, AP_CHANNEL_MASTER_KEY, AP_SYSADMIN_TOKEN, AP_OAUTH_GOOGLE_CLIENT_ID, AP_OAUTH_GOOGLE_CLIENT_SECRET, AP_OAUTH_GOOGLE_REDIRECT_URI
+
+### Local dev stack restart (if needed after /clear)
+
+```bash
+cd /Users/fcavalcanti/dev/agent-playground
+
+# Bring up the prod-shaped local stack (uses deploy/.env.prod for substitution)
+docker compose --env-file deploy/.env.prod \
+  -f deploy/docker-compose.prod.yml \
+  -f deploy/docker-compose.local.yml \
+  up -d
+
+# Verify
+curl -s http://localhost:8000/healthz   # → {"ok":true}
+
+# Frontend dev (from project root)
+cd frontend && pnpm dev   # → http://localhost:3000
+```
+
+### Open backlog (per ACTION-LIST.md after Phase 22c)
+
+- 22c.1: GitHub OAuth (after Google shape proven)
+- Dashboard sub-pages: `/dashboard/agents`, `/dashboard/agents/[id]`, `/dashboard/analytics`, `/dashboard/api-keys`, `/dashboard/billing`, `/dashboard/notifications`, `/dashboard/profile`, `/dashboard/settings` (all currently mocked)
+- Backend Rule-2 cleanup: `GET /v1/personalities` + `RecipeSummary.tagline` + `RecipeSummary.accent` (kills 3 client-side catalogs)
+- B1: `pass_if` field always NULL in RunResponse (low-pri user-facing bug)
+- Gate C manual checklist run before any release tag (`test/sc03-gate-c.md`)
 
 Execution summary (2026-04-18):
 

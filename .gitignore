@@ -1,9 +1,14 @@
 .env
 .env.local
 .env.*.local
-# Phase 22-02: deploy/.env.prod holds live POSTGRES_PASSWORD and
-# AP_CHANNEL_MASTER_KEY. Template lives in deploy/.env.prod.example.
+# Phase 22-02: deploy/.env.prod holds live POSTGRES_PASSWORD,
+# AP_CHANNEL_MASTER_KEY, AP_SYSADMIN_TOKEN, AP_OAUTH_GOOGLE_* secrets.
+# Template lives in deploy/.env.prod.example.
 deploy/.env.prod
+
+# Runtime state from Claude Code worktree isolation + scheduler
+.claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # Python
 __pycache__/
