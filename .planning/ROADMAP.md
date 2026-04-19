@@ -355,7 +355,7 @@ Plans:
 **Plans:** 9 plans across 5 waves
 
 Plans:
-- [ ] 22c-01-PLAN.md — Wave 0 spikes (respx × authlib interop + TRUNCATE CASCADE 8-table FK graph) + deps + test dir scaffolds [Wave 0 GATE]
+- [x] 22c-01-PLAN.md — Wave 0 spikes (respx × authlib interop + TRUNCATE CASCADE 7-table FK graph; Mode B since 005 ships in 22c-02) + deps + test dir scaffolds [Wave 0 GATE CLEARED 2026-04-19; see 22c-01-SUMMARY.md]
 - [ ] 22c-02-PLAN.md — Alembic migration 005: sessions table + users.{sub,avatar_url,last_login_at} + UNIQUE(provider,sub) partial index [Wave 1]
 - [ ] 22c-03-PLAN.md — config.py Pydantic fields + auth/oauth.py authlib registry (google + github) + upsert_user + mint_session + deploy/.env.prod.example update [Wave 1]
 - [ ] 22c-04-PLAN.md — SessionMiddleware (ap_session cookie → request.state.user_id) + last_seen throttle + log_redact docstring + 3 integration tests [Wave 2]

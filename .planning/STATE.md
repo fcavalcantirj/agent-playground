@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22c (oauth-google) PLANNED — 9 plans in 6 waves, Wave 0 gate + checker PASS
-stopped_at: 2026-04-19 — Phase 22c ready for execution
-last_updated: "2026-04-19T22:00:00.000Z"
+status: Phase 22c (oauth-google) IN PROGRESS — 1/9 plans complete (22c-01 Wave 0 gate CLEARED); 22c-02 + 22c-03 (Wave 1) authorized to execute in parallel
+stopped_at: 2026-04-19T23:31Z — 22c-01 shipped, Wave 1 ready
+last_updated: "2026-04-19T23:31:11.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_plans: 41
+  completed_plans: 33
+  percent: 80
 ---
 
 # Project State
@@ -34,13 +34,14 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 | Quick task `260419-moq` (dashboard real-API) | COMPLETE | `2260dad`, `3520834`, `2e9e3be` | `frontend/app/dashboard/page.tsx` now fetches real `/v1/agents` (59 real rows); Stop button wired to POST /v1/agents/:id/stop with Bearer prompt + 2s status polling; mockAgents + Agent interface + toggleAgentStatus + deleteAgent removed |
 | Phase 22c (oauth-google) SPEC | COMPLETE | `d9863d2` | 8 falsifiable requirements + 12 acceptance criteria + 3 locked decisions; ambiguity 0.16 |
 | Phase 22c (oauth-google) CONTEXT | COMPLETE | `62ff031` | 19 locked decisions + 4 AMDs (GitHub scope, refresh-token drop, ANONYMOUS purge) |
-| Phase 22c (oauth-google) RESEARCH + PATTERNS + VALIDATION + 9 PLANs | **PLANNED** | pending commit | 9 plans in 6 waves (Wave 0 gate: respx×authlib spike + TRUNCATE-CASCADE 8-table spike). 3 new AMDs added post-research (AMD-05 respx not responses; AMD-06 proxy.ts not middleware.ts; AMD-07 AP_OAUTH_STATE_SECRET env var). Plan-checker PASS iteration 3/3 (0 blockers). Covers R1..R8 + AMD-01..07 + 5 PATTERNS gap-closures. |
+| Phase 22c (oauth-google) RESEARCH + PATTERNS + VALIDATION + 9 PLANs | **PLANNED** | `394fd7f` | 9 plans in 6 waves (Wave 0 gate: respx×authlib spike + TRUNCATE-CASCADE 8-table spike). 3 new AMDs added post-research (AMD-05 respx not responses; AMD-06 proxy.ts not middleware.ts; AMD-07 AP_OAUTH_STATE_SECRET env var). Plan-checker PASS iteration 3/3 (0 blockers). Covers R1..R8 + AMD-01..07 + 5 PATTERNS gap-closures. |
+| Phase 22c-01 (Wave 0 spike gate) | **COMPLETE** | `dc43879`, `4f37b58`, `9cf282c` | SPIKE-A green (respx 0.23.1 intercepts authlib 1.6.11's httpx 0.28.1 token-exchange; AMD-05 validated; Rule-3 deviation: respx pin bumped from 0.21 to 0.22+). SPIKE-B green Mode B (7 tables, alembic HEAD=004; auto-upgrades to Mode A when 22c-02 ships 005): single TRUNCATE CASCADE clears users + agent_instances + agent_containers + runs + agent_events + idempotency_keys + rate_limit_counters + preserves alembic_version. Evidence markdowns + SUMMARY committed. 3 Rule-3 deviations auto-fixed (respx pin, TESTCONTAINERS_RYUK_DISABLED, PG network attach). See `.planning/phases/22c-oauth-google/22c-01-SUMMARY.md`. |
 
 ### 📍 RESUME ANCHOR — READ AFTER /clear
 
 **The next command is:**
 ```
-/gsd-execute-phase 22c-oauth-google
+/gsd-execute-phase 22c-oauth-google  # Wave 0 CLEARED; resume at Wave 1 (22c-02 + 22c-03 in parallel)
 ```
 
 **Read these files in this order on resume (after /clear):**
