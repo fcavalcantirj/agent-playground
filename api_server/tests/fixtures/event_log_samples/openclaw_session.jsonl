@@ -1,0 +1,10 @@
+{"type":"session","id":"a1b2c3d4","timestamp":"2026-04-18T22:33:40.000Z","sessionId":"sess-openclaw-01","origin":{"from":"telegram:152099202","provider":"telegram"}}
+{"type":"model_change","id":"m1","timestamp":"2026-04-18T22:33:41.000Z","model":{"primary":"anthropic/claude-haiku-4-5"}}
+{"type":"thinking_level_change","id":"t1","timestamp":"2026-04-18T22:33:42.000Z","level":"medium"}
+{"type":"message","id":"u-001","parentId":null,"timestamp":"2026-04-18T22:33:43.000Z","message":{"role":"user","content":[{"type":"text","text":"Hi"}]}}
+{"type":"message","id":"a-001","parentId":"u-001","timestamp":"2026-04-18T22:34:10.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user said hi — I should introduce myself."},{"type":"text","text":"Hello! I'm OpenClaw. How can I help you today?"}]}}
+{"type":"message","id":"u-002","parentId":"a-001","timestamp":"2026-04-18T22:33:50.000Z","message":{"role":"user","content":[{"type":"text","text":"spk01e please reply with only: ok-openclaw-01"}]}}
+{"type":"thinking_level_change","id":"t2","timestamp":"2026-04-18T22:33:52.000Z","level":"medium"}
+{"type":"message","id":"3c7038fd","parentId":"eb2e151a","timestamp":"2026-04-18T22:33:54.599Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user is asking me to reply with a specific token only."},{"type":"text","text":"ok-openclaw-01"}]}}
+{"type":"model_change","id":"m2","timestamp":"2026-04-18T22:34:00.000Z","model":{"primary":"anthropic/claude-haiku-4-5"}}
+{"type":"session","id":"a1b2c3d4-end","timestamp":"2026-04-18T22:34:30.000Z","event":"session_idle"}

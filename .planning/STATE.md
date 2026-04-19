@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Executing Phase 22
+status: Executing Phase 22b
 stopped_at: context exhaustion at 90% (2026-04-18)
-last_updated: "2026-04-18T17:26:44.695Z"
+last_updated: "2026-04-19T01:00:26.862Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,15 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 22 — channels-v0.2
+**Current focus:** Phase 22b — agent-event-stream
 
 ## Current Position
 
-Phase: 22 (channels-v0.2) — EXECUTED, SC-03 BLOCKED on Plan 22-07 design flaw
-Plan: SC-03 gate re-routed to new **Phase 22b** (agent event stream)
+Phase: 22b (agent-event-stream) — EXECUTING
+Plan: 1 of 6
 Next:  `/gsd-discuss-phase 22b-agent-event-stream` — see `.planning/phases/22b-agent-event-stream/CONTEXT.md`
 
 Execution summary (2026-04-18):
+
 - Wave 1: 22-01 (v0.2 schema + JSON Schema + RecipeSummary surface) + 22-02 (alembic 003 agent_containers + age-KEK crypto) — merged at 439d3b5
 - Wave 2: 22-03 (runner `run_cell_persistent`/`stop_persistent`/`exec_in_persistent`) + 22-04 (async bridge wrappers `execute_persistent_{start,stop,status,exec}`) — merged at 9784615
 - Wave 3: 22-05 (4 HTTP endpoints /v1/agents/:id/{start,stop,status,channels/:cid/pair}) — merged at 60496b2
@@ -44,6 +45,7 @@ ping; harness times out. Full writeup:
 `.planning/phases/22-channels-v0.2/22-SC03-DESIGN-FLAW.md`.
 
 What's proven live against the local stack:
+
 - `POST /v1/runs` hermes+haiku-4.5 via OpenRouter → PASS (20.51s)
 - `POST /v1/agents/:id/start` with Telegram creds → container running, boot ~11s
 - `POST /v1/agents/:id/stop` → clean reap, no dangling containers
@@ -64,6 +66,7 @@ form is `anthropic/claude-haiku-4.5`. Fix committed.
 - API server container: rebuilt from HEAD (Phase 22 code baked in)
 - `AP_CHANNEL_MASTER_KEY` — required in shell env before `docker compose up`
   (NOT written to `deploy/.env.prod`; per-laptop per CLAUDE.md rule)
+
 - `.env.local` has `TELEGRAM_USER_CHAT_ID` — the script expects `TELEGRAM_CHAT_ID`,
   alias with `export TELEGRAM_CHAT_ID="$TELEGRAM_USER_CHAT_ID"`
 
@@ -112,27 +115,34 @@ agent runs history. Multi-phase work ordered after OAuth unblock.
 
 1. `.planning/phases/22-channels-v0.2/22-SC03-DESIGN-FLAW.md` — why
    Phase 22a can't close on its own and what blocks 15/15 round-trips
+
 2. `.planning/phases/22b-agent-event-stream/CONTEXT.md` — proposed
    architecture for the SC-03 fix (docker-log → Postgres → API → harness)
+
 3. `.planning/audit/ACTION-LIST.md` — what to build after 22b
    (prioritized per-page with real endpoint specs; OAuth still pending)
+
 4. `.planning/phases/22-channels-v0.2/22-CONTEXT.md` — Phase 22a scope
    (reference only — 6 of 7 plans already shipped)
+
 5. `memory/MEMORY.md` — updated with 22a-completed + 22b-proposed entries
 
 **Next commands:**
 
 1. `/gsd-discuss-phase 22b-agent-event-stream` — challenge or confirm
    the architecture in `22b/CONTEXT.md`, gather gray-area questions.
+
 2. `/gsd-plan-phase 22b-agent-event-stream` — produce PLAN files.
 3. `/gsd-execute-phase 22b-agent-event-stream` — ship it.
 4. Rerun `bash test/e2e_channels_v0_2.sh` — closes SC-03, unblocks Phase 22 exit.
 
 **Parallel (OAuth track, unchanged from previous plan):**
+
 - `/gsd-spec-phase 22c-oauth` — spec OAuth (Google + GitHub),
   `/v1/users/me`, session cookie. Blocks 11 dashboard pages.
 
 **Local-dev env for repro:**
+
 ```bash
 export AP_CHANNEL_MASTER_KEY="2JAvJ9FwihbRyukvXDBnqVEK2Umf5ibHEy7KsFq5gTU="
 export TELEGRAM_CHAT_ID="$TELEGRAM_USER_CHAT_ID"

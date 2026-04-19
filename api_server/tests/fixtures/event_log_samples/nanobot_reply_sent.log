@@ -1,0 +1,4 @@
+# Extracted from spike-01d-nanobot on 2026-04-18 (docker logs cf900fde9dbb)
+2026-04-18 21:25:57.600 | DEBUG    | nanobot.channels.telegram:_on_message:921 - Telegram message from 152099202|fcavalcantirj: spk01d please reply with only: ok-nanobot-01
+2026-04-18 21:25:58.511 | INFO     | nanobot.agent.loop:_process_message:666 - Processing message from telegram:152099202|fcavalcantirj: spk01d please reply with only: ok-nanobot-01
+2026-04-18 21:26:03.834 | INFO     | nanobot.agent.loop:_process_message:761 - Response to telegram:152099202|fcavalcantirj: ok-nanobot-01

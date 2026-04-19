@@ -1,0 +1,4 @@
+# Extracted from spike-01a-hermes on 2026-04-18 (docker logs bd307cbb96d6)
+INFO gateway.run: inbound message: platform=telegram user=Felipe chat=152099202 msg='oi'
+INFO gateway.run: response ready: platform=telegram chat=152099202 time=13.9s api_calls=1 response=65 chars
+INFO gateway.platforms.base: [Telegram] Sending response (65 chars) to 152099202
