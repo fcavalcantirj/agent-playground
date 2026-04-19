@@ -53,6 +53,9 @@ class ErrorCode:
     AGENT_ALREADY_RUNNING = "AGENT_ALREADY_RUNNING"
     CHANNEL_NOT_CONFIGURED = "CHANNEL_NOT_CONFIGURED"
     CHANNEL_INPUTS_INVALID = "CHANNEL_INPUTS_INVALID"
+    # Phase 22b-05: event-stream error codes.
+    CONCURRENT_POLL_LIMIT = "CONCURRENT_POLL_LIMIT"       # 429 — D-13
+    EVENT_STREAM_UNAVAILABLE = "EVENT_STREAM_UNAVAILABLE" # 503 — reserved (watcher-dead future)
 
 
 _CODE_TO_TYPE = {
@@ -75,6 +78,9 @@ _CODE_TO_TYPE = {
     ErrorCode.AGENT_ALREADY_RUNNING: "conflict",
     ErrorCode.CHANNEL_NOT_CONFIGURED: "invalid_request",
     ErrorCode.CHANNEL_INPUTS_INVALID: "invalid_request",
+    # Phase 22b-05 additions.
+    ErrorCode.CONCURRENT_POLL_LIMIT: "rate_limit_error",
+    ErrorCode.EVENT_STREAM_UNAVAILABLE: "infra_error",
 }
 
 

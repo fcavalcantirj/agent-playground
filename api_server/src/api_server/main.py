@@ -35,6 +35,7 @@ from .middleware.correlation_id import CorrelationIdMiddleware
 from .middleware.idempotency import IdempotencyMiddleware
 from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
+from .routes import agent_events as agent_events_route
 from .routes import agent_lifecycle as agent_lifecycle_route
 from .routes import agents as agents_route
 from .routes import health
@@ -225,6 +226,11 @@ def create_app() -> FastAPI:
     # matches unambiguously.
     app.include_router(
         agent_lifecycle_route.router, prefix="/v1", tags=["agents"]
+    )
+    # Phase 22b-05: GET /v1/agents/:id/events — long-poll event stream
+    # consumed by the SC-03 Gate B test harness (Plan 22b-06).
+    app.include_router(
+        agent_events_route.router, prefix="/v1", tags=["agents"]
     )
     return app
 
