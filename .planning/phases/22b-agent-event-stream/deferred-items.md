@@ -41,3 +41,38 @@ rule — out-of-scope items are documented, not fixed.
   OR add a `make bootstrap` target that runs it.
 - **Owner:** deferred — observed during 22b-01 Task 1 verification, worked
   around in-place by running the install once in the venv.
+
+---
+
+## DI-03 — `tests/test_migration.py` calls `alembic` CLI directly (PATH-fragile)
+
+- **File:** `api_server/tests/test_migration.py` line ~51 — `subprocess.run(["alembic", ...])`.
+- **Symptom:** 8 errors `FileNotFoundError: [Errno 2] No such file or directory: 'alembic'`
+  on any environment where the alembic console script is not on PATH (e.g.
+  worktree-local venvs that install dependencies but don't propagate the
+  console script).
+- **Pre-existing:** YES — present since Phase 19 baseline; my new
+  `tests/test_events_migration.py` uses the safer `[sys.executable, "-m",
+  "alembic", ...]` pattern (matches `tests/conftest.py::migrated_pg`).
+- **Recommended fix:** convert `test_migration.py::_alembic` to use
+  `[sys.executable, "-m", "alembic", *args]` — same one-line change made in
+  `conftest.py::migrated_pg`.
+- **Owner:** deferred — not caused by 22b-02; my events-migration test
+  isn't affected.
+
+---
+
+## DI-04 — `tests/test_idempotency.py::test_same_key_different_users_isolated` violates NOT NULL on `agent_instances.name`
+
+- **File:** `api_server/tests/test_idempotency.py`
+- **Symptom:** `asyncpg.exceptions.NotNullViolationError: null value in
+  column "name" of relation "agent_instances"` — the test inserts an
+  `agent_instances` row without supplying `name`, but migration 002
+  (Phase 22 series) made `name NOT NULL`.
+- **Pre-existing:** YES — `test_idempotency.py` last touched in commit
+  `1c4ba36` (Phase 19-05); migration 002 landed in Phase 22-01. The test
+  was not updated when the column became required.
+- **Recommended fix:** add `name = 'idempotency-test-{user_id_short}'`
+  (or similar) to the test's INSERT helper.
+- **Owner:** deferred — not caused by 22b-02 (no Plan 22b-02 file touches
+  `tests/test_idempotency.py`).
