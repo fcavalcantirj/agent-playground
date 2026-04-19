@@ -232,3 +232,86 @@ class TestBaselineMigration:
     def test_downgrade_then_upgrade(self, pg, migrated):
         _alembic(pg, "downgrade", "base")
         _alembic(pg, "upgrade", "head")
+
+
+@pytest.mark.api_integration
+@pytest.mark.asyncio
+async def test_migration_005_sessions_and_users_columns(migrated_pg):
+    """Phase 22c migration 005 — additive schema change.
+
+    Asserts:
+      * users has sub/avatar_url/last_login_at columns
+      * users has partial unique index on (provider, sub) WHERE sub IS NOT NULL
+      * sessions table exists with expected columns + FK + btree index
+    """
+    raw = migrated_pg.get_connection_url()
+    dsn = raw.replace("postgresql+psycopg2://", "postgres://").replace(
+        "+psycopg2", ""
+    )
+    conn = await asyncpg.connect(dsn)
+    try:
+        users_cols = {
+            r["column_name"]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='users'"
+            )
+        }
+        assert {"sub", "avatar_url", "last_login_at"}.issubset(users_cols), (
+            f"users missing 22c columns; has {users_cols}"
+        )
+
+        sessions_cols = [
+            r["column_name"]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='sessions' ORDER BY ordinal_position"
+            )
+        ]
+        assert sessions_cols == [
+            "id",
+            "user_id",
+            "created_at",
+            "expires_at",
+            "last_seen_at",
+            "revoked_at",
+            "user_agent",
+            "ip_address",
+        ], f"sessions schema drift: {sessions_cols}"
+
+        idx = await conn.fetchrow(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE tablename='users' AND indexname='uq_users_provider_sub'"
+        )
+        assert idx is not None, "uq_users_provider_sub index missing"
+        assert "sub IS NOT NULL" in idx["indexdef"], (
+            f"partial-index predicate missing: {idx['indexdef']}"
+        )
+
+        fk_rule = await conn.fetchval(
+            "SELECT rc.delete_rule "
+            "FROM information_schema.referential_constraints rc "
+            "JOIN information_schema.table_constraints tc "
+            "  ON rc.constraint_name = tc.constraint_name "
+            "WHERE tc.table_name='sessions'"
+        )
+        assert fk_rule == "CASCADE", (
+            f"sessions FK delete rule is {fk_rule}, expected CASCADE"
+        )
+
+        user_id_idx = await conn.fetchval(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename='sessions' AND indexname='ix_sessions_user_id'"
+        )
+        assert user_id_idx == "ix_sessions_user_id", (
+            "ix_sessions_user_id btree index missing"
+        )
+
+        version = await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        )
+        assert version == "005_sessions_and_oauth_users", (
+            f"alembic HEAD is {version!r}; 005 not applied"
+        )
+    finally:
+        await conn.close()
