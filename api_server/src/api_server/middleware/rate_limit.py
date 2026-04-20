@@ -68,18 +68,36 @@ def _bucket_for(scope: Scope) -> str | None:
 
 
 def _subject_from_scope(scope: Scope, trusted_proxy: bool) -> str:
-    """Return the rate-limit subject (IP or user) for the request.
+    """Return the rate-limit subject (user or IP) for the request.
 
-    When ``trusted_proxy=True`` (Caddy in front in prod), the first IP
-    in ``X-Forwarded-For`` is used — Caddy appends the real client IP
-    to the head of the list. When ``trusted_proxy=False`` (default),
-    XFF is IGNORED entirely: an attacker can send any value they want
-    in that header and the server must not trust it (T-19-05-01).
+    Phase 22c-06: the user-scoped subject takes precedence when
+    ``SessionMiddleware`` (plan 22c-04) has resolved a UUID into
+    ``scope['state']['user_id']``. Format is ``user:<uuid>`` so the
+    rate-limit counter row is distinct from any IP-scoped row for the
+    same peer. The UUID itself is never returned to the caller and
+    never logged — it only lives inside the counter key.
+
+    Falls back to the pre-22c IP-based resolution for anonymous
+    requests. When ``trusted_proxy=True`` (Caddy in front in prod), the
+    first IP in ``X-Forwarded-For`` is used — Caddy appends the real
+    client IP to the head of the list. When ``trusted_proxy=False``
+    (default), XFF is IGNORED entirely: an attacker can send any value
+    they want in that header and the server must not trust it
+    (T-19-05-01).
 
     When no peer IP is available (e.g. unix-socket client), returns
-    ``"unknown"`` so all such requests share a single bucket — preferable
-    to letting the rate limiter silently skip the check.
+    ``"unknown"`` so all such requests share a single bucket —
+    preferable to letting the rate limiter silently skip the check.
     """
+    # Phase 22c-06: user-scoped rate limit takes precedence when
+    # SessionMiddleware has resolved a UUID. Clean two-line extraction
+    # mirrors the form used in middleware/idempotency.py — no opaque
+    # getattr+lambda chains.
+    state = scope.get("state") or {}
+    user_id = state.get("user_id")
+    if user_id is not None:
+        return f"user:{user_id}"
+
     if trusted_proxy:
         for name, value in scope.get("headers", []):
             if name == b"x-forwarded-for":

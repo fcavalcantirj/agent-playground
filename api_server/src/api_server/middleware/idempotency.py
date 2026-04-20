@@ -15,10 +15,12 @@ idempotency for ``POST /v1/runs`` ONLY (CONTEXT.md §D-01 / §D-07):
 
 Cross-user isolation is enforced in the service layer: every query
 filters on ``user_id`` and the advisory lock key mixes ``user_id`` in.
-Phase 19 has a single anonymous user so this is proven by schema
-invariants rather than runtime separation. Phase 21+ swaps
-``ANONYMOUS_USER_ID`` for a session-resolved user id; no middleware
-change needed.
+Phase 22c (plan 22c-06): ``user_id`` is resolved from ``scope['state']``
+set by the upstream ``SessionMiddleware`` (plan 22c-04). Anonymous
+requests (None ``user_id``) pass through without an idempotency lookup
+— they will 401 downstream via ``require_user``. This means the
+idempotency_keys table only ever holds rows owned by an authenticated
+user (NOT-NULL FK survives; no placeholder seed rows).
 
 **Fail-open on backend error:** a Postgres outage causes the
 middleware to log and pass through (uncached) rather than fail the
@@ -40,7 +42,6 @@ import logging
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ..constants import ANONYMOUS_USER_ID
 from ..models.errors import ErrorCode, make_error_envelope
 from ..services.idempotency import check_or_reserve, hash_body, write_idempotency
 
@@ -156,7 +157,21 @@ class IdempotencyMiddleware:
         # matches Stripe's behavior and keeps the mismatch check sharp.
         body = await _read_body(receive)
         body_hash = hash_body(body)
-        user_id = ANONYMOUS_USER_ID  # Phase 19 — Phase 21+ resolves real user
+
+        # Phase 22c-06: SessionMiddleware (plan 22c-04) sets
+        # scope['state']['user_id'] to a UUID (valid session) or None
+        # (no/invalid/expired/revoked). When None, the request is
+        # anonymous — protected routes will 401 via require_user a few
+        # layers later. We skip the idempotency reservation entirely so
+        # anonymous replays don't touch the idempotency_keys table
+        # (avoiding a NOT-NULL violation on user_id and avoiding the
+        # "poisoned-cache" attack where an unauthenticated attacker
+        # warms a key before the real user calls it).
+        state = scope.get("state") or {}
+        user_id = state.get("user_id")
+        if user_id is None:
+            await self.app(scope, _replay_receive(body), send)
+            return
 
         app = scope["app"]
         try:
