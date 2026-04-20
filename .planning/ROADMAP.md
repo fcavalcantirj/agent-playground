@@ -358,7 +358,7 @@ Plans:
 - [x] 22c-01-PLAN.md — Wave 0 spikes (respx × authlib interop + TRUNCATE CASCADE 7-table FK graph; Mode B since 005 ships in 22c-02) + deps + test dir scaffolds [Wave 0 GATE CLEARED 2026-04-19; see 22c-01-SUMMARY.md]
 - [x] 22c-02-PLAN.md — Alembic migration 005: sessions table + users.{sub,avatar_url,last_login_at} + UNIQUE(provider,sub) partial index [Wave 1 COMPLETE 2026-04-19; applied live to deploy-postgres-1; see 22c-02-SUMMARY.md]
 - [x] 22c-03-PLAN.md — config.py Pydantic fields + auth/oauth.py authlib registry (google + github) + upsert_user + mint_session + deploy/.env.prod.example update [Wave 1 COMPLETE 2026-04-19; see 22c-03-SUMMARY.md]
-- [ ] 22c-04-PLAN.md — SessionMiddleware (ap_session cookie → request.state.user_id) + last_seen throttle + log_redact docstring + 3 integration tests [Wave 2]
+- [x] 22c-04-PLAN.md — SessionMiddleware (ap_session cookie → request.state.user_id) + last_seen throttle + log_redact docstring + 10 middleware tests (6 R3 + 2 throttle + 2 cookie-redact) [Wave 2 COMPLETE 2026-04-20; see 22c-04-SUMMARY.md]
 - [ ] 22c-05-PLAN.md — auth/deps.py require_user + routes/auth.py (5 endpoints) + routes/users.py + main.py middleware stack + 12 integration tests [Wave 3]
 - [ ] 22c-06-PLAN.md — Alembic migration 006 destructive purge + ANONYMOUS_USER_ID deletion + 4 route files migrated + idempotency/rate_limit user_id wiring [Wave 4]
 - [ ] 22c-07-PLAN.md — Frontend useUser hook + rewrite login/page.tsx + dashboard/layout.tsx + navbar.tsx real logout button [Wave 4]
