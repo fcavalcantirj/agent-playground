@@ -80,3 +80,41 @@ cd api_server && .venv/bin/python -m pytest \
 That invocation passes (verified 2026-04-19 — 1 passed in 3.55s).
 Running the test from inside `deploy-api_server-1` hits the conftest
 DSN-gateway issue above and is deferred to 22c-06.
+
+## 22c-05 (Wave 3, OAuth routes + tests) — 2026-04-20
+
+### PRE-EXISTING: 3 integration tests fail on main (pre-22c-05)
+
+Files + symptoms:
+
+- `tests/test_recipes.py::test_list_recipes_returns_five` — `assert 'ap.recipe/v0.2' == 'ap.recipe/v0.1'`. The recipes on disk are v0.2 but the test asserts v0.1.
+- `tests/test_idempotency.py::test_same_key_different_users_isolated` — cross-user isolation test already failing on main; unrelated to 22c-05.
+- `tests/test_busybox_tail_line_buffer.py::test_busybox_tail_line_buffer` — "BusyBox tail -F did NOT line-buffer within 500ms". Environmental/Docker timing.
+
+Evidence of pre-existence: confirmed by stashing the 22c-05 working tree
+(10 new test files + conftest extension) and running the same three
+tests against clean `main` at `eb2dcb6` — all three failed with the
+same errors.
+
+Scope: OUT OF SCOPE for 22c-05. Logged here for a later clean-up pass.
+22c-05 does NOT modify any of those three files and does not touch the
+recipes catalog, idempotency middleware, or the BusyBox tail fallback.
+
+### TRUNCATE list extended to include ``sessions`` + non-anonymous ``users``
+
+Intentional 22c-05 change, not a deferred item. `tests/conftest.py`'s
+`_truncate_tables` autouse fixture was extended to:
+
+1. Add `sessions` to the TRUNCATE CASCADE list.
+2. After TRUNCATE, run `DELETE FROM users WHERE id !=
+   '00000000-0000-0000-0000-000000000001'` to clear non-ANONYMOUS
+   users while preserving the seeded row.
+
+Rationale: every integration test in `tests/auth/` + `tests/routes/test_users_me.py`
+seeds its own user + session rows and expects a clean slate between
+tests. Without this, `authenticated_cookie` would leave a session behind
+which could race with a subsequent test's revoked-session check.
+
+Impact: verified against the full integration suite (`pytest -m
+api_integration`) — no regression in any of the 109 previously-green
+integration tests.

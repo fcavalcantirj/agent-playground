@@ -118,9 +118,20 @@ async def _truncate_tables(request):
     )
     try:
         async with cleanup_pool.acquire() as conn:
+            # Phase 22c-05: ``sessions`` added to the truncate list — each
+            # integration test in ``tests/auth/`` + ``tests/routes/test_users_me.py``
+            # seeds its own session row and expects a clean slate. ``users``
+            # stays out of truncate (ANONYMOUS seed row protection) but we
+            # delete non-anonymous rows in a second statement so tests that
+            # upsert a new google/github user don't leave PII behind.
             await conn.execute(
-                "TRUNCATE TABLE rate_limit_counters, idempotency_keys, runs, "
-                "agent_instances RESTART IDENTITY CASCADE"
+                "TRUNCATE TABLE sessions, rate_limit_counters, "
+                "idempotency_keys, runs, agent_instances "
+                "RESTART IDENTITY CASCADE"
+            )
+            await conn.execute(
+                "DELETE FROM users "
+                "WHERE id != '00000000-0000-0000-0000-000000000001'"
             )
     finally:
         await cleanup_pool.close()
@@ -278,3 +289,163 @@ def running_alpine_container(docker_client):
 def event_log_samples_dir():
     """Path to the 5 spike-derived event-log fixture files."""
     return Path(__file__).parent / "fixtures" / "event_log_samples"
+
+
+# ---------------------------------------------------------------------------
+# Phase 22c-05 — OAuth integration test fixtures
+# ---------------------------------------------------------------------------
+#
+# Used by tests under ``tests/auth/``, ``tests/routes/test_users_me.py``, and
+# (future) ``tests/config/test_oauth_state_secret_fail_loud.py``. The two
+# cookie fixtures seed real rows in ``users`` + ``sessions`` against the
+# migrated testcontainer; ``respx_oauth_providers`` gives a context-manager
+# factory that stubs every authlib outbound call to Google + GitHub so the
+# callback integration tests never touch the public internet.
+
+
+@pytest_asyncio.fixture
+async def authenticated_cookie(db_pool):
+    """Seed a google-provider user + a live session; yield cookie + ids.
+
+    Consumed by ``tests/auth/test_logout.py``, ``tests/routes/test_users_me.py``,
+    and (plan 22c-09) the cross-user isolation test. Uses asyncpg directly
+    rather than ``upsert_user`` / ``mint_session`` so a regression in those
+    helpers doesn't silently invalidate the fixture.
+
+    The yielded dict carries three keys:
+
+      * ``Cookie`` — ready to pass to httpx as ``headers={"Cookie": ...}``.
+      * ``_user_id`` — the inserted user's UUID (string) for equality checks.
+      * ``_session_id`` — the inserted session's UUID (string) for DELETE
+        assertions in the logout flow.
+
+    Sessions live 30 days; user_agent + ip_address intentionally NULL.
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    async with db_pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users (id, provider, sub, email, display_name) "
+            "VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id::text",
+            "google",
+            f"test-sub-{uuid4().hex[:12]}",
+            "alice@example.com",
+            "Alice",
+        )
+        now = datetime.now(timezone.utc)
+        session_id = await conn.fetchval(
+            """
+            INSERT INTO sessions (user_id, created_at, expires_at, last_seen_at)
+            VALUES ($1, $2, $3, $2)
+            RETURNING id::text
+            """,
+            user_id, now, now + timedelta(days=30),
+        )
+    yield {
+        "Cookie": f"ap_session={session_id}",
+        "_user_id": user_id,
+        "_session_id": session_id,
+    }
+
+
+@pytest_asyncio.fixture
+async def second_authenticated_cookie(db_pool):
+    """A SECOND distinct user+session — used by the cross-user isolation
+    test in plan 22c-09 (``test_user_cannot_access_others_agent``). Seeded
+    here so plan 22c-09 doesn't duplicate the fixture.
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    async with db_pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users (id, provider, sub, email, display_name) "
+            "VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id::text",
+            "google",
+            f"test-sub-{uuid4().hex[:12]}",
+            "bob@example.com",
+            "Bob",
+        )
+        now = datetime.now(timezone.utc)
+        session_id = await conn.fetchval(
+            """
+            INSERT INTO sessions (user_id, created_at, expires_at, last_seen_at)
+            VALUES ($1, $2, $3, $2)
+            RETURNING id::text
+            """,
+            user_id, now, now + timedelta(days=30),
+        )
+    yield {
+        "Cookie": f"ap_session={session_id}",
+        "_user_id": user_id,
+        "_session_id": session_id,
+    }
+
+
+@pytest.fixture
+def respx_oauth_providers():
+    """Context-manager factory that stubs Google + GitHub OAuth HTTP calls.
+
+    Returns a ``@contextmanager`` — callers do::
+
+        with respx_oauth_providers() as stubs:
+            stubs["google_token"].mock(return_value=httpx.Response(200, json=...))
+            stubs["github_user"].mock(return_value=httpx.Response(200, json=...))
+            # ... drive the callback route ...
+
+    ``assert_all_called=False`` because a given test usually exercises only
+    one provider's endpoints; unexercised stubs are NOT a failure. The
+    Google OIDC discovery endpoint is pre-stubbed with a canned metadata
+    document so authlib's ``load_server_metadata()`` never hits the public
+    ``accounts.google.com`` in tests. The JWKS endpoint gets an empty
+    key-set so attempts to parse an id_token fail gracefully (routes
+    already fall back to the explicit ``userinfo()`` call in that case).
+    """
+    import httpx
+    import respx
+    from contextlib import contextmanager
+
+    _GOOGLE_DISCOVERY = {
+        "issuer": "https://accounts.google.com",
+        "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_endpoint": "https://oauth2.googleapis.com/token",
+        "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
+        "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "scopes_supported": ["openid", "email", "profile"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+    }
+
+    @contextmanager
+    def _ctx():
+        with respx.mock(assert_all_called=False) as m:
+            # Pre-stub discovery + JWKS with canned payloads. Tests may
+            # override these if they need to test a specific discovery
+            # failure; the default lets authlib bootstrap cleanly.
+            m.get(
+                "https://accounts.google.com/.well-known/openid-configuration"
+            ).mock(return_value=httpx.Response(200, json=_GOOGLE_DISCOVERY))
+            m.get(
+                "https://www.googleapis.com/oauth2/v3/certs"
+            ).mock(return_value=httpx.Response(200, json={"keys": []}))
+            stubs = {
+                "google_token": m.post(
+                    "https://oauth2.googleapis.com/token"
+                ),
+                "google_userinfo": m.get(
+                    "https://openidconnect.googleapis.com/v1/userinfo"
+                ),
+                "github_token": m.post(
+                    "https://github.com/login/oauth/access_token"
+                ),
+                "github_user": m.get("https://api.github.com/user"),
+                "github_user_emails": m.get(
+                    "https://api.github.com/user/emails"
+                ),
+            }
+            yield stubs
+
+    return _ctx
