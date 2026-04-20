@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22c (oauth-google) IN PROGRESS — 4/9 plans complete (22c-01..22c-04); Wave 0+1+2 done; 22c-05 Wave 3 (auth routes + require_user + middleware stack wiring) unblocked
-stopped_at: "2026-04-20T00:05:05Z — 22c-04 shipped (SessionMiddleware class + log_redact docstring + 10 middleware tests all green); Wave 2 of phase 22c complete; 22c-05 Wave 3 unblocked"
-last_updated: "2026-04-20T00:05:05.000Z"
+status: Phase 22c (oauth-google) IN PROGRESS — 5/9 plans complete (22c-01..22c-05); Wave 0+1+2+3 done; 22c-06/07/08 Wave 4 (alembic 006 purge ∥ frontend login ∥ proxy.ts) unblocked
+stopped_at: "2026-04-20T00:40:00Z — 22c-05 shipped (5 OAuth routes + /v1/users/me + logout + require_user + middleware wiring + 20 integration tests); Wave 3 of phase 22c complete"
+last_updated: "2026-04-20T00:40:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
   total_plans: 42
-  completed_plans: 36
-  percent: 86
+  completed_plans: 37
+  percent: 88
 ---
 
 # Project State
@@ -39,13 +39,14 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 | Phase 22c-02 (alembic 005 — sessions + users OAuth) | **COMPLETE** | `ec19e7f`, `9e7db7e` | Additive schema migration applied live to `deploy-postgres-1` — alembic_version=005_sessions_and_oauth_users. Adds: users.sub/avatar_url/last_login_at (nullable); UNIQUE(provider, sub) partial index WHERE sub IS NOT NULL (preserves ANONYMOUS NULL-sub seed); sessions table (id UUID PK + user_id FK→users.id ON DELETE CASCADE + expires_at/revoked_at/last_seen_at/user_agent/ip_address INET + btree on user_id). Round-trip verified: upgrade → downgrade -1 → upgrade clean. Integration test `test_migration_005_sessions_and_users_columns` PASSED on host venv against fresh testcontainers PG 17. Zero deviations from plan. 3 pre-existing Phase-19 TestBaselineMigration failures + conftest DSN-gateway issue logged to `.planning/phases/22c-oauth-google/deferred-items.md` (all out of scope per plan line 39 pointer deferring conftest fix to 22c-06). See `.planning/phases/22c-oauth-google/22c-02-SUMMARY.md`. |
 | Phase 22c-03 (OAuth config + authlib registry) | **COMPLETE** | `4f5b01f`, `6fdde21`, `7428b86` | 7 new Pydantic settings on `api_server/src/api_server/config.py` (oauth_{google,github}_{client_id,client_secret,redirect_uri} + oauth_state_secret, all str\|None with None default). New `auth/` sub-package ships `get_oauth(settings)` — a cached authlib `OAuth()` registry with `google` (OIDC via `server_metadata_url`) + `github` (non-OIDC with hand-specified endpoints) — plus `upsert_user(conn, *, provider, sub, email, display_name, avatar_url) -> UUID` (ON CONFLICT target mirrors alembic 005 partial index verbatim) and `mint_session(conn, *, user_id, request) -> str` (returns sessions.id UUID directly; gen_random_uuid provides 122 bits of randomness, no separate token column needed). Prod fail-loud discipline mirrors `crypto/age_cipher.py::_master_key`: AP_ENV=prod + any missing OAuth var raises RuntimeError naming the var; AP_ENV=dev uses deterministic `not-for-prod` / `localhost` placeholders. `deploy/.env.prod.example` gains AP_OAUTH_STATE_SECRET stanza with `openssl rand -hex 32` hint; `deploy/.env.prod` NOT modified. 12 unit tests at `tests/auth/test_oauth_config.py` cover Settings fields, env aliases, dev placeholder path, dev override with real creds, idempotency, reset_for_tests, prod fail-loud on first-missing-var AND middle-missing-var (AP_OAUTH_STATE_SECRET regression trap) — all PASS in 0.21s. Zero deviations from plan. See `.planning/phases/22c-oauth-google/22c-03-SUMMARY.md`. |
 | Phase 22c-04 (SessionMiddleware + log_redact docstring + 10 middleware tests) | **COMPLETE** | `08560d0`, `9a954d3` | New ASGI `SessionMiddleware` at `api_server/src/api_server/middleware/session.py` (147 lines): reads `ap_session` cookie → coerces to UUID (malformed → None, no PG query per T-22c-09) → `SELECT user_id, last_seen_at FROM sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at > NOW()` → sets `scope['state']['user_id'] = <UUID \| None>`. Per-worker `app.state.session_last_seen: dict[UUID, datetime]` throttles `UPDATE sessions SET last_seen_at` to ≤1/session/60s (D-22c-MIG-05; Redis NOT in Python stack). Soft LRU eviction at 10k entries. Fail-closed to `user_id=None` + `log.exception` on PG outage. `log_redact.py` docstring extended with Phase 22c cookie-redaction note (ap_session + ap_oauth_state covered by construction — allowlist unchanged). 10 tests, all green: 6 R3 behavior (no-cookie, valid, expired, revoked, malformed-no-PG-query, PG-outage-fail-closed), 2 D-22c-MIG-05 throttle (rapid-dupe → 1 UPDATE, 61s-rewind → 2nd UPDATE fires), 2 cookie-redact (ap_session + ap_oauth_state values absent from structlog output). Pre-existing `test_log_redact.py` tests still green. One Rule-3 deviation: asyncpg.Pool.acquire is read-only (__slots__), so the test swapped monkey-patch-attr for a counting-proxy pool wrapper on `app.state.db`. See `.planning/phases/22c-oauth-google/22c-04-SUMMARY.md`. |
+| Phase 22c-05 (OAuth routes + /v1/users/me + logout + require_user + middleware wiring + 20 integration tests) | **COMPLETE** | `e989bd4`, `d47e303`, `eb2dcb6`, `eea754a` | 5 OAuth endpoints at `api_server/src/api_server/routes/auth.py` (google + github authorize + callback + POST /auth/logout) with EXACT `e.error == "mismatching_state"` match per D-22c-OAUTH-01 + 3 error-redirect codes (`access_denied`, `state_mismatch`, `oauth_failed`). `routes/users.py::GET /v1/users/me` returns `SessionUserResponse { id, email, display_name, avatar_url, provider, created_at }` mirror of `frontend/lib/api.ts::SessionUser`. `auth/deps.py::require_user(request) -> JSONResponse \| UUID` inline early-return helper (D-22c-AUTH-03) — NOT FastAPI Depends. `main.py` wires Starlette `SessionMiddleware` (AMD-07 ap_oauth_state CSRF) + our `ApSessionMiddleware` at correct positions (declaration order outermost-last per D-22c-AUTH-01: CorrelationId → AccessLog → StarletteSession → ApSession → RateLimit → Idempotency → route); `get_oauth(settings)` called eagerly at `create_app()` so prod boots fail loud on missing AP_OAUTH_STATE_SECRET. 20 integration tests at `tests/auth/` + `tests/routes/test_users_me.py` + `tests/config/test_oauth_state_secret_fail_loud.py`: 2 authorize (google + github 302 + redirect_uri + ap_oauth_state cookie), 5 google callback (state_mismatch, access_denied, **WARNING-3 non-state-error → oauth_failed**, happy_path w/ userinfo upsert + session mint + cookie, missing_sub), 5 github callback (state_mismatch, **WARNING-3 non-state-error → oauth_failed**, public_email, /user/emails fallback for private-primary, no_verified_email → oauth_failed), 2 logout (204 + invalidates + cookie-clear, 401 no-cookie), 4 users_me (200 valid, 401 no-cookie, 401 expired, 401 revoked), 2 fail-loud (prod raises on AP_OAUTH_STATE_SECRET, dev boots without OAuth envs). 3 shared fixtures on conftest.py (`authenticated_cookie`, `second_authenticated_cookie`, `respx_oauth_providers` — Google discovery + JWKS pre-stubbed). 3 Rule-1/Rule-2/Rule-3 deviations: logout uses `Response(status_code=204)` not `JSONResponse(None, 204)`; TRUNCATE list extended (sessions + non-ANONYMOUS users); per-test `app.state.settings.oauth_*_redirect_uri` override for authorize tests. See `.planning/phases/22c-oauth-google/22c-05-SUMMARY.md`. |
 
 ### 📍 RESUME ANCHOR — READ AFTER /clear
 
 **The next command is:**
 
 ```
-/gsd-execute-phase 22c-oauth-google  # 22c-01..22c-04 COMPLETE; Wave 0+1+2 done; resume at Wave 3 (22c-05 OAuth routes + /v1/users/me + /v1/auth/logout + require_user + middleware stack wiring + 13 integration tests; autonomous: false with human-verify checkpoint between T3/T4)
+/gsd-execute-phase 22c-oauth-google  # 22c-01..22c-05 COMPLETE; Wave 0+1+2+3 done; resume at Wave 4 (22c-06 alembic 006 ANONYMOUS purge ∥ 22c-07 Next.js login page ∥ 22c-08 frontend proxy.ts + useSession)
 ```
 
 **Read these files in this order on resume (after /clear):**
@@ -340,6 +341,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 19 P07 | 12min | 2 tasks | 12 files |
 | Phase 22c-03 | ~12min | 3 tasks | 5 files |
 | Phase 22c-04 | ~5min | 2 tasks | 6 files |
+| Phase 22c-05 | ~65min | 4 tasks | 16 files |
 
 ## Accumulated Context
 
