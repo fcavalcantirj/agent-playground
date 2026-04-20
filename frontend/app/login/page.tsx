@@ -1,34 +1,47 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ParticleBackground } from "@/components/particle-background"
 import { Terminal, Github, Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react"
 
 export default function LoginPage() {
-  const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  })
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Surface backend OAuth error codes as toast notifications. Codes are
+  // handled as exact-string matches (D-22c-FE-03) — any unmapped value is
+  // silently ignored to avoid reflecting attacker-controlled strings into
+  // the UI (T-22c-25 in this plan's threat model).
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get("error")
+    if (err === "access_denied") toast.error("Sign-in cancelled")
+    else if (err === "state_mismatch") toast.error("Security check failed — try again")
+    else if (err === "oauth_failed") toast.error("Sign-in failed — try again")
+  }, [])
+
+  // OAuth requires a top-level page navigation so the browser can follow
+  // the 302 chain into Google/GitHub and back. fetch() cannot do this.
+  const onGoogle = () => {
+    window.location.href = "/api/v1/auth/google"
+  }
+  const onGitHub = () => {
+    window.location.href = "/api/v1/auth/github"
+  }
+
+  // Email/password sign-in is not implemented in v1 — the form is kept
+  // visually present but every input is disabled and submit is a no-op
+  // (D-22c-UI-01). Users are steered to the OAuth buttons above.
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
-    // Simulate login
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    router.push("/dashboard")
   }
 
   return (
     <main className="relative flex min-h-screen items-center justify-center bg-background p-4">
       <ParticleBackground />
-      
+
       <div className="relative z-10 w-full max-w-md">
         {/* Logo */}
         <Link href="/" className="mb-8 flex items-center justify-center gap-2">
@@ -51,11 +64,21 @@ export default function LoginPage() {
 
           {/* OAuth Buttons */}
           <div className="mb-6 grid gap-3">
-            <Button variant="outline" className="h-11 w-full gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 w-full gap-2"
+              onClick={onGitHub}
+            >
               <Github className="h-4 w-4" />
               Continue with GitHub
             </Button>
-            <Button variant="outline" className="h-11 w-full gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 w-full gap-2"
+              onClick={onGoogle}
+            >
               <svg className="h-4 w-4" viewBox="0 0 24 24">
                 <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                 <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -75,7 +98,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Login Form */}
+          {/* Login Form — email/password not wired in v1; use Google or GitHub above. */}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="mb-1.5 block text-sm text-muted-foreground">Email</label>
@@ -84,10 +107,8 @@ export default function LoginPage() {
                 <Input
                   type="email"
                   placeholder="you@example.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="h-11 bg-background/50 pl-10"
-                  required
+                  disabled
                 />
               </div>
             </div>
@@ -95,36 +116,35 @@ export default function LoginPage() {
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <label className="text-sm text-muted-foreground">Password</label>
-                <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                  Forgot password?
-                </Link>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type={showPassword ? "text" : "password"}
                   placeholder="Enter your password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="h-11 bg-background/50 pl-10 pr-10"
-                  required
+                  disabled
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  disabled
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Use Google or GitHub above for now.
+              </p>
             </div>
 
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="h-11 w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-              disabled={isLoading}
+              disabled
             >
-              {isLoading ? "Signing in..." : "Sign in"}
+              Sign in
               <ArrowRight className="h-4 w-4" />
             </Button>
           </form>
