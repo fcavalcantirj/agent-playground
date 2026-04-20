@@ -27,7 +27,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from starlette.middleware.sessions import SessionMiddleware as StarletteSessionMiddleware
 
+from .auth.oauth import get_oauth
 from .config import get_settings
 from .db import close_pool, create_pool
 from .log import configure_logging
@@ -35,13 +37,16 @@ from .middleware.correlation_id import CorrelationIdMiddleware
 from .middleware.idempotency import IdempotencyMiddleware
 from .middleware.log_redact import AccessLogMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.session import SessionMiddleware as ApSessionMiddleware
 from .routes import agent_events as agent_events_route
 from .routes import agent_lifecycle as agent_lifecycle_route
 from .routes import agents as agents_route
+from .routes import auth as auth_route
 from .routes import health
 from .routes import recipes as recipes_route
 from .routes import runs as runs_route
 from .routes import schemas as schemas_route
+from .routes import users as users_route
 from .services.recipes_loader import load_all_recipes
 
 # Phase 22b-04: dedicated logger for lifespan-time re-attach + drain telemetry.
@@ -201,12 +206,41 @@ def create_app() -> FastAPI:
     )
     app.state.settings = settings
 
-    # Middleware order: outermost declared last. Effective order request-in:
-    # correlation-id -> access-log -> rate-limit -> idempotency -> router.
-    # (AccessLogMiddleware wraps the request id so access log records
-    # reflect the minted X-Request-Id — Plan 19-06 SUMMARY guidance.)
+    # Phase 22c — per-worker throttle cache for sessions.last_seen_at UPDATEs
+    # (D-22c-MIG-05). SessionMiddleware lazy-inits this on first request, but
+    # initializing here makes the test-harness path simpler (conftest can rely
+    # on the attribute existing without triggering the middleware's setdefault).
+    app.state.session_last_seen = {}
+
+    # Phase 22c — eagerly construct the OAuth registry so prod boots fail loud
+    # when AP_OAUTH_* env vars are missing. Dev uses placeholders (see
+    # auth/oauth.py::_resolve_or_fail). Called BEFORE add_middleware so the
+    # fail-loud RuntimeError fires during create_app, not on first request.
+    get_oauth(settings)
+
+    # Middleware order: outermost declared last.
+    # Effective request-in order:
+    #   CorrelationId -> AccessLog -> StarletteSession -> OurSession
+    #     -> RateLimit -> Idempotency -> route.
+    # (Plan 22c-04 ships OurSession; plan 22c-03 ships AP_OAUTH_STATE_SECRET
+    # config. Starlette's built-in SessionMiddleware stores authlib's CSRF
+    # state nonce in the ap_oauth_state cookie; our ApSessionMiddleware
+    # resolves request.state.user_id from the ap_session cookie via PG.)
     app.add_middleware(IdempotencyMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ApSessionMiddleware)  # ap_session cookie -> request.state.user_id
+    app.add_middleware(
+        StarletteSessionMiddleware,          # authlib CSRF state (ap_oauth_state cookie)
+        secret_key=(
+            settings.oauth_state_secret
+            or "dev-oauth-state-key-not-for-prod-0000000000000000"
+        ),
+        session_cookie="ap_oauth_state",
+        max_age=600,
+        same_site="lax",
+        https_only=(settings.env == "prod"),
+        path="/",
+    )
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
 
@@ -246,6 +280,13 @@ def create_app() -> FastAPI:
             "phase22b.inject_test_event.route_registered",
             extra={"env": app.state.settings.env},
         )
+    # Phase 22c: OAuth authorize/callback/logout + session user-me.
+    # auth_route ships 5 endpoints (GET /auth/{google,github}[/callback],
+    # POST /auth/logout); users_route ships GET /users/me. Both require
+    # the middleware stack above (StarletteSessionMiddleware for authlib
+    # state + ApSessionMiddleware for request.state.user_id resolution).
+    app.include_router(auth_route.router, prefix="/v1", tags=["auth"])
+    app.include_router(users_route.router, prefix="/v1", tags=["users"])
     return app
 
 
