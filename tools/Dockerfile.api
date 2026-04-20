@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir --prefix=/install \
       'alembic>=1.18.4,<1.19' 'pydantic>=2.11' 'pydantic-settings>=2.0' \
       'python-ulid>=3.1.0,<4' 'structlog>=25.5.0,<26' \
       'asgi-correlation-id>=4.3.4,<5' 'ruamel.yaml>=0.17.21' 'jsonschema>=4.23' \
-      'pyrage>=1.2' 'cryptography>=42' 'docker>=7.0,<8'
+      'pyrage>=1.2' 'cryptography>=42' 'docker>=7.0,<8' \
+      'authlib>=1.6.11' 'itsdangerous>=2.2.0'
 COPY api_server/src /src/api_server/src
 COPY api_server/alembic /src/api_server/alembic
 COPY api_server/alembic.ini /src/api_server/alembic.ini
