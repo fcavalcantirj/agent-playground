@@ -29,6 +29,18 @@ const nextConfig = {
       },
     ]
   },
+  // Dead-route redirects (D-22c-UI-02 + D-22c-UI-03): /signup and
+  // /forgot-password are not part of Phase 22c's user journey — OAuth is
+  // the only entry path. Fire at the Next config layer BEFORE the page
+  // routes render. `permanent: false` emits HTTP 307 (temporary) so a
+  // future phase can re-enable the original pages without fighting
+  // browser-cache poisoning.
+  async redirects() {
+    return [
+      { source: "/signup", destination: "/login", permanent: false },
+      { source: "/forgot-password", destination: "/login", permanent: false },
+    ]
+  },
 }
 
 export default nextConfig
