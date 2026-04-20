@@ -26,12 +26,18 @@ VALID_AUTH = {"Authorization": "Bearer sk-test-fake"}
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_run_hermes_gpt4o_mini(async_client, mock_run_cell):
-    """SC-05: POST /v1/runs with valid recipe + model + BYOK → 200 + PASS."""
+async def test_run_hermes_gpt4o_mini(
+    async_client, authenticated_cookie, mock_run_cell,
+):
+    """SC-05: POST /v1/runs with valid recipe + model + BYOK → 200 + PASS.
+
+    Phase 22c-06: session cookie is mandatory; authenticated_cookie
+    fixture provides it so require_user passes.
+    """
     mock_run_cell(verdict_category="PASS", wall_s=1.5, exit_code=0)
     r = await async_client.post(
         "/v1/runs",
-        headers=VALID_AUTH,
+        headers={**VALID_AUTH, "Cookie": authenticated_cookie["Cookie"]},
         json={
             "recipe_name": "hermes",
             "model": "openai/gpt-4o-mini",
@@ -43,18 +49,19 @@ async def test_run_hermes_gpt4o_mini(async_client, mock_run_cell):
     assert body["category"] == "PASS"
     assert body["verdict"] == "PASS"
     assert len(body["run_id"]) == 26
-    # agent_instance_id is the UUID-stringified upsert result
     assert body["agent_instance_id"]
 
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_persist_run_row(async_client, mock_run_cell, db_pool):
+async def test_persist_run_row(
+    async_client, authenticated_cookie, mock_run_cell, db_pool,
+):
     """SC-08: a successful POST writes a runs row with verdict filled."""
     mock_run_cell(verdict_category="PASS")
     r = await async_client.post(
         "/v1/runs",
-        headers=VALID_AUTH,
+        headers={**VALID_AUTH, "Cookie": authenticated_cookie["Cookie"]},
         json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
     )
     assert r.status_code == 200, r.text
@@ -86,11 +93,15 @@ async def test_missing_authorization_returns_401(async_client):
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_unknown_recipe_returns_404(async_client):
-    """POST with recipe_name that's not in app.state.recipes → 404."""
+async def test_unknown_recipe_returns_404(async_client, authenticated_cookie):
+    """POST with recipe_name that's not in app.state.recipes → 404.
+
+    Phase 22c-06: require_user must pass first; the 404 path fires at
+    the recipe-dict lookup BEFORE any DB write.
+    """
     r = await async_client.post(
         "/v1/runs",
-        headers=VALID_AUTH,
+        headers={**VALID_AUTH, "Cookie": authenticated_cookie["Cookie"]},
         json={"recipe_name": "bogus", "model": "m"},
     )
     assert r.status_code == 404
@@ -126,12 +137,18 @@ async def test_inline_yaml_rejected(async_client):
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_get_run_by_id_returns_persisted(async_client, mock_run_cell):
-    """GET /v1/runs/{id} returns the full run shape after a POST."""
+async def test_get_run_by_id_returns_persisted(
+    async_client, authenticated_cookie, mock_run_cell,
+):
+    """GET /v1/runs/{id} returns the full run shape after a POST.
+
+    GET /v1/runs/{id} is public today (no require_user gate); only the
+    POST side carries the cookie.
+    """
     mock_run_cell(verdict_category="PASS")
     post = await async_client.post(
         "/v1/runs",
-        headers=VALID_AUTH,
+        headers={**VALID_AUTH, "Cookie": authenticated_cookie["Cookie"]},
         json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
     )
     assert post.status_code == 200, post.text
@@ -167,17 +184,21 @@ async def test_get_run_unknown_returns_404(async_client):
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_agent_instance_dedupes_across_runs(async_client, mock_run_cell, db_pool):
+async def test_agent_instance_dedupes_across_runs(
+    async_client, authenticated_cookie, mock_run_cell, db_pool,
+):
     """3 POSTs with same (recipe, model) share one agent_instances row.
 
     SC-08 subclause: ``agent_instances.total_runs`` bumps by 1 per run
-    via the ``ON CONFLICT DO UPDATE`` upsert.
+    via the ``ON CONFLICT DO UPDATE`` upsert. Phase 22c-06: all 3 POSTs
+    carry the same authenticated_cookie so they land under the same
+    user_id FK.
     """
     mock_run_cell(verdict_category="PASS")
     for _ in range(3):
         r = await async_client.post(
             "/v1/runs",
-            headers=VALID_AUTH,
+            headers={**VALID_AUTH, "Cookie": authenticated_cookie["Cookie"]},
             json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
         )
         assert r.status_code == 200, r.text

@@ -35,10 +35,22 @@ ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
 async def _seed_container_via_pool(pool: asyncpg.Pool) -> UUID:
-    """Insert agent_instance + agent_container, return container UUID."""
+    """Insert agent_instance + agent_container, return container UUID.
+
+    Phase 22c-06: migration 006 purged the ANONYMOUS seed; the fixture
+    now seeds its own users row (ON CONFLICT-safe).
+    """
     recipe_name = f"seq-conc-{uuid4().hex[:8]}"
     name = f"agent-{uuid4().hex[:8]}"
     async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1::uuid, 'seq-conc-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            ANON_USER_ID,
+        )
         instance = await conn.fetchrow(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)

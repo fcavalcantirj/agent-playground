@@ -67,12 +67,23 @@ async def _connect(container: PostgresContainer) -> asyncpg.Connection:
 async def _seed_agent_container(conn: asyncpg.Connection) -> str:
     """Insert a minimal agent_instance + agent_container row.
 
-    Returns the new ``agent_containers.id`` (UUID as text). Uses the
-    seeded anonymous user from migration 001 so the FK chain is valid
-    without touching the ``users`` table.
+    Returns the new ``agent_containers.id`` (UUID as text).
+
+    Phase 22c-06: migration 006 purged the pre-22c ANONYMOUS users
+    seed row, so we first INSERT the FK target ON CONFLICT DO NOTHING
+    (idempotent across fixture re-use within a session).
     """
     recipe_name = f"events-mig-{uuid4().hex[:8]}"
     name = f"agent-{uuid4().hex[:8]}"  # NOT NULL per migration 002
+    # Phase 22c-06: seed FK target.
+    await conn.execute(
+        """
+        INSERT INTO users (id, display_name)
+        VALUES ($1::uuid, 'events-mig-test-owner')
+        ON CONFLICT (id) DO NOTHING
+        """,
+        ANON_USER_ID,
+    )
     instance_row = await conn.fetchrow(
         """
         INSERT INTO agent_instances (id, user_id, recipe_name, model, name)

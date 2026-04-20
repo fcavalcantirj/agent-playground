@@ -33,9 +33,18 @@ ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
 async def _seed_container_via_pool(pool: asyncpg.Pool) -> UUID:
+    """Phase 22c-06: seeds users row (ON CONFLICT-safe) before instance."""
     recipe_name = f"batch-perf-{uuid4().hex[:8]}"
     name = f"agent-{uuid4().hex[:8]}"
     async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1::uuid, 'batch-perf-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            ANON_USER_ID,
+        )
         instance = await conn.fetchrow(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)

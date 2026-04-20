@@ -25,8 +25,14 @@ AUTH = {"Authorization": "Bearer sk-test"}
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_429_after_limit(async_client, mock_run_cell):
+async def test_429_after_limit(
+    async_client, authenticated_cookie, mock_run_cell,
+):
     """SC-09: the 11th POST /v1/runs in a 60s window returns 429.
+
+    Phase 22c-06: all 11 POSTs carry the same authenticated_cookie so
+    the rate-limit subject becomes ``user:<uuid>`` per the new
+    user-scoped precedence in ``_subject_from_scope``.
 
     Regression gate for a subtle SQL bug in the original Pattern 4
     formula (``date_trunc('second', NOW()) - (epoch::bigint % W)*1s``)
@@ -35,15 +41,15 @@ async def test_429_after_limit(async_client, mock_run_cell):
     ``:59``, one at ``:00``) so the 11th request would silently land
     on a fresh counter with count=1. The fixed formula
     (``to_timestamp(floor(epoch / W) * W)``) produces one deterministic
-    window_start per second — this test exercises the common case
-    where 11 requests land in a single burst.
+    window_start per second.
     """
     mock_run_cell(verdict_category="PASS")
+    headers = {**AUTH, "Cookie": authenticated_cookie["Cookie"]}
     # First 10 should all succeed (limit=10/min for the runs bucket).
     for i in range(10):
         r = await async_client.post(
             "/v1/runs",
-            headers=AUTH,
+            headers=headers,
             json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
         )
         assert r.status_code == 200, (
@@ -52,11 +58,10 @@ async def test_429_after_limit(async_client, mock_run_cell):
     # 11th must be blocked.
     r = await async_client.post(
         "/v1/runs",
-        headers=AUTH,
+        headers=headers,
         json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
     )
     assert r.status_code == 429, r.text
-    # Retry-After must be a positive integer (whole seconds).
     ra = r.headers.get("retry-after")
     assert ra is not None and int(ra) >= 1
     body = r.json()
@@ -99,31 +104,35 @@ async def test_get_bucket_300_per_min(async_client):
 @pytest.mark.api_integration
 @pytest.mark.asyncio
 async def test_spoofed_xff_ignored_when_no_trusted_proxy(
-    async_client, mock_run_cell,
+    async_client, authenticated_cookie, mock_run_cell,
 ):
-    """T-19-05-01: ``X-Forwarded-For`` does NOT bypass the per-IP limit.
+    """T-19-05-01: ``X-Forwarded-For`` does NOT bypass the per-user limit.
 
-    ``AP_TRUSTED_PROXY`` is unset in the conftest (default False) so
-    the middleware uses the peer IP from ``scope["client"]`` exclusively.
-    Varying XFF across 10 requests must still count against the same
-    peer-IP subject — the 11th request hits 429.
+    Phase 22c-06: the rate-limit subject is now ``user:<uuid>`` when a
+    session cookie is present (superior to IP for authenticated traffic).
+    XFF has no effect either way: when authenticated, user_id wins; when
+    anonymous, the peer IP from ``scope["client"]`` wins (XFF ignored
+    because ``AP_TRUSTED_PROXY`` is unset). This test exercises the
+    authenticated path — varying XFF across 10 requests counts against
+    the same user_id subject, and the 11th hits 429.
     """
     mock_run_cell(verdict_category="PASS")
+    cookie = authenticated_cookie["Cookie"]
     for i in range(10):
         r = await async_client.post(
             "/v1/runs",
-            headers={**AUTH, "X-Forwarded-For": f"10.0.0.{i}"},
+            headers={**AUTH, "Cookie": cookie, "X-Forwarded-For": f"10.0.0.{i}"},
             json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
         )
         assert r.status_code == 200, (
             f"request {i + 1} blocked; XFF should be ignored: {r.text[:200]}"
         )
     # All 10 slots consumed despite distinct XFF values — the 11th
-    # with yet another XFF must still 429 because the peer IP is the
+    # with yet another XFF must still 429 because the user_id is the
     # same.
     r = await async_client.post(
         "/v1/runs",
-        headers={**AUTH, "X-Forwarded-For": "99.99.99.99"},
+        headers={**AUTH, "Cookie": cookie, "X-Forwarded-For": "99.99.99.99"},
         json={"recipe_name": "hermes", "model": "m", "prompt": "p"},
     )
     assert r.status_code == 429, (
