@@ -11,7 +11,8 @@ All four follow the canonical 9-step flow from ``routes/runs.py``:
 
     1. Parse ``Authorization: Bearer <key>`` → ``provider_key`` (memory only)
     2. Validate body against ``app.state.recipes``
-    3. Resolve ``user_id = ANONYMOUS_USER_ID`` (Phase 19)
+    3. Resolve ``user_id`` via ``require_user`` — authenticated session
+       cookie ``ap_session`` is mandatory (plan 22c-05 / 22c-06)
     4. Upsert / fetch ``agent_instances`` row
     5. Mint IDs, insert pending ``agent_containers`` row (DB scope 1)
     6. RELEASE DB connection (Pitfall 4 — never hold across long await)
@@ -45,7 +46,7 @@ import asyncpg
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
-from ..constants import ANONYMOUS_USER_ID
+from ..auth.deps import require_user
 from ..crypto.age_cipher import decrypt_channel_config, encrypt_channel_config
 from ..models.agents import (
     AgentChannelPairRequest,
@@ -222,7 +223,13 @@ async def start_agent(
     collide — but a completed running row DOES collide if somehow this
     request beat the fetch-running check). We cover both paths below.
     """
-    # --- Step 1: Authorization header → provider_key (memory only) ---
+    # --- Step 1a: Session cookie → user_id (require_user gate) ---
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
+    # --- Step 1b: Authorization header → provider_key (memory only) ---
     if not authorization.startswith("Bearer "):
         return _err(
             401,
@@ -239,10 +246,10 @@ async def start_agent(
             param="Authorization",
         )
 
-    # --- Step 2: resolve agent_instance by (agent_id, ANONYMOUS_USER_ID) ---
+    # --- Step 2: resolve agent_instance by (agent_id, user_id) ---
     pool = request.app.state.db
     async with pool.acquire() as conn:
-        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
     if agent is None:
         return _err(
             404,
@@ -317,7 +324,7 @@ async def start_agent(
         "inputs": dict(body.channel_inputs),
     }
     try:
-        config_enc = encrypt_channel_config(ANONYMOUS_USER_ID, config_plain)
+        config_enc = encrypt_channel_config(user_id, config_plain)
     except Exception:
         _log.error(
             "channel config encryption failed",
@@ -335,7 +342,7 @@ async def start_agent(
                 container_row_id = await insert_pending_agent_container(
                     conn,
                     agent_id,
-                    ANONYMOUS_USER_ID,
+                    user_id,
                     agent["recipe_name"],
                     body.channel,
                     config_enc,
@@ -545,6 +552,12 @@ async def stop_agent(
     to an immediate force-rm; ``force_killed=true`` surfaces in the
     response so clients can show the semantic difference.
     """
+    # --- Step 1a: Session cookie → user_id (require_user gate) ---
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
     if not authorization.startswith("Bearer "):
         return _err(
             401,
@@ -555,7 +568,7 @@ async def stop_agent(
 
     pool = request.app.state.db
     async with pool.acquire() as conn:
-        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
         if agent is None:
             return _err(
                 404,
@@ -654,13 +667,13 @@ async def agent_status(
 ):
     """Return current state of the agent + its persistent container.
 
-    This is the ONLY endpoint in the persistent-mode surface that does
-    NOT require a Bearer token: it's read-only metadata, returns no
-    secrets (the age-encrypted channel_config is never decoded here),
-    and frontends poll it every few seconds for liveness UI. Phase 21
-    will add session-cookie auth; until then, any caller can read any
-    agent's status (matching the rest of Phase 19's ANONYMOUS_USER_ID
-    single-tenant posture).
+    Phase 22c-06 closes a PATTERNS.md gap: ``agent_status`` previously
+    had NO auth check at all. It now requires an authenticated session
+    cookie via ``require_user`` (per D-22c-AUTH-03 — every
+    ``/v1/agents/:id/*`` path is protected) AND resolves the target
+    row's ``user_id`` at the SQL layer via ``fetch_agent_instance``'s
+    composite WHERE clause, so cross-user reads are impossible even if
+    the URL ``agent_id`` belongs to another user.
 
     When the agent exists but has no container row yet (never started,
     or the last start failed), we return a degenerate 200 with only
@@ -674,9 +687,17 @@ async def agent_status(
     (picoclaw/nanobot/openclaw). Process-alive recipes (hermes,
     nullclaw) return ``None`` for both.
     """
+    # --- Step 1: Session cookie → user_id (require_user gate) ---
+    # PATTERNS gap closure: agent_status previously had NO auth at all.
+    # Every /v1/agents/:id/* path is now protected per D-22c-AUTH-03.
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
     pool = request.app.state.db
     async with pool.acquire() as conn:
-        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
         if agent is None:
             return _err(
                 404,
@@ -772,6 +793,12 @@ async def pair_channel(
     ``str.replace``. ``AgentChannelPairRequest.code`` regex forbids ``$``
     in the user-supplied value so recursive substitution is impossible.
     """
+    # --- Step 1a: Session cookie → user_id (require_user gate) ---
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
     if not authorization.startswith("Bearer "):
         return _err(
             401,
@@ -780,15 +807,15 @@ async def pair_channel(
             param="Authorization",
         )
 
-    # NOTE: G4 rate-limit hook — when Phase 21 wires per-route rate
-    # budgets, add an entry here for 3 req/min per user. Today the
+    # NOTE: G4 rate-limit hook — Phase 22c+ can wire per-route rate
+    # budgets (3 req/min per user for pair_channel). Today the
     # module-level middleware applies the global budget; openclaw's
     # ~60s cold-boot per call is still within that envelope for normal
     # UI-driven use.
 
     pool = request.app.state.db
     async with pool.acquire() as conn:
-        agent = await fetch_agent_instance(conn, agent_id, ANONYMOUS_USER_ID)
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
         if agent is None:
             return _err(
                 404,

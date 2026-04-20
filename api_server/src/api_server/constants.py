@@ -1,19 +1,12 @@
 """Process-wide constants shared across plans.
 
-Defining ``ANONYMOUS_USER_ID`` here (instead of in ``services/run_store.py``
-or elsewhere) gives Plans 04 and 05 a common import source, so they can both
-run in Wave 3 without touching each other's files. This is the
-file-ownership contract that unblocks Wave 3 parallelism.
-
-The literal UUID matches the row seeded by ``alembic/versions/001_baseline.py``
-— changing one without the other breaks foreign-key resolution on every
-inbound request.
+Phase 22c-06: ``ANONYMOUS_USER_ID`` has been removed. Every route now
+resolves ``user_id`` from the authenticated session cookie via
+``auth.deps.require_user`` (plan 22c-05); no single-tenant placeholder
+constant remains. Deletion is the forcing function that turns any
+residual reference into an ``ImportError`` (T-22c-20 mitigation).
 """
 from __future__ import annotations
-
-from uuid import UUID
-
-ANONYMOUS_USER_ID: UUID = UUID("00000000-0000-0000-0000-000000000001")
 
 # Phase 22b-04: sysadmin bypass for event-stream auth (D-15).
 # Per-laptop / per-deploy state — mirrors AP_CHANNEL_MASTER_KEY discipline.
@@ -21,4 +14,4 @@ ANONYMOUS_USER_ID: UUID = UUID("00000000-0000-0000-0000-000000000001")
 # VALUE at handler time via os.environ.get(AP_SYSADMIN_TOKEN_ENV).
 AP_SYSADMIN_TOKEN_ENV = "AP_SYSADMIN_TOKEN"
 
-__all__ = ["ANONYMOUS_USER_ID", "AP_SYSADMIN_TOKEN_ENV"]
+__all__ = ["AP_SYSADMIN_TOKEN_ENV"]

@@ -20,10 +20,11 @@ Canonical flow (short — no runner call):
 
   1. Parse ``Authorization: Bearer <token>`` — D-15 auth posture
   2. If Bearer == AP_SYSADMIN_TOKEN -> bypass ownership; else:
-     Resolve user_id = ANONYMOUS_USER_ID (Phase 19 MVP seam);
-     Lookup agent_instance; 404 if missing;
-     Ownership check: agent.user_id == user_id (already enforced by
-     fetch_agent_instance's user_id filter in run_store.py).
+     Resolve user_id via ``require_user`` (plan 22c-05 / 22c-06) —
+     authenticated session cookie mandatory for the non-sysadmin path;
+     Lookup agent_instance by (agent_id, user_id); 404 if missing;
+     Ownership check enforced at the SQL layer by fetch_agent_instance's
+     user_id filter (defense in depth).
   3. Acquire per-agent long-poll lock (D-13); 429 if already held
   4. DB scope 1: fetch_events_after_seq(since_seq, kinds) — fast path
   5. If rows: return immediately
@@ -43,8 +44,9 @@ Auth posture (D-15):
 - If Bearer matches ``os.environ[AP_SYSADMIN_TOKEN_ENV]`` (when set),
   skip the ownership check entirely (sysadmin bypass for the test
   harness in Plan 22b-06).
-- Otherwise resolve ``user_id = ANONYMOUS_USER_ID`` (Phase 19 MVP seam)
-  and ``fetch_agent_instance`` filters by user_id at the SQL layer —
+- Otherwise resolve ``user_id`` via ``require_user`` (authenticated
+  ``ap_session`` cookie mandatory for the non-sysadmin path) and
+  ``fetch_agent_instance`` filters by user_id at the SQL layer —
   cross-tenant reads are impossible because the WHERE clause includes
   user_id (defense in depth).
 
@@ -73,7 +75,8 @@ from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..constants import ANONYMOUS_USER_ID, AP_SYSADMIN_TOKEN_ENV
+from ..auth.deps import require_user
+from ..constants import AP_SYSADMIN_TOKEN_ENV
 from ..models.errors import ErrorCode, make_error_envelope
 from ..models.events import VALID_KINDS
 from ..services.event_store import fetch_events_after_seq, insert_agent_event
@@ -180,14 +183,25 @@ async def get_events(
         )
 
     # --- Step 2: sysadmin bypass OR ownership check ---
+    # Sysadmin bypass MUST run first — it short-circuits BEFORE require_user
+    # so the test harness (plan 22b-06) can probe events against a
+    # synthetic agent_id without minting a session cookie. When NOT
+    # sysadmin, require_user gates the path (Phase 22c-06) and
+    # fetch_agent_instance's WHERE-user_id enforces cross-tenant
+    # isolation at the SQL layer.
     sysadmin_token = os.environ.get(AP_SYSADMIN_TOKEN_ENV) or ""
     is_sysadmin = bool(sysadmin_token) and bearer == sysadmin_token
 
     pool = request.app.state.db
     if not is_sysadmin:
+        session_result = require_user(request)
+        if isinstance(session_result, JSONResponse):
+            return session_result
+        user_id: UUID = session_result
+
         async with pool.acquire() as conn:
             agent = await fetch_agent_instance(
-                conn, agent_id, ANONYMOUS_USER_ID
+                conn, agent_id, user_id
             )
         if agent is None:
             return _err(

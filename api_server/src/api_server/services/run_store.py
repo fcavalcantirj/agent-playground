@@ -22,10 +22,7 @@ from uuid import UUID
 
 import asyncpg
 
-from ..constants import ANONYMOUS_USER_ID  # re-export so routes can use a single import site
-
 __all__ = [
-    "ANONYMOUS_USER_ID",
     "upsert_agent_instance",
     "list_agents",
     "insert_pending_run",
@@ -437,11 +434,9 @@ async def fetch_agent_instance(
 ) -> dict[str, Any] | None:
     """Return the ``agent_instances`` row for ``(agent_id, user_id)`` or None.
 
-    The ``user_id`` parameter is the multi-tenancy seam for Phase 21+:
-    today it's always ``ANONYMOUS_USER_ID`` in the caller, but keeping
-    the signature user-scoped means the migration to real session
-    resolution is a one-line change in the route layer, not a query
-    rewrite here. Defense in depth: even if the route forgets to pass
+    The ``user_id`` parameter is the multi-tenancy seam: the route layer
+    resolves it via ``require_user`` (plan 22c-05) from the authenticated
+    session cookie. Defense in depth: even if the route forgets to pass
     the correct user_id, the query can't leak cross-user rows because
     ``user_id`` is always in the WHERE clause.
 

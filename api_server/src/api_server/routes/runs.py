@@ -4,7 +4,8 @@ Implements CONTEXT.md D-07 flow verbatim:
 
     1. Parse ``Authorization: Bearer <key>`` → ``provider_key`` (memory only)
     2. Validate ``body.recipe_name`` against ``app.state.recipes``
-    3. Resolve ``user_id = ANONYMOUS_USER_ID`` (Phase 19)
+    3. Resolve ``user_id`` via ``require_user`` (plan 22c-05 / 22c-06) —
+       authenticated session cookie ``ap_session`` is mandatory
     4. Upsert ``agent_instances(user_id, recipe_name, model)``
     5. Mint ULID ``run_id``, insert ``runs`` row (verdict=NULL)
     6. RELEASE DB connection (Pitfall 4)
@@ -31,11 +32,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
-from ..constants import ANONYMOUS_USER_ID
+from ..auth.deps import require_user
 from ..models.errors import ErrorCode, make_error_envelope
 from ..models.runs import RunGetResponse, RunRequest, RunResponse
 from ..services.personality import is_known as personality_is_known
@@ -91,7 +93,16 @@ async def create_run(
     already matches ``^[a-z0-9][a-z0-9_-]*$`` (SQL-injection defense)
     and no extra fields are present (inline-YAML injection defense).
     """
-    # --- Step 1: Authorization header → provider_key (memory only) ---
+    # --- Step 1a: Session cookie → user_id (Phase 22c require_user gate) ---
+    # Runs BEFORE the Bearer parse so an unauthenticated caller gets the
+    # single canonical 401 (UNAUTHORIZED / ap_session) rather than a
+    # Bearer-shape 401 that would mislead on-boarding.
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
+    # --- Step 1b: Authorization header → provider_key (memory only) ---
     if not authorization.startswith("Bearer "):
         return _err(
             401,
@@ -170,7 +181,7 @@ async def create_run(
     async with pool.acquire() as conn:
         agent_instance_id = await upsert_agent_instance(
             conn,
-            ANONYMOUS_USER_ID,
+            user_id,
             body.recipe_name,
             body.model,
             agent_name,
