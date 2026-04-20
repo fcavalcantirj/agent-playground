@@ -315,3 +315,79 @@ async def test_migration_005_sessions_and_users_columns(migrated_pg):
         )
     finally:
         await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 22c — migration 006 (IRREVERSIBLE purge of all data-bearing tables)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.api_integration
+@pytest.mark.asyncio
+async def test_migration_006_artifact_and_apply(migrated_pg):
+    """Phase 22c migration 006 — artifact existence + apply-to-head succeeds.
+
+    NOTE: The R8 BEHAVIORAL regression (seed → TRUNCATE → assert all 8 tables
+    empty + alembic_version preserved) lives in SPIKE-B at
+    ``tests/spikes/test_truncate_cascade.py`` per BLOCKER-4 Option A. That
+    spike uses a dedicated function-scoped container because the
+    session-scoped ``migrated_pg`` fixture here would skip the seed step once
+    HEAD reaches 006.
+
+    This test verifies:
+    (1) The migration file contains the TRUNCATE text (artifact check).
+    (2) ``alembic upgrade head`` on the session-scoped container reaches
+        HEAD = 006_purge_anonymous.
+    (3) Post-apply all 8 tables are empty (belt-and-suspenders — duplicates
+        plan 22c-09 Task 1's pre-assertion; catches the case where the
+        TRUNCATE text silently no-ops, e.g. table-name typo).
+    """
+    import subprocess
+    import sys
+
+    # (1) Artifact existence + structural contents.
+    migration_path = (
+        API_SERVER_DIR / "alembic" / "versions" / "006_purge_anonymous.py"
+    )
+    assert migration_path.exists(), "migration 006 file missing"
+    body = migration_path.read_text()
+    assert "TRUNCATE TABLE" in body
+    assert "sessions" in body
+    assert "users" in body
+    assert "raise NotImplementedError" in body
+
+    # (2) + (3) Apply + post-apply count check.
+    dsn = _dsn_for_alembic(migrated_pg)
+    # Note: the session-scoped ``migrated_pg`` fixture already ran
+    # ``alembic upgrade head`` once; issuing it again is a no-op when HEAD
+    # already matches, and advances by any new revisions added since.
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=API_SERVER_DIR,
+        env={**os.environ, "DATABASE_URL": dsn},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    conn = await _connect(migrated_pg)
+    try:
+        version = await conn.fetchval(
+            "SELECT version_num FROM alembic_version"
+        )
+        assert version == "006_purge_anonymous", (
+            f"HEAD != 006: got {version!r}"
+        )
+
+        # Belt-and-suspenders: post-006 all 8 tables empty (even if other
+        # tests in this session had seeded rows before 006 ran).
+        for tbl in (
+            "agent_events", "runs", "agent_containers", "agent_instances",
+            "idempotency_keys", "rate_limit_counters", "sessions", "users",
+        ):
+            count = await conn.fetchval(f"SELECT COUNT(*) FROM {tbl}")
+            assert count == 0, (
+                f"{tbl} not cleared by migration 006: got count={count}"
+            )
+    finally:
+        await conn.close()

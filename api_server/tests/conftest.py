@@ -97,9 +97,13 @@ async def _truncate_tables(request):
     session-scoped Postgres container and runs alembic for every test,
     including pure-unit ``test_docs_gating.py`` that has no DB needs.
 
-    ``users`` is intentionally NOT truncated — the anonymous seed row
-    (``00000000-0000-0000-0000-000000000001``) must survive, and FKs
-    cascade appropriately via ``RESTART IDENTITY CASCADE``.
+    Post-22c (migration 006): the anonymous seed row is gone. Every
+    integration test is responsible for creating its own user(s) — either
+    via the ``authenticated_cookie`` fixture (HTTP-layer tests, plan
+    22c-05) or a direct asyncpg INSERT with a literal ``TEST_USER_ID``
+    (DB-layer tests). The TRUNCATE list below covers every data-bearing
+    table from migration 006 so test isolation survives a clean post-006
+    DB.
     """
     needs_db = (
         "db_pool" in request.fixturenames
@@ -118,20 +122,18 @@ async def _truncate_tables(request):
     )
     try:
         async with cleanup_pool.acquire() as conn:
-            # Phase 22c-05: ``sessions`` added to the truncate list — each
-            # integration test in ``tests/auth/`` + ``tests/routes/test_users_me.py``
-            # seeds its own session row and expects a clean slate. ``users``
-            # stays out of truncate (ANONYMOUS seed row protection) but we
-            # delete non-anonymous rows in a second statement so tests that
-            # upsert a new google/github user don't leave PII behind.
+            # Phase 22c-06: TRUNCATE list extended to match migration 006's
+            # 8-table purge set. ``agent_events`` + ``agent_containers`` +
+            # ``users`` were previously omitted because the ANONYMOUS seed
+            # row had to survive. Post-006 that row no longer exists, so
+            # TRUNCATE can now include ``users`` directly — integration
+            # tests seed their own users via ``authenticated_cookie`` or
+            # an inline ``TEST_USER_ID`` literal.
             await conn.execute(
-                "TRUNCATE TABLE sessions, rate_limit_counters, "
-                "idempotency_keys, runs, agent_instances "
+                "TRUNCATE TABLE agent_events, runs, agent_containers, "
+                "agent_instances, idempotency_keys, rate_limit_counters, "
+                "sessions, users "
                 "RESTART IDENTITY CASCADE"
-            )
-            await conn.execute(
-                "DELETE FROM users "
-                "WHERE id != '00000000-0000-0000-0000-000000000001'"
             )
     finally:
         await cleanup_pool.close()
