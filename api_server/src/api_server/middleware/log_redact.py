@@ -13,6 +13,15 @@ Plan 19-06 artifact (BYOK-leak defense). Phase 19 CONTEXT.md D-02 mandates
 that the header carrying the BYOK provider key is NEVER logged — the
 allowlist below achieves that by construction (the header name is simply
 not in the set, so it is never read or emitted).
+
+Cookie redaction (Phase 22c):
+    The allowlist pattern already blocks raw Cookie / Set-Cookie headers
+    because they are not in ``_LOG_HEADERS``. This prevents the following
+    Phase 22c cookies from ever being logged:
+    * ``ap_session`` — server-side session id (22c SessionMiddleware)
+    * ``ap_oauth_state`` — authlib CSRF state cookie (Starlette SessionMiddleware)
+    No positive change required for 22c; this note exists so future grep-auditors
+    can verify the path without re-deriving the allowlist semantics.
 """
 from __future__ import annotations
 
