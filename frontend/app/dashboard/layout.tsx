@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Navbar } from "@/components/navbar"
 import { ParticleBackground } from "@/components/particle-background"
+import { useUser } from "@/hooks/use-user"
 import { cn } from "@/lib/utils"
 import { 
   Layers, 
@@ -32,16 +33,27 @@ const sidebarItems = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // useUser returns null until /api/v1/users/me resolves; on 401 the hook
+  // redirects to /login (the proxy.ts gate from plan 22c-08 is the real
+  // barrier — this is the client-side fallback). While null, we pass
+  // user={undefined} to Navbar so it renders its avatar-fallback skeleton
+  // (D-22c-FE-02: eager render, no Suspense).
+  const sessionUser = useUser()
 
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-background">
       <ParticleBackground />
       <Navbar
         isLoggedIn={true}
-        user={{
-          name: "Alex Chen",
-          email: "alex@example.com",
-        }}
+        user={
+          sessionUser
+            ? {
+                name: sessionUser.display_name,
+                email: sessionUser.email ?? "",
+                avatar: sessionUser.avatar_url,
+              }
+            : undefined
+        }
       />
       
       <div className="relative z-10 mx-auto max-w-7xl px-4 pt-20 sm:px-6 sm:pt-24 lg:px-8">

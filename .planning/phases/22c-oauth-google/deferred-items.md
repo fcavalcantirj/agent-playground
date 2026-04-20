@@ -222,3 +222,57 @@ which could race with a subsequent test's revoked-session check.
 Impact: verified against the full integration suite (`pytest -m
 api_integration`) — no regression in any of the 109 previously-green
 integration tests.
+
+## 22c-07 (Wave 4, frontend login/dashboard/navbar) — 2026-04-20
+
+### PRE-EXISTING: 3 frontend TypeScript errors on main (pre-22c-07)
+
+Files + symptoms:
+
+- `app/dashboard/agents/[id]/page.tsx:90` — `error TS2322: Type '"running"
+  | "stopped"' is not assignable to type '"running"'.` (stub agent seed
+  narrowed too aggressively; predates 22c.)
+- `components/footer.tsx:77` — `error TS2339: Property 'external' does
+  not exist on type '{ name: string; href: string; } | ...'` (footer
+  link discriminated union missing the `external` optional on one arm.)
+- `components/particle-background.tsx:19` — `error TS2554: Expected 1
+  arguments, but got 0.` (canvas 2D context call without argument.)
+
+Evidence of pre-existence: confirmed by running `./node_modules/.bin/tsc
+--noEmit` in `frontend/` BEFORE any 22c-07 file edits (no changes on
+disk from this plan yet) — same three errors reported verbatim.
+
+Scope: OUT OF SCOPE for 22c-07. The plan only touches `login/page.tsx`,
+`dashboard/layout.tsx`, `components/navbar.tsx`, and adds
+`hooks/use-user.ts` — none of which own any of these errors. Logged for
+a later "frontend type-clean" chore pass. `frontend/next.config.mjs`
+already sets `typescript.ignoreBuildErrors: true`, so `pnpm build` is
+not gated on these.
+
+### PRE-EXISTING: `pnpm build` fails to prerender `/_global-error` + `/docs/config`
+
+Files + symptoms:
+
+- `/_global-error/page` — `TypeError: Cannot read properties of null
+  (reading 'useContext')` during static export.
+- `/docs/config/page` — `TypeError: Cannot read properties of null
+  (reading 'use')` during static export.
+
+Both are React-context-null failures during Next.js static prerender.
+Neither page is in the 22c-07 file set; neither pulls from
+`hooks/use-user.ts`, `app/login/page.tsx`, `app/dashboard/layout.tsx`,
+or `components/navbar.tsx`.
+
+Evidence of pre-existence: confirmed by `git stash` ing the 22c-07
+working-tree changes (layout.tsx + navbar.tsx) on top of clean `main`
+at commit `f1e7dd1` and re-running `pnpm build` — same two
+prerender errors with identical digests (`1666369206` and
+`2048828324`).
+
+Scope: OUT OF SCOPE for 22c-07. Logged for a later "Next 16 app-router
+prerender hygiene" chore pass. Dev server (`pnpm dev`) is unaffected;
+the 22c-09 smoke test will exercise the login → OAuth → dashboard flow
+via the dev server, not a static export. `next.config.mjs` does not
+currently gate deploy on a full `pnpm build` — the production path is
+`next dev` behind Caddy per Phase 19, so this does not block 22c-09 or
+Phase 19 deploy unblock.

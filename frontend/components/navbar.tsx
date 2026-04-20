@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { apiPost } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +42,7 @@ interface NavbarProps {
 
 export function Navbar({ isLoggedIn = false, user }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const router = useRouter()
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
@@ -228,11 +231,22 @@ export function Navbar({ isLoggedIn = false, user }: NavbarProps) {
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild className="text-destructive focus:text-destructive">
-                      <Link href="/login">
-                        <LogOut className="mr-2 h-4 w-4" />
-                        Log out
-                      </Link>
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={async (e) => {
+                        e.preventDefault()
+                        try {
+                          await apiPost("/api/v1/auth/logout", {})
+                        } catch {
+                          // Server-side session may already be gone; fall
+                          // through to redirect so the UI lands at /login
+                          // regardless of backend state.
+                        }
+                        router.push("/login")
+                      }}
+                    >
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Log out
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
