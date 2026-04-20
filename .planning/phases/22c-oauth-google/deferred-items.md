@@ -81,6 +81,39 @@ That invocation passes (verified 2026-04-19 — 1 passed in 3.55s).
 Running the test from inside `deploy-api_server-1` hits the conftest
 DSN-gateway issue above and is deferred to 22c-06.
 
+## 22c-06 (Wave 4, alembic 006 purge + ANONYMOUS cleanup) — 2026-04-20
+
+### OBSOLETED: Phase 19 baseline test `test_anonymous_user_seeded`
+
+File: `api_server/tests/test_migration.py`
+Test: `TestBaselineMigration::test_anonymous_user_seeded`
+
+Failure: `AssertionError: anonymous user missing`.
+
+Root cause: migration 006 (this plan) TRUNCATEs the `users` table —
+including the ANONYMOUS seed row. The baseline test asserts that row
+still exists, which is correct for migration 001 in isolation but no
+longer true post-006.
+
+Scope: semantically this test is OBSOLETE, not broken. The right fix
+is either (a) rename it to `test_anonymous_user_seeded_at_baseline` and
+have it run against a DB upgraded only to 001 (not head), or (b) delete
+the assertion entirely since post-22c the database model has zero seed
+rows by design (AMD-04).
+
+Deferring the rename / delete to a later test-hygiene pass; 22c-06's
+own `test_migration_006_artifact_and_apply` covers the post-006 empty-
+table invariant (belt-and-suspenders 8-table COUNT=0 check).
+
+### OUT OF SCOPE: `test_events_lifecycle_cancel_on_stop.py` rename
+
+Per the plan's Class B note, the file's local `ANONYMOUS_USER_ID` was
+renamed to `TEST_USER_ID` (same UUID value `...000000000001`). Because
+the UUID value is reused by multiple test files under the same fixed
+value, inter-test ordering within a pool now relies on the ON CONFLICT
+DO NOTHING idempotency — this is documented in each fixture's
+docstring.
+
 ## 22c-05 (Wave 3, OAuth routes + tests) — 2026-04-20
 
 ### PRE-EXISTING: 3 integration tests fail on main (pre-22c-05)

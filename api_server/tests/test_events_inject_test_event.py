@@ -43,7 +43,12 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from api_server.constants import ANONYMOUS_USER_ID
+# Phase 22c-06: ANONYMOUS_USER_ID constant deleted. Use a deterministic
+# local seed UUID for DB-layer fixtures that don't exercise the HTTP auth
+# surface. Tests in this file exercise the SYSADMIN-BYPASS path, which
+# short-circuits BEFORE require_user — the URL ``agent_id`` is the
+# container_row_id, and the owner's user_id is only a FK-satisfying value.
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 
 pytestmark = [pytest.mark.api_integration, pytest.mark.asyncio]
 
@@ -157,9 +162,26 @@ async def prod_app_and_client(
             yield app, client
 
 
+async def _ensure_test_user(conn) -> None:
+    """ON CONFLICT-safe seed of the TEST_USER_ID users row.
+
+    Phase 22c-06: migration 006 purged the old ANONYMOUS seed; these
+    fixtures now create the FK target themselves. Idempotent so
+    consecutive fixture calls within the same TRUNCATE window are safe.
+    """
+    await conn.execute(
+        """
+        INSERT INTO users (id, display_name)
+        VALUES ($1, 'inject-test-owner')
+        ON CONFLICT (id) DO NOTHING
+        """,
+        TEST_USER_ID,
+    )
+
+
 @pytest_asyncio.fixture
 async def seed_agent_instance(db_pool) -> UUID:
-    """Insert an agent_instances row owned by the anonymous user.
+    """Insert an agent_instances row owned by the test user.
 
     Returns the new agent_instance_id (UUID). Used by the no-running-container
     test — the URL key (per Spike B B2) is agent_containers.id, NOT
@@ -169,6 +191,7 @@ async def seed_agent_instance(db_pool) -> UUID:
     instance_id = uuid4()
     instance_name = f"inject-test-{instance_id.hex[:8]}"
     async with db_pool.acquire() as conn:
+        await _ensure_test_user(conn)
         await conn.execute(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
@@ -176,7 +199,7 @@ async def seed_agent_instance(db_pool) -> UUID:
                     'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
     return instance_id
@@ -202,6 +225,7 @@ async def seed_running_container(db_pool) -> tuple[UUID, UUID]:
     instance_name = f"inject-run-{instance_id.hex[:8]}"
     fake_container_id = "test-fake-" + uuid4().hex[:12]
     async with db_pool.acquire() as conn:
+        await _ensure_test_user(conn)
         await conn.execute(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
@@ -209,7 +233,7 @@ async def seed_running_container(db_pool) -> tuple[UUID, UUID]:
                     'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
         await conn.execute(
@@ -221,7 +245,7 @@ async def seed_running_container(db_pool) -> tuple[UUID, UUID]:
             """,
             container_row_id,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             fake_container_id,
         )
     return container_row_id, instance_id

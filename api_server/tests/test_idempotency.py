@@ -28,20 +28,21 @@ def _key() -> str:
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_same_key_returns_cache(async_client, monkeypatch):
+async def test_same_key_returns_cache(
+    async_client, authenticated_cookie, monkeypatch,
+):
     """SC-06: second POST with same Idempotency-Key returns cached run_id.
 
     We count runner invocations by patching ``asyncio.to_thread`` with a
     counter-wrapping fake. The second POST MUST NOT increment the
     counter — the middleware's cache hit must short-circuit before the
-    route ever calls execute_run.
+    route ever calls execute_run. Phase 22c-06: both calls carry the
+    ``authenticated_cookie`` so require_user lets them through.
     """
     call_count = {"n": 0}
 
     async def counted_to_thread(fn, *a, **kw):
         call_count["n"] += 1
-        # Return a minimal details dict matching run_cell's shape —
-        # see services/runner_bridge for the contract.
         return {
             "recipe": "hermes", "model": "m", "prompt": "p",
             "pass_if": "exit_zero", "verdict": "PASS",
@@ -50,26 +51,19 @@ async def test_same_key_returns_cache(async_client, monkeypatch):
             "filtered_payload": "", "stderr_tail": None,
         }
 
-    # monkeypatch.setattr auto-restores so we don't leak the counter
-    # fake into other tests that also use mock_run_cell.
     monkeypatch.setattr("asyncio.to_thread", counted_to_thread)
 
     key = _key()
     body = {"recipe_name": "hermes", "model": "m", "prompt": "p"}
+    headers = {**AUTH, "Idempotency-Key": key, "Cookie": authenticated_cookie["Cookie"]}
 
-    r1 = await async_client.post(
-        "/v1/runs", headers={**AUTH, "Idempotency-Key": key}, json=body,
-    )
+    r1 = await async_client.post("/v1/runs", headers=headers, json=body)
     assert r1.status_code == 200, r1.text
     run_id_1 = r1.json()["run_id"]
 
-    r2 = await async_client.post(
-        "/v1/runs", headers={**AUTH, "Idempotency-Key": key}, json=body,
-    )
+    r2 = await async_client.post("/v1/runs", headers=headers, json=body)
     assert r2.status_code == 200, r2.text
-    # SC-06: same run_id on replay (the verdict is cached verbatim).
     assert r2.json()["run_id"] == run_id_1
-    # And critically — the runner ran exactly once.
     assert call_count["n"] == 1, (
         f"runner was called {call_count['n']} times; expected 1 "
         "(second call should hit the cache)"
@@ -78,21 +72,28 @@ async def test_same_key_returns_cache(async_client, monkeypatch):
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_body_mismatch_returns_422(async_client, mock_run_cell):
-    """T-19-05-03: same key + different body → 422 IDEMPOTENCY_BODY_MISMATCH."""
+async def test_body_mismatch_returns_422(
+    async_client, authenticated_cookie, mock_run_cell,
+):
+    """T-19-05-03: same key + different body → 422 IDEMPOTENCY_BODY_MISMATCH.
+
+    Phase 22c-06: both POSTs carry the ``authenticated_cookie`` so
+    require_user passes; the mismatch is detected at the middleware layer.
+    """
     mock_run_cell(verdict_category="PASS")
     key = _key()
+    headers = {**AUTH, "Idempotency-Key": key, "Cookie": authenticated_cookie["Cookie"]}
+
     r1 = await async_client.post(
         "/v1/runs",
-        headers={**AUTH, "Idempotency-Key": key},
+        headers=headers,
         json={"recipe_name": "hermes", "model": "m", "prompt": "p1"},
     )
     assert r1.status_code == 200, r1.text
 
-    # Second request: same key, different prompt → body hash differs.
     r2 = await async_client.post(
         "/v1/runs",
-        headers={**AUTH, "Idempotency-Key": key},
+        headers=headers,
         json={"recipe_name": "hermes", "model": "m", "prompt": "p2"},
     )
     assert r2.status_code == 422, r2.text
@@ -104,17 +105,22 @@ async def test_body_mismatch_returns_422(async_client, mock_run_cell):
 async def test_same_key_different_users_isolated(db_pool):
     """T-19-05-02: cross-user ``(user_id, key)`` collision is impossible.
 
-    Phase 19 has a single HTTP-visible user (``ANONYMOUS_USER_ID``), so
-    this test operates at the DB layer directly: we insert a second
-    user and verify that the UNIQUE constraint on ``(user_id, key)``
-    allows both users to use ``"abc"`` for different runs without
-    collision. If the schema were UNIQUE on ``key`` alone the second
-    INSERT would fail — that's what T-19-05-02 mitigates.
+    Pre-22c the codebase had a single HTTP-visible ANONYMOUS user; post-22c
+    each test seeds its own user via direct DB insert. This test operates
+    at the DB layer, so we stage two users (u1, u2) and verify that the
+    UNIQUE constraint on ``(user_id, key)`` allows both users to use
+    ``"abc"`` for different runs without collision. If the schema were
+    UNIQUE on ``key`` alone the second INSERT would fail — that's what
+    T-19-05-02 mitigates.
     """
-    u1 = "00000000-0000-0000-0000-000000000001"
     async with db_pool.acquire() as conn:
-        # Stage a second user so cross-user behavior can be proven
-        # without requiring Phase 21 auth.
+        # Stage two users so cross-user behavior can be proven at the DB
+        # layer (no HTTP auth involved).
+        u1_row = await conn.fetchrow(
+            "INSERT INTO users (id, display_name) "
+            "VALUES (gen_random_uuid(), 'u1') RETURNING id::text"
+        )
+        u1 = u1_row["id"]
         u2_row = await conn.fetchrow(
             "INSERT INTO users (id, display_name) "
             "VALUES (gen_random_uuid(), 'u2') RETURNING id::text"
@@ -178,15 +184,16 @@ async def test_same_key_different_users_isolated(db_pool):
 
 @pytest.mark.api_integration
 @pytest.mark.asyncio
-async def test_expired_key_re_runs(async_client, mock_run_cell, db_pool):
+async def test_expired_key_re_runs(
+    async_client, authenticated_cookie, mock_run_cell, db_pool,
+):
     """24h TTL: expiring the cache row makes the next request re-run."""
     mock_run_cell(verdict_category="PASS")
     key = _key()
     body = {"recipe_name": "hermes", "model": "m", "prompt": "p"}
+    headers = {**AUTH, "Idempotency-Key": key, "Cookie": authenticated_cookie["Cookie"]}
 
-    r1 = await async_client.post(
-        "/v1/runs", headers={**AUTH, "Idempotency-Key": key}, json=body,
-    )
+    r1 = await async_client.post("/v1/runs", headers=headers, json=body)
     assert r1.status_code == 200, r1.text
     rid1 = r1.json()["run_id"]
 
@@ -199,9 +206,7 @@ async def test_expired_key_re_runs(async_client, mock_run_cell, db_pool):
             key,
         )
 
-    r2 = await async_client.post(
-        "/v1/runs", headers={**AUTH, "Idempotency-Key": key}, json=body,
-    )
+    r2 = await async_client.post("/v1/runs", headers=headers, json=body)
     assert r2.status_code == 200, r2.text
     # A fresh run_id is minted because the old cache entry is expired.
     assert r2.json()["run_id"] != rid1, (

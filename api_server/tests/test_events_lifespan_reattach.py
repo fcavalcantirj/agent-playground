@@ -30,7 +30,11 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 
-from api_server.constants import ANONYMOUS_USER_ID
+# Phase 22c-06: ANONYMOUS_USER_ID constant deleted. Use a deterministic
+# local seed UUID for DB-layer fixtures that don't exercise the HTTP auth
+# surface (this file seeds rows directly via asyncpg to exercise the
+# lifespan re-attach path).
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 
 pytestmark = pytest.mark.api_integration
 
@@ -50,13 +54,22 @@ async def seed_running_container_with_live_docker(
     row_id = uuid4()
     instance_name = f"reattach-test-{instance_id.hex[:8]}"
     async with db_pool.acquire() as conn:
+        # Phase 22c-06: seed FK target (migration 006 purged ANONYMOUS row).
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1, 'lifespan-reattach-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            TEST_USER_ID,
+        )
         await conn.execute(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
             VALUES ($1, $2, 'hermes', 'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
         await conn.execute(
@@ -68,7 +81,7 @@ async def seed_running_container_with_live_docker(
             """,
             row_id,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             container.id,
         )
     return row_id, container.id
@@ -84,13 +97,22 @@ async def seed_running_row_with_dead_container(db_pool) -> UUID:
     instance_name = f"reattach-dead-{instance_id.hex[:8]}"
     fake_container_id = "deadbeef" * 8  # 64 hex — looks plausible, never existed
     async with db_pool.acquire() as conn:
+        # Phase 22c-06: seed FK target (migration 006 purged ANONYMOUS row).
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1, 'lifespan-reattach-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            TEST_USER_ID,
+        )
         await conn.execute(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
             VALUES ($1, $2, 'hermes', 'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
         await conn.execute(
@@ -102,7 +124,7 @@ async def seed_running_row_with_dead_container(db_pool) -> UUID:
             """,
             row_id,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             fake_container_id,
         )
     return row_id

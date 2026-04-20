@@ -34,16 +34,20 @@ class _FakeAppState:
         self.locks_mutex = asyncio.Lock()
 
 
-ANONYMOUS_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+# Phase 22c-06: local test placeholder user id (was named ANONYMOUS_USER_ID
+# pre-22c; renamed to avoid confusion with the deleted global constant).
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.fixture
 async def seed_agent_container(db_pool) -> UUID:
-    """Insert an agent_instances + agent_containers pair, return container PK.
+    """Insert test user + agent_instances + agent_containers pair; return container PK.
 
     Same shape as the backpressure-test fixture; lives here to keep each
     integration test file self-contained (no shared conftest leakage).
     Schema reference: ``alembic/versions/003_agent_containers.py``.
+    Phase 22c-06: migration 006 purged the old ANONYMOUS seed, so the
+    fixture now seeds its own user row (ON CONFLICT-safe).
     """
     instance_id = uuid4()
     container_pk = uuid4()
@@ -51,11 +55,19 @@ async def seed_agent_container(db_pool) -> UUID:
     async with db_pool.acquire() as conn:
         await conn.execute(
             """
+            INSERT INTO users (id, display_name)
+            VALUES ($1, 'watcher-teardown-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            TEST_USER_ID,
+        )
+        await conn.execute(
+            """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
             VALUES ($1, $2, 'hermes', 'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
         await conn.execute(
@@ -67,7 +79,7 @@ async def seed_agent_container(db_pool) -> UUID:
             """,
             container_pk,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             f"docker-{container_pk.hex[:12]}",
         )
     return container_pk

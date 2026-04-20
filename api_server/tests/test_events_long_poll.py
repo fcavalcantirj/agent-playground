@@ -24,12 +24,16 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from api_server.constants import ANONYMOUS_USER_ID
+# Phase 22c-06: ANONYMOUS_USER_ID constant deleted. Use a deterministic
+# local seed UUID for DB-layer fixtures that don't exercise the HTTP auth
+# surface; the fixtures in this file use ``ANON_USER_ID`` (string form of
+# TEST_USER_ID) for FK satisfaction in direct INSERTs.
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 
 pytestmark = [pytest.mark.api_integration, pytest.mark.asyncio]
 
 API_SERVER_DIR = Path(__file__).resolve().parent.parent
-ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
+ANON_USER_ID = str(TEST_USER_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +58,15 @@ async def seed_agent_container(real_db_pool) -> UUID:
     recipe_name = f"events-long-poll-{uuid4().hex[:8]}"
     name = f"agent-{uuid4().hex[:8]}"
     async with real_db_pool.acquire() as conn:
+        # Phase 22c-06: seed the FK target (migration 006 purged ANONYMOUS).
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1, 'events-long-poll-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            TEST_USER_ID,
+        )
         instance = await conn.fetchrow(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)

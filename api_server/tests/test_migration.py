@@ -307,11 +307,18 @@ async def test_migration_005_sessions_and_users_columns(migrated_pg):
             "ix_sessions_user_id btree index missing"
         )
 
+        # Phase 22c-06: HEAD now advances to 006_purge_anonymous when both
+        # migration tests share a session-scoped container. This test
+        # asserts that AT LEAST 005 has been applied (by proving the
+        # schema changes it introduces are present) rather than pinning
+        # HEAD to exactly 005.
         version = await conn.fetchval(
             "SELECT version_num FROM alembic_version"
         )
-        assert version == "005_sessions_and_oauth_users", (
-            f"alembic HEAD is {version!r}; 005 not applied"
+        assert version in (
+            "005_sessions_and_oauth_users", "006_purge_anonymous",
+        ), (
+            f"alembic HEAD is {version!r}; expected 005 or later (006)"
         )
     finally:
         await conn.close()

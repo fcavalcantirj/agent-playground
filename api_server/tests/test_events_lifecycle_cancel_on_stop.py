@@ -34,7 +34,10 @@ class _FakeAppState:
         self.locks_mutex = asyncio.Lock()
 
 
-ANONYMOUS_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+# Phase 22c-06: local test placeholder user id. UUID value preserved from
+# the pre-22c local redef (no constant-import change here); only the name
+# changed to avoid confusion with the deleted global ANONYMOUS_USER_ID.
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest_asyncio.fixture
@@ -43,13 +46,22 @@ async def seed_agent_container(db_pool) -> UUID:
     container_pk = uuid4()
     instance_name = f"cancel-test-{instance_id.hex[:8]}"
     async with db_pool.acquire() as conn:
+        # Phase 22c-06: seed FK target (migration 006 purged ANONYMOUS row).
+        await conn.execute(
+            """
+            INSERT INTO users (id, display_name)
+            VALUES ($1, 'cancel-test-owner')
+            ON CONFLICT (id) DO NOTHING
+            """,
+            TEST_USER_ID,
+        )
         await conn.execute(
             """
             INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
             VALUES ($1, $2, 'hermes', 'openrouter/anthropic/claude-haiku-4.5', $3)
             """,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             instance_name,
         )
         await conn.execute(
@@ -61,7 +73,7 @@ async def seed_agent_container(db_pool) -> UUID:
             """,
             container_pk,
             instance_id,
-            ANONYMOUS_USER_ID,
+            TEST_USER_ID,
             f"docker-{container_pk.hex[:12]}",
         )
     return container_pk
