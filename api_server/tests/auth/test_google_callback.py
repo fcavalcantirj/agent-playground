@@ -127,7 +127,7 @@ async def test_happy_path_upserts_user_mints_session_sets_cookie(
         follow_redirects=False,
     )
     assert r.status_code == 302, r.text
-    assert r.headers["location"] == "/dashboard", r.headers
+    assert r.headers["location"] == "http://localhost:3000/dashboard", r.headers
     set_cookie = r.headers.get("set-cookie", "")
     assert "ap_session=" in set_cookie, (
         f"expected ap_session cookie; got: {set_cookie!r}"

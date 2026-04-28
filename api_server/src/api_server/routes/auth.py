@@ -58,8 +58,11 @@ _log = logging.getLogger("api_server.auth")
 
 _SESSION_COOKIE = "ap_session"
 _SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days — matches SESSION_TTL in auth/oauth.py
-_DASHBOARD_REDIRECT = "/dashboard"
-_LOGIN_REDIRECT = "/login"
+# Paths only — prefixed with settings.frontend_base_url at call site so the
+# 302 lands on the frontend (port 3000) and not the API origin (port 8000).
+# Plan gap surfaced by Phase 22c manual smoke (D-22c-FE-03 + 22c-09).
+_DASHBOARD_PATH = "/dashboard"
+_LOGIN_PATH = "/login"
 
 
 def _err(
@@ -108,10 +111,13 @@ def _clear_session_cookie(resp: Response, settings) -> None:
     )
 
 
-def _login_redirect_with_error(code: str) -> RedirectResponse:
-    """302 to ``/login?error=<code>`` — frontend reads ``?error=`` on mount
-    and surfaces a toast (D-22c-FE-03)."""
-    return RedirectResponse(f"{_LOGIN_REDIRECT}?error={code}", status_code=302)
+def _login_redirect_with_error(settings, code: str) -> RedirectResponse:
+    """302 to ``<frontend_base_url>/login?error=<code>`` — frontend reads
+    ``?error=`` on mount and surfaces a toast (D-22c-FE-03)."""
+    return RedirectResponse(
+        f"{settings.frontend_base_url}{_LOGIN_PATH}?error={code}",
+        status_code=302,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +155,7 @@ async def google_callback(request: Request):
     # denial doesn't run through the token-endpoint path.
     err_param = request.query_params.get("error")
     if err_param == "access_denied":
-        return _login_redirect_with_error("access_denied")
+        return _login_redirect_with_error(settings, "access_denied")
 
     try:
         token = await oauth.google.authorize_access_token(request)
@@ -159,9 +165,9 @@ async def google_callback(request: Request):
         # authlib version that adds a different "state"-containing message)
         # could be misclassified. We key on the canonical error code only.
         if e.error == "mismatching_state":
-            return _login_redirect_with_error("state_mismatch")
+            return _login_redirect_with_error(settings, "state_mismatch")
         _log.warning("google oauth_failed: %s", e.error)
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     # Google OIDC flow — authlib parses the id_token and returns userinfo
     # inside the token dict. Fall back to explicit ``userinfo()`` if the
@@ -173,10 +179,10 @@ async def google_callback(request: Request):
             userinfo = await oauth.google.userinfo(token=token)
         except Exception:
             _log.exception("google userinfo fetch failed")
-            return _login_redirect_with_error("oauth_failed")
+            return _login_redirect_with_error(settings, "oauth_failed")
 
     if not userinfo or not userinfo.get("sub"):
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     display_name = userinfo.get("name") or userinfo.get("email") or "user"
     pool = request.app.state.db
@@ -191,7 +197,9 @@ async def google_callback(request: Request):
         )
         session_id = await mint_session(conn, user_id=user_id, request=request)
 
-    resp = RedirectResponse(_DASHBOARD_REDIRECT, status_code=302)
+    resp = RedirectResponse(
+        f"{settings.frontend_base_url}{_DASHBOARD_PATH}", status_code=302
+    )
     _set_session_cookie(resp, session_id, settings)
     return resp
 
@@ -224,27 +232,27 @@ async def github_callback(request: Request):
 
     err_param = request.query_params.get("error")
     if err_param == "access_denied":
-        return _login_redirect_with_error("access_denied")
+        return _login_redirect_with_error(settings, "access_denied")
 
     try:
         token = await oauth.github.authorize_access_token(request)
     except OAuthError as e:
         # EXACT match — see google_callback for rationale.
         if e.error == "mismatching_state":
-            return _login_redirect_with_error("state_mismatch")
+            return _login_redirect_with_error(settings, "state_mismatch")
         _log.warning("github oauth_failed: %s", e.error)
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     try:
         user_resp = await oauth.github.get("user", token=token)
         profile = user_resp.json()
     except Exception:
         _log.exception("github /user fetch failed")
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     sub = profile.get("id")
     if sub is None:
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     # GitHub returns a null ``email`` when the user set their primary email
     # to private. Fall back to ``/user/emails`` and pick the first
@@ -267,7 +275,7 @@ async def github_callback(request: Request):
             email = None
 
     if not email:
-        return _login_redirect_with_error("oauth_failed")
+        return _login_redirect_with_error(settings, "oauth_failed")
 
     display_name = profile.get("name") or profile.get("login") or "user"
     pool = request.app.state.db
@@ -282,7 +290,9 @@ async def github_callback(request: Request):
         )
         session_id = await mint_session(conn, user_id=user_id, request=request)
 
-    resp = RedirectResponse(_DASHBOARD_REDIRECT, status_code=302)
+    resp = RedirectResponse(
+        f"{settings.frontend_base_url}{_DASHBOARD_PATH}", status_code=302
+    )
     _set_session_cookie(resp, session_id, settings)
     return resp
 

@@ -83,6 +83,14 @@ class Settings(BaseSettings):
         None, validation_alias="AP_OAUTH_STATE_SECRET"
     )
 
+    # Frontend origin for post-OAuth 302s (D-22c-FE-03 plan gap, smoke-surfaced).
+    # The API issues RedirectResponse to /dashboard and /login?error=... after
+    # the OAuth callback; those resolve against the request host (port 8000),
+    # not the frontend (port 3000), unless we prefix with an absolute URL.
+    frontend_base_url: str = Field(
+        "http://localhost:3000", validation_alias="AP_FRONTEND_BASE_URL"
+    )
+
 
 def get_settings() -> Settings:
     """Return a fresh Settings snapshot from the current environment."""

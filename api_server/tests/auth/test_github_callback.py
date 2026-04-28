@@ -94,7 +94,7 @@ async def test_happy_path_with_public_email(
         )
 
     assert r.status_code == 302, r.text
-    assert r.headers["location"] == "/dashboard"
+    assert r.headers["location"] == "http://localhost:3000/dashboard"
     assert "ap_session=" in r.headers.get("set-cookie", "")
 
     async with db_pool.acquire() as conn:
@@ -150,7 +150,7 @@ async def test_happy_path_falls_back_to_user_emails_when_primary_private(
         )
 
     assert r.status_code == 302, r.text
-    assert r.headers["location"] == "/dashboard"
+    assert r.headers["location"] == "http://localhost:3000/dashboard"
 
     async with db_pool.acquire() as conn:
         user_row = await conn.fetchrow(
