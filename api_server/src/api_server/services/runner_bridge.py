@@ -102,6 +102,7 @@ async def execute_run(
     model: str,
     api_key_var: str,
     api_key_val: str,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     """Execute ``run_cell`` with Pattern 2 concurrency primitives.
 
@@ -113,6 +114,10 @@ async def execute_run(
     ``tools/run_recipe.py`` line 1024 (``image_tag`` default derivation);
     changing either side without the other would cause Docker tag misses
     and redundant builds.
+
+    Phase 22c.1: ``agent_name`` is forwarded to ``run_cell`` so the
+    ``response_contains_name`` pass_if verb can match either the recipe
+    name or the user's chosen agent name in the bot's reply.
     """
     run_cell = _import_run_cell()
     image_tag = f"ap-recipe-{recipe['name']}"   # matches tools/run_recipe.py convention
@@ -128,6 +133,7 @@ async def execute_run(
                 api_key_var=api_key_var,
                 api_key_val=api_key_val,
                 quiet=True,
+                agent_name=agent_name,
             )
     # ``run_cell`` returns ``(Verdict, details_dict)``; test fixtures
     # (``mock_run_cell`` in conftest) short-circuit with just the details

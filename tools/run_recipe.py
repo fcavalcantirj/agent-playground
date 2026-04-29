@@ -421,10 +421,13 @@ def evaluate_pass_if(
     name: str,
     exit_code: int,
     smoke: dict,
+    agent_name: str | None = None,
 ) -> str:
     case_insensitive = bool(smoke.get("case_insensitive", False))
 
     def _contains(needle: str) -> bool:
+        if not needle:
+            return False
         hay = payload
         n = needle
         if case_insensitive:
@@ -433,7 +436,11 @@ def evaluate_pass_if(
         return n in hay
 
     if rule == "response_contains_name":
-        return "PASS" if _contains(name) else "FAIL"
+        # Phase 22c.1: PASS if the bot's reply contains EITHER the recipe's
+        # canonical name OR the user's chosen agent_name. Recipe-name match
+        # preserves backward compat with verified_cells; agent_name match
+        # honors the user's identity choice once it's plumbed end-to-end.
+        return "PASS" if (_contains(name) or _contains(agent_name or "")) else "FAIL"
     if rule == "response_contains_string":
         needle = smoke.get("needle")
         if needle is None:
@@ -452,6 +459,14 @@ def evaluate_pass_if(
         return "PASS" if re.search(pattern, payload, flags) else "FAIL"
     if rule == "exit_zero":
         return "PASS" if exit_code == 0 else "FAIL"
+    if rule == "replied_ok":
+        # Phase 22c.1: container exited cleanly AND produced a non-empty
+        # reply. Used when personality presets override the recipe's smoke
+        # prompt — the recipe's name-eliciting contract no longer holds, so
+        # the smoke check degrades to "did the (recipe + model + key)
+        # combination actually function?". The agent's reply is the proof
+        # of work; pass_if doesn't second-guess the content.
+        return "PASS" if (exit_code == 0 and len((payload or "").strip()) > 0) else "FAIL"
     return f"UNKNOWN(pass_if={rule})"
 
 
@@ -754,6 +769,7 @@ def run_cell(
     api_key_val: str,
     quiet: bool,
     smoke_timeout_s: int | None = None,
+    agent_name: str | None = None,
 ) -> tuple[Verdict, dict]:
     """Run a single cell with --cidfile + docker kill timeout enforcement.
 
@@ -903,6 +919,7 @@ def run_cell(
             name=recipe["name"],
             exit_code=rc,
             smoke=smoke,
+            agent_name=agent_name,
         )
         if pass_if_result == "PASS":
             verdict_obj = Verdict(Category.PASS, "")

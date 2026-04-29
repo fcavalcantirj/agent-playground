@@ -311,6 +311,10 @@ export function PlaygroundForm({
     // finally block knows to preserve the bearer / channel inputs for the
     // modal lifecycle. Default: clear everything.
     let preserveBearerForPairing = false;
+    // Phase 22c.1 UX: only clear sensitive inputs on FULL success. Failed
+    // smoke / failed start / exceptions all keep BYOK + channel creds in
+    // state so the user can retry without re-pasting 50+ char keys.
+    let success = false;
 
     try {
       // Step 1: always run the smoke first. It either resolves or creates
@@ -336,11 +340,14 @@ export function PlaygroundForm({
 
       if (deployMode === "persistent" && agentId) {
         if (smokeRes.verdict !== "PASS") {
+          const reason =
+            smokeRes.detail?.trim() ||
+            (smokeRes.category ? `verdict ${smokeRes.verdict} (${smokeRes.category})` : `verdict ${smokeRes.verdict}`);
           setUiError({
             kind: "unknown",
-            message: "Smoke failed — channel start aborted.",
+            message: `Smoke ${reason} — channel start aborted. See run details below for the prompt sent, the bot's reply, and the pass_if criterion.`,
           });
-          return;
+          return; // success stays false → finally keeps inputs
         }
 
         const startBody: AgentStartRequest = {
@@ -364,19 +371,30 @@ export function PlaygroundForm({
           setPairingModalOpen(true);
           preserveBearerForPairing = true;
         }
+        success = true; // persistent path: smoke PASS + start ok
+      } else {
+        // Smoke-only mode: success means the verdict actually PASSed.
+        // A non-PASS verdict in smoke-only mode shows the result card
+        // without raising; we still keep inputs so the user can retry.
+        success = smokeRes.verdict === "PASS";
       }
     } catch (e) {
       setUiError(parseApiError(e));
+      // success stays false → finally keeps inputs for retry
     } finally {
-      // BYOK discipline (SC-05): bot_token + channel creds + BYOK cleared
-      // after submit. Exception: pairing modal holds bearer for its own
-      // request lifecycle — cleared on modal close.
-      setByok("");
-      setChannelInputs({});
-      if (!preserveBearerForPairing) {
-        setPairingBearer("");
-      }
       setIsRunning(false);
+      // BYOK discipline (Phase 19 SC-05 spirit): on FULL success, clear
+      // BYOK + channel creds + bearer (unless pairing modal needs the bearer).
+      // On any failure, keep them in React state so the user can retry
+      // without re-pasting. The API side still redacts the key from logs
+      // (run_recipe.py::_redact_api_key) and a page reload wipes everything.
+      if (success) {
+        setByok("");
+        setChannelInputs({});
+        if (!preserveBearerForPairing) {
+          setPairingBearer("");
+        }
+      }
     }
   }
 

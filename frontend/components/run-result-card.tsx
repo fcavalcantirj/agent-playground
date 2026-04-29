@@ -134,6 +134,46 @@ export function RunResultCard({
           <p className="text-base leading-relaxed text-foreground/80">{verdict.detail}</p>
         )}
 
+        {(verdict.prompt || verdict.filtered_payload || verdict.pass_if) && (
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
+            <p className="mb-3 font-mono text-sm uppercase tracking-wider text-foreground/60">
+              smoke check
+            </p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-base">
+              {verdict.pass_if && (
+                <>
+                  <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">
+                    pass_if
+                  </dt>
+                  <dd className="font-mono text-foreground">{verdict.pass_if}</dd>
+                </>
+              )}
+              {verdict.prompt && (
+                <>
+                  <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">
+                    prompt
+                  </dt>
+                  <dd className="text-foreground/90 whitespace-pre-wrap break-words">
+                    {verdict.prompt}
+                  </dd>
+                </>
+              )}
+              {verdict.filtered_payload && (
+                <>
+                  <dt className="font-mono text-sm uppercase tracking-wider text-foreground/60">
+                    reply
+                  </dt>
+                  <dd className="text-foreground/85 whitespace-pre-wrap break-words">
+                    {verdict.filtered_payload.length > 600
+                      ? `${verdict.filtered_payload.slice(0, 600)}…`
+                      : verdict.filtered_payload}
+                  </dd>
+                </>
+              )}
+            </dl>
+          </div>
+        )}
+
         <Accordion
           type="single"
           collapsible

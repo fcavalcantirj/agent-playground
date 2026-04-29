@@ -173,6 +173,18 @@ async def create_run(
     # legacy callers + smoke-tests that just want to run a recipe).
     agent_name = body.agent_name or f"{body.recipe_name}-{body.model.replace('/', '-')}"
 
+    # Phase 22c.1: when a personality preset overrode the recipe's smoke
+    # prompt (priority chain above), the recipe's name-eliciting
+    # ``response_contains_name`` contract no longer holds — the personality
+    # prompt isn't designed to force the recipe name into the reply, and
+    # most recipes don't bake user-supplied agent_name into their identity
+    # yet (that's Phase 22c.2). Loosen the smoke check to "did the bot
+    # actually reply?" by overriding pass_if to ``replied_ok`` for these
+    # runs. The recipe's verified_cells + its own smoke.prompt path is
+    # untouched.
+    if body.personality and recipe.get("smoke", {}).get("pass_if") == "response_contains_name":
+        recipe = {**recipe, "smoke": {**recipe["smoke"], "pass_if": "replied_ok"}}
+
     # --- Step 3 + 4 + 5: upsert agent_instance + insert pending run ---
     # Scope 1 of 2 on the DB pool: opens + closes inside this with block
     # so the connection is released BEFORE the long ``to_thread`` await
@@ -200,6 +212,7 @@ async def create_run(
             model=body.model,
             api_key_var=api_key_var,
             api_key_val=provider_key,
+            agent_name=body.agent_name,
         )
     except Exception as e:  # pragma: no cover - runner failure path
         # Redact the key from the exception string BEFORE it lands in
