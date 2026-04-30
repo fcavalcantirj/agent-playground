@@ -311,14 +311,23 @@ async def test_migration_005_sessions_and_users_columns(migrated_pg):
         # migration tests share a session-scoped container. This test
         # asserts that AT LEAST 005 has been applied (by proving the
         # schema changes it introduces are present) rather than pinning
-        # HEAD to exactly 005.
+        # HEAD to exactly 005. Phase 22c.3 added migrations 007 and 008
+        # to the chain — append new HEADs here as later migrations land;
+        # every revision in this set has 005 in its ancestor chain, so
+        # any of them satisfies the "at least 005" invariant. Same set
+        # pattern as ``tests/auth/test_cross_user_isolation.py``.
         version = await conn.fetchval(
             "SELECT version_num FROM alembic_version"
         )
-        assert version in (
-            "005_sessions_and_oauth_users", "006_purge_anonymous",
-        ), (
-            f"alembic HEAD is {version!r}; expected 005 or later (006)"
+        ALLOWED_HEADS_005_OR_LATER = {
+            "005_sessions_and_oauth_users",
+            "006_purge_anonymous",
+            "007_inapp_messages",
+            "008_idempotency_relax_run_fk",
+        }
+        assert version in ALLOWED_HEADS_005_OR_LATER, (
+            f"alembic HEAD is {version!r}; expected 005 or later "
+            f"(any of {ALLOWED_HEADS_005_OR_LATER})"
         )
     finally:
         await conn.close()
@@ -382,8 +391,19 @@ async def test_migration_006_artifact_and_apply(migrated_pg):
         version = await conn.fetchval(
             "SELECT version_num FROM alembic_version"
         )
-        assert version == "006_purge_anonymous", (
-            f"HEAD != 006: got {version!r}"
+        # Phase 22c.3 added migrations 007 + 008 on top of 006; the
+        # session-scoped container always advances to the latest HEAD.
+        # The invariant the test guards is "006 (or its descendants)
+        # ran successfully" — same set-based pattern as
+        # ``tests/auth/test_cross_user_isolation.py``.
+        ALLOWED_HEADS_006_OR_LATER = {
+            "006_purge_anonymous",
+            "007_inapp_messages",
+            "008_idempotency_relax_run_fk",
+        }
+        assert version in ALLOWED_HEADS_006_OR_LATER, (
+            f"HEAD is {version!r}; expected 006 or later "
+            f"(any of {ALLOWED_HEADS_006_OR_LATER})"
         )
 
         # Belt-and-suspenders: post-006 all 8 tables empty (even if other
