@@ -1,158 +1,146 @@
-# Spike: nullclaw — channels.inapp HTTP-localhost feasibility
+# Recipe spike: nullclaw (revised v3 — native A2A) — Wave 0 re-validation
 
-**Date:** 2026-04-29 PM (revised)
+**Date:** 2026-04-30
 **Recipe:** `recipes/nullclaw.yaml` (nullclaw/nullclaw — Zig static binary)
-**Image:** `ap-recipe-nullclaw:latest`
-**Status:** ✅ HIGH — sidecar bridge proven; recipe needs ~50-LOC Python aiohttp bridge baked into persistent_argv_override
+**Image:** `ap-recipe-nullclaw:latest` (built 2 weeks ago, 18.9 MB)
+**Provider/model:** `openrouter` / `anthropic/claude-haiku-4.5` (recipe `verified_cells[0]`)
+**Contract:** `a2a_jsonrpc`
+**Endpoint:** `POST /a2a` on container port 3000 (mapped to host port 18399), JSON-RPC 2.0 method `message/send`
+**Status:** ✅ FULL_PASS — fresh local end-to-end probe with real OpenRouter call returned `state=completed` and a 102-char real LLM reply in `result.artifacts[0].parts[0].text`.
 
-> **Update notice (2026-04-29 PM).** v1 of this spike correctly found that
-> `nullclaw gateway` exposes only `/health` (200) and `/pair` (POST, 405 for GET)
-> on port 3000 — no native chat HTTP. v1 then proposed `docker_exec_cli`.
->
-> Per user directive **"5 out of 5 must work"** — uniform `http_localhost`
-> required — v2 of this spike empirically validates the sidecar HTTP→CLI
-> bridge pattern (same shape as picoclaw's bridge; only `INAPP_BOT_BIN=nullclaw`
-> differs). Result: PASS. nullclaw moves to `http_localhost` with a recipe-side
-> sidecar.
+> **Round-3 supersession.** v1 (2026-04-29 AM) used `docker_exec_cli`. v2 (2026-04-29 PM) added a Python HTTP-to-CLI bridge sidecar at port 18791. Both are SUPERSEDED by this v3, which uses nullclaw's NATIVE Google A2A JSON-RPC 2.0 protocol on `/a2a` — the v2 sidecar pattern (runtime package install, background-process bot binary indirection, env-var override) is dropped entirely. Per Round-3 RESEARCH §Revision Notice the dispatcher implements an `a2a_jsonrpc` contract adapter for nullclaw alongside `openai_compat` and `zeroclaw_native`.
 
-## Empirical command (v2 — sidecar bridge)
+## Reproducible probe (verbatim)
 
 ```bash
-docker run -d -t --name spike-nullbridge --user root -p 18792:18791 -p 18303:3000 \
-  -e OPENROUTER_API_KEY=sk-or-fake-for-spike \
-  -e INAPP_AUTH_TOKEN=spike-bridge-token \
-  -e INAPP_BOT_BIN=nullclaw \
-  -e INAPP_BRIDGE_PORT=18791 \
-  -e INAPP_SESSION_PREFIX=inapp:agent:spike \
-  -v /tmp/nullclaw-bridge-entrypoint.sh:/spike.sh \
+# Source $OPENROUTER_API_KEY (developer's shell)
+
+cat > /tmp/spike-null-entry.sh <<'EOF'
+set -e
+mkdir -p /nullclaw-data
+cat > /nullclaw-data/config.json <<JSON
+{"agents":{"defaults":{"model":{"primary":"openrouter/anthropic/claude-haiku-4.5"}}},
+ "models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}"}}},
+ "gateway":{"port":3000,"host":"0.0.0.0","allow_public_bind":true,"require_pairing":false},
+ "a2a":{"enabled":true,"name":"w0","url":"http://localhost:3000","version":"0.3.0"}}
+JSON
+chown -R nobody:nobody /nullclaw-data 2>/dev/null || true
+exec nullclaw gateway --host 0.0.0.0 --port 3000
+EOF
+
+docker rm -f spike-w0-null 2>/dev/null
+docker run -d -t --user root --name spike-w0-null -p 18399:3000 \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -v /tmp/spike-null-entry.sh:/spike.sh \
   --entrypoint sh ap-recipe-nullclaw:latest /spike.sh
+
+sleep 8
+
+# Probe 1 — agent card
+curl -s http://localhost:18399/.well-known/agent-card.json
+
+# Probe 2 — message/send (real LLM round-trip via OpenRouter)
+curl -s -X POST http://localhost:18399/a2a \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"who are you in 1 short sentence?"}],"messageId":"w0-null-1"}}}'
+
+docker rm -f spike-w0-null
 ```
 
-Same 50-LOC aiohttp bridge as picoclaw, with two adaptations:
-
-1. `INAPP_BOT_BIN=nullclaw` (env var; rest of bridge code is shared)
-2. Bridge passes `-s "${INAPP_SESSION_PREFIX}"` to `nullclaw agent` so the
-   bot's own conversation memory persists across messages within one agent
-   instance (D-22 dumb-pipe: bot owns its memory).
-
-The entrypoint script (4 stages):
-
-1. `apk add --no-cache python3 py3-aiohttp` (~7s, alpine apk works the same as picoclaw)
-2. Write `/tmp/inapp-bridge.py` (shared 50-LOC source; only env-var differences)
-3. Write `/nullclaw-data/config.json` with provider + model + gateway config; `chown -R nobody:nobody /nullclaw-data` (image's default user is `nobody`)
-4. `nohup python3 /tmp/inapp-bridge.py >/tmp/bridge.log 2>&1 &` then `exec nullclaw gateway --host 0.0.0.0 --port 3000`
-
-> **Note on `--user root`:** nullclaw's image runs as `nobody` by default but
-> `apk add` requires root. Recipe's `persistent.spec` either runs as root + drops
-> privileges via `gosu` (recipe pattern from picoclaw entrypoint) or installs
-> python3 at IMAGE BUILD TIME so runtime can stay as `nobody`. v2 spike used
-> `--user root` for simplicity; production recipe should bake the install into
-> the image build for reproducibility + nobody-user runtime.
-
-## Verbatim output
+## Boot logs (verbatim)
 
 ```
-=== bridge.log ===
-INAPP-BRIDGE listening on 0.0.0.0:18791
-
-GET /health (bridge:18792):
-{"status": "ok", "platform": "inapp-bridge"}                        HTTP 200
-
-GET /health (bot:18303):
-{"status":"ok"}                                                     HTTP 200
-
-POST /v1/chat/completions (no auth):
-{"error": {"message": "Unauthorized", "type": "unauthorized"}}      HTTP 401
-
-POST /v1/chat/completions (Bearer spike-bridge-token):
-{"error": {"message": "info(memory): memory plan resolved: backend=hybrid
-   retrieval=keyword vector=none rollout=off hygiene=true snapshot=false
-   cache=false semantic_cache=false summarizer=false sources=1
-   error: ApiError\n", "type": "bot_error"}}                        HTTP 502
+nullclaw gateway runtime started
+  Gateway:  http://0.0.0.0:3000
+  Components: 2 active
+  Model:    anthropic/claude-haiku-4.5
+  Provider: openrouter
+  Ctrl+C to stop
+info(memory): memory plan resolved: backend=hybrid retrieval=keyword vector=none rollout=off hygiene=true snapshot=false cache=false semantic_cache=false summarizer=false sources=1
+info(session): vision probe: querying model 'anthropic/claude-haiku-4.5' for image support
+info(session): vision probe: model 'anthropic/claude-haiku-4.5' probe inconclusive (AllProvidersFailed), leaving capability unset
+Gateway listening on 0.0.0.0:3000
 ```
 
-The 502 is the bridge faithfully reporting nullclaw's upstream LLM-call failure
-(`error: ApiError` from the fake key). With a real key, nullclaw answers and
-the bridge returns the OpenAI envelope.
+## Probe 1 — `/.well-known/agent-card.json` (verbatim)
+
+```json
+{
+  "name": "w0",
+  "description": "AI assistant",
+  "protocolVersion": "0.3.0",
+  "version": "0.3.0",
+  "url": "http://localhost:3000/a2a",
+  "supportedInterfaces": [{
+    "url": "http://localhost:3000/a2a",
+    "protocolBinding": "JSONRPC",
+    "protocolVersion": "0.3.0"
+  }],
+  "preferredTransport": "JSONRPC",
+  "provider": {"organization": "w0", "url": "http://localhost:3000"},
+  "capabilities": {"streaming": true},
+  "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer", "description": "Use a pairing token from /pair as the bearer token."}},
+  "security": [{"bearerAuth": []}],
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [{"id": "chat", "name": "General Chat", "description": "General-purpose AI assistant", "tags": ["chat", "general"]}]
+}
+```
+
+`protocolVersion: "0.3.0"` confirmed. `preferredTransport: JSONRPC`. `capabilities.streaming: true` (the recipe's streaming path uses `message/stream` returning SSE chunks; not exercised in this Wave-0 probe — the dispatcher's sync path uses `message/send`).
+
+## Probe 2 — `POST /a2a` `method=message/send` (verbatim, real OpenRouter call)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "task-1",
+    "kind": "task",
+    "contextId": "ctx-1",
+    "status": {"state": "completed", "timestamp": "2026-04-30T18:17:23Z"},
+    "metadata": {},
+    "artifacts": [{
+      "artifactId": "artifact-task-1",
+      "parts": [{
+        "kind": "text",
+        "text": "I'm Claude, an AI assistant here to help you think through problems, build things, and get stuff done."
+      }]
+    }],
+    "history": [
+      {"kind": "message", "role": "user", "messageId": "msg-user-task-1", "taskId": "task-1", "contextId": "ctx-1", "parts": [{"kind": "text", "text": "who are you in 1 short sentence?"}]},
+      {"kind": "message", "role": "agent", "messageId": "msg-agent-task-1", "taskId": "task-1", "contextId": "ctx-1", "parts": [{"kind": "text", "text": "I'm Claude, an AI assistant here to help you think through problems, build things, and get stuff done."}]}
+    ]
+  }
+}
+```
+
+Parse path: `result.status.state` = `"completed"`; `result.artifacts[0].parts[0].text` = 102 chars; non-empty. The dispatcher's `a2a_jsonrpc` adapter reads exactly this path.
 
 ## Findings
 
-- nullclaw alpine image has `apk` available; `apk add python3 py3-aiohttp`
-  succeeds as on picoclaw (same alpine base + same package availability).
-- Bridge co-existence with the gateway: bot listens on port 3000 (gateway HTTP
-  + telegram polling thread); bridge listens on 18791 (chat HTTP). No collision.
-- The bot's own gateway STILL prints "Gateway pairing code generated (hidden for
-  security). Use the /pair flow to complete pairing." That's the bot's external
-  channel pairing flow (Telegram, Discord, etc.) — orthogonal to inapp. The
-  bridge bypasses pairing because it speaks directly to the bot's CLI, not via
-  external channels.
-- Per-call latency: nullclaw is fast-cold (~1s for `agent -m`), so the bridge's
-  per-message overhead is negligible.
+- Native A2A is built into nullclaw 2026.4.x (Zig binary `~700 KB`, gateway boot ~3s).
+- `a2a.enabled = true` + `a2a.name` + `a2a.url` + `a2a.version="0.3.0"` in `/nullclaw-data/config.json` are the activation fields. Without them, `/.well-known/agent-card.json` returns 404.
+- `gateway.require_pairing = false` is required for the dispatcher's loopback-trusted forwarding (no Bearer needed; auth lives upstream at `require_user`).
+- `gateway.host = "0.0.0.0"` + `gateway.allow_public_bind = true` — without `allow_public_bind`, the gateway refuses non-loopback hosts.
+- The bot answers as the underlying provider's persona ("I'm Claude") rather than a custom nullclaw persona because nullclaw's default system prompt is a blank slate (recipe `known_weak_probes` documents this — the bot has no name; the model identifies as itself).
+- Real OpenRouter call latency: ~3s.
 
-## Verdict for `channels.inapp`
+## Verdict
 
-**HIGH confidence — `transport: http_localhost` with recipe-side sidecar.**
+**FULL_PASS** — `a2a_jsonrpc` contract empirically reachable on `ap-recipe-nullclaw:latest` via native `/a2a` JSON-RPC 2.0 endpoint. Dispatcher's `a2a_jsonrpc` adapter has its parse-path target validated.
 
-```yaml
-channels:
-  inapp:
-    transport: http_localhost
-    port: 18791
-    contract: openai_chat_completions
-    endpoint: /v1/chat/completions
-    auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
-    ready_log_regex: "INAPP-BRIDGE listening on"
-    persistent_argv_override:
-      entrypoint: sh
-      user_override: root
-      argv:
-        - -c
-        - |
-          set -e
-          apk add --no-cache python3 py3-aiohttp >/dev/null
-          cat > /tmp/inapp-bridge.py <<'PYEOF'
-          # ... 50-LOC aiohttp bridge (shared with picoclaw) ...
-          PYEOF
-          cat > /nullclaw-data/config.json <<EOF
-          {"agents":{"defaults":{"model":{"primary":"openrouter/$MODEL"}}},"models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}","base_url":"https://openrouter.ai/api/v1"}}},"gateway":{"port":3000,"host":"::","allow_public_bind":true}}
-          EOF
-          chown -R nobody:nobody /nullclaw-data
-          nohup python3 /tmp/inapp-bridge.py >/tmp/bridge.log 2>&1 &
-          exec nullclaw gateway --host 0.0.0.0 --port 3000
-    activation_env:
-      INAPP_BOT_BIN: "nullclaw"
-      INAPP_AUTH_TOKEN: "${INAPP_AUTH_TOKEN}"
-      INAPP_BRIDGE_PORT: "18791"
-      INAPP_SESSION_PREFIX: "inapp:agent:${AGENT_ID}"   # stable session id; bot persists own memory
-```
+## Anomalies observed
 
-## Risk flags
+- `vision probe: model probe inconclusive (AllProvidersFailed)` log line during boot — the bot tries to determine vision support by sending a tiny ping to OpenRouter; the AllProvidersFailed message is during the boot self-test, NOT during the chat probe. The chat probe itself succeeded. Cosmetic.
+- The `--user root` flag is required because nullclaw's image runs as `nobody` by default but the `chown -R nobody:nobody /nullclaw-data` in the entrypoint needs root. The recipe's `persistent.spec.user_override: root` per Plan 22c.3-14 absorbs this.
 
-- **LOW risk on the sidecar pattern.** Identical to picoclaw spike result; same code, same dependencies.
-- **LOW risk on apk add.** alpine's `py3-aiohttp` is in the main repo for nullclaw image too.
-- **MEDIUM risk: per-message session id.** nullclaw `agent -m` defaults to a
-  fresh session unless `-s SESSION` is provided. The bridge passes
-  `INAPP_SESSION_PREFIX` so memory persists. Without it, every chat message
-  starts a fresh conversation. Recipe activation_env MUST set this.
-- **MEDIUM risk: image-build vs runtime install.** v1 spike installed python3 at
-  RUNTIME via apk. Production recipe SHOULD bake the install into the image
-  build (recipe `build:` step) so runtime can run as `nobody` without needing
-  root privileges. Defer to plan-phase decision.
-- **LOW risk: gateway pairing-code stdout.** The `Gateway pairing code generated`
-  log line is unrelated to inapp; it's for the bot's own external channels. The
-  bridge's `INAPP-BRIDGE listening` line is the inapp readiness signal.
+## Wave 0 confirmation against Plan must-haves
 
-## What this changes about the per-recipe matrix
-
-After v2 sidecar validation, ALL 5 recipes use `transport: http_localhost`:
-
-| Recipe | Transport | How chat HTTP is exposed |
-|--------|-----------|--------------------------|
-| hermes | http_localhost | native `gateway.platforms.api_server` (env-flag activated, port 8642) |
-| nanobot | http_localhost | native `nanobot serve` mode (port 8900) |
-| openclaw | http_localhost | native `/v1/chat/completions` (chatCompletions config flag, port 18789) |
-| picoclaw | http_localhost | recipe-side sidecar (apk add python3 + 50-LOC aiohttp on port 18791) |
-| nullclaw | http_localhost | recipe-side sidecar (same 50-LOC, INAPP_BOT_BIN=nullclaw, port 18791) |
-
-Single transport verb, single dispatcher path, uniform recipe schema. Per user
-directive: 5/5 work.
+- [x] `a2a_jsonrpc` contract present
+- [x] `message/send` invoked
+- [x] `result.artifacts[0].parts[0].text` non-empty
+- [x] `/.well-known/agent-card.json` shows `protocolVersion=0.3.0`
+- [x] Sidecar pattern (runtime package install, background-process bot binary indirection, env-var override) fully dropped per Round-3 supersession — none of those tokens appear in this v3 spike
+- [x] Today's date 2026-04-30
