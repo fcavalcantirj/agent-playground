@@ -84,3 +84,83 @@ property the original verify intended to assert (runner accepts the file
 shape).
 
 Rule 3 deviation; documented in 22c.3-13 SUMMARY.
+
+## From Plan 22c.3-15 (SC-03 e2e gate)
+
+### Production runner-side wiring (the 5-plan-flagged gap)
+
+Plans 22c.3-{10,11,12,13,14} each flagged this in their SUMMARYs.
+Plan 22c.3-15 took Route B (test-fixture-side replication) per the
+plan's `key_links` line 60. The production runner-side wiring is now
+explicitly filed for a follow-up plan:
+
+1. `tools/run_recipe.py::run_cell_persistent` — extend the function
+   signature with a `channel_id` parameter and read
+   `recipe.channels.inapp.persistent_argv_override` when
+   `channel_id == "inapp"`. Read `channels.inapp.activation_env` and
+   merge it into the env-file. Render `${INAPP_AUTH_TOKEN}` /
+   `${INAPP_PROVIDER_KEY}` / `{agent_name}` / `{agent_url}` /
+   `${MODEL}` placeholders before docker-run.
+2. `api_server/src/api_server/routes/agent_lifecycle.py::start_persistent`
+   — when `body.channel == "inapp"`, mint a per-session opaque UUID
+   `inapp_auth_token`, pass it to `execute_persistent_start` so
+   `run_cell_persistent` can substitute the placeholder. After
+   `write_agent_container_running`, `UPDATE agent_containers SET
+   inapp_auth_token = $1 WHERE id = $2`.
+3. `api_server/src/api_server/main.py` lifespan — wire
+   `app.state.recipe_index = InappRecipeIndex(recipes_dir,
+   docker.from_env(), settings.docker_network_name)` at boot. The
+   dispatcher reads `state.recipe_index` (already coded that way in
+   Plan 22c.3-05); without this wiring `_handle_row` would
+   AttributeError on first call in production.
+4. Reference implementation: the substitution + minting discipline is
+   already encoded in `api_server/tests/e2e/conftest.py::_factory`.
+   Copy the substitution dict + render_placeholders + INAPP_AUTH_TOKEN
+   minting verbatim into the production handler.
+
+Estimate: ~150 lines across the 3 files. Single follow-up plan.
+
+### Dispatcher fallback to row['model'] when contract_model_name is "agent"
+
+Surfaced during Plan 22c.3-15 nanobot cell. The dispatcher's
+openai_compat adapter sends `inapp.contract_model_name or "agent"` as
+the `model` field. Some bots (nanobot) only accept the literal
+configured model id and 400 on the placeholder. Recommended dispatcher
+patch:
+
+```python
+case "openai_compat":
+    body: dict[str, Any] = {
+        "model": (
+            inapp.contract_model_name
+            if inapp.contract_model_name and inapp.contract_model_name != "agent"
+            else (row.get("model") if isinstance(row, dict) else (row["model"] if "model" in row.keys() else "agent"))
+        ),
+        ...
+```
+
+This requires `fetch_pending_for_dispatch` to also return
+`agent_instances.model` in its JOIN. The Plan 22c.3-15 test fixture
+substitutes the model via the recipe_index wrapper instead.
+
+### oauth_sessions schema variance defensiveness
+
+The `oauth_user_with_openrouter_key` fixture in
+`api_server/tests/e2e/conftest.py` defensively try/except's the
+`INSERT INTO oauth_sessions` because the schema's column shape may
+have evolved across phases (provider, access_token, etc.). Plan 22c
+(OAuth) landed earlier; the schema reference should be re-verified.
+The gate currently injects the same key as env into the recipe
+container, so the OAuth-row-only path is documented but not
+exclusively exercised. Future hardening: ensure the recipe container's
+`OPENROUTER_API_KEY` is sourced *only* from the oauth_sessions row
+once the production runner-side wiring lands (item 1 above).
+
+### Per-recipe model id format normalization
+
+openclaw's anthropic plugin only accepts `anthropic/claude-haiku-4-5`
+(dash); other recipes accept `anthropic/claude-haiku-4.5` (dot).
+Currently the matrix test selects per-recipe via a small ternary; a
+robust solution is either (a) a recipe-level field
+`channels.inapp.model_id_format: "dashed"` or (b) the dispatcher
+normalizes when forwarding. Tracked for future schema work.
