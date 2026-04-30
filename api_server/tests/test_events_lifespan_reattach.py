@@ -146,8 +146,12 @@ def _isolated_recipes_dir(tmp_path) -> str:
 
 @pytest.mark.asyncio
 async def test_lifespan_reattach_spawns_watcher_for_live_container(
-    seed_running_container_with_live_docker, db_pool, migrated_pg, monkeypatch, tmp_path
+    seed_running_container_with_live_docker, db_pool, migrated_pg, monkeypatch,
+    tmp_path, inapp_redis_env,
 ):
+    """Phase 22c.3-09: depends on ``inapp_redis_env`` to wire ``AP_REDIS_URL``
+    BEFORE the FastAPI lifespan PINGs Redis at boot (D-15/D-16 invariant).
+    """
     row_id, docker_id = seed_running_container_with_live_docker
 
     # Wire env so create_app() resolves the same testcontainers DSN.
@@ -191,8 +195,12 @@ async def test_lifespan_reattach_spawns_watcher_for_live_container(
 
 @pytest.mark.asyncio
 async def test_lifespan_reattach_marks_stopped_when_container_missing(
-    seed_running_row_with_dead_container, db_pool, migrated_pg, monkeypatch, tmp_path
+    seed_running_row_with_dead_container, db_pool, migrated_pg, monkeypatch,
+    tmp_path, inapp_redis_env,
 ):
+    """Phase 22c.3-09: depends on ``inapp_redis_env`` to wire ``AP_REDIS_URL``
+    BEFORE the FastAPI lifespan PINGs Redis at boot (D-15/D-16 invariant).
+    """
     row_id = seed_running_row_with_dead_container
 
     from tests.conftest import _normalize_testcontainers_dsn
