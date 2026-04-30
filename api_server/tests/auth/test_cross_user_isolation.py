@@ -53,9 +53,20 @@ async def test_two_users_see_only_their_own_agents(async_client, migrated_pg):
         version = await conn.fetchval(
             "SELECT version_num FROM alembic_version"
         )
-        assert version == "006_purge_anonymous", (
-            f"expected HEAD = 006_purge_anonymous (proving migration 006 "
-            f"ran during conftest init); got {version!r}"
+        # Proves the session-scoped ``migrated_pg`` fixture ran
+        # ``alembic upgrade head`` and landed at a revision in the chain
+        # that includes migration 006. Append new HEADs here as later
+        # migrations land — every revision in this set has 006 in its
+        # ancestor chain, so any of them satisfies the BLOCKER-4 invariant.
+        ALLOWED_HEADS = {
+            "006_purge_anonymous",
+            "007_inapp_messages",
+            "008_idempotency_relax_run_fk",
+        }
+        assert version in ALLOWED_HEADS, (
+            f"expected HEAD in ALLOWED_HEADS (proving migration 006 ran "
+            f"during conftest init AND the 006-lineage is intact); "
+            f"got {version!r}"
         )
         # All 8 data-bearing tables must be empty at test start. Either
         # migration 006 cleared them, OR the autouse TRUNCATE fixture did
