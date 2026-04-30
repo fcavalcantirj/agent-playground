@@ -44,10 +44,12 @@ async def test_healthz_is_trivial():
 async def test_readyz_live(async_client):
     """``GET /readyz`` returns the full envelope against a real Postgres.
 
-    Asserts every key CONTEXT.md D-04 mandates. ``recipes_count`` is 5
-    after Plan 19-03 wired ``load_all_recipes(settings.recipes_dir)`` into
-    the lifespan — the 5 committed recipes (hermes, nanobot, nullclaw,
-    openclaw, picoclaw) load at startup.
+    Asserts every key CONTEXT.md D-04 mandates. ``recipes_count`` reflects
+    whatever is in ``recipes/*.yaml`` at startup — the count grows as new
+    agents land (Phase 22c.3-13 added zeroclaw to the original 5). The
+    invariant the test guards is "the loader saw at least the original
+    5", not "exactly 5"; pinning the literal causes a stale-assertion
+    regression every time a new recipe is committed.
     """
     response = await async_client.get("/readyz")
     assert response.status_code == 200
@@ -63,6 +65,9 @@ async def test_readyz_live(async_client):
         assert key in body, f"missing key {key}"
     assert body["schema_version"] == "ap.recipe/v0.1"
     assert body["postgres"] is True
-    # Plan 19-03: the lifespan now loads the 5 committed recipes.
-    assert body["recipes_count"] == 5
+    # Plan 19-03 wires ``load_all_recipes`` at startup. Phase 22c.3-13
+    # extended the catalog with zeroclaw; future recipes will grow the
+    # count further. Use ``>= 5`` so the invariant is "loader works",
+    # not "loader sees exactly the 19-03 set".
+    assert body["recipes_count"] >= 5
     assert body["concurrency_in_use"] == 0
