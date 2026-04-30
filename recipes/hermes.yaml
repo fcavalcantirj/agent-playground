@@ -325,6 +325,46 @@ channels:
           sh-chaining `hermes config set model $MODEL` before `gateway run -v`.
         category: PASS
 
+  # ============================================================================
+  # Phase 22c.3 — in-app chat channel (D-20: additive with telegram).
+  # Empirically verified 2026-04-29/2026-04-30 (spikes/recipe-hermes.md): hermes
+  # ships a native OpenAI-compatible HTTP server in gateway.platforms.api_server.
+  # Activation is env-only — no upstream patch, no sidecar.
+  # ============================================================================
+  inapp:
+    transport: http_localhost           # D-04: only verb in v1 (5/5 recipes uniform)
+    port: 8642                          # API_SERVER_PORT default
+    endpoint: /v1/chat/completions      # OpenAI-compat
+    contract: openai_compat
+    contract_model_name: "hermes-agent" # the bot answers when client sends model=hermes-agent
+    auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
+    ready_log_regex: "\\[Api_Server\\] API server listening on http://127\\.0\\.0\\.1:8642"
+    response_routing: per_session       # 1:1 with the agent_instance
+    activation_env:
+      # Runner injects ${INAPP_AUTH_TOKEN} as a per-session opaque token at
+      # container start time + persists it to agent_containers.inapp_auth_token
+      # so the dispatcher (Plan 22c.3-05) can forward it as the Bearer.
+      API_SERVER_ENABLED: "true"
+      API_SERVER_KEY: "${INAPP_AUTH_TOKEN}"
+      API_SERVER_PORT: "8642"
+      API_SERVER_HOST: "127.0.0.1"
+    verified_cells:
+      - date: "2026-04-29"
+        boot_wall_s: 14
+        first_reply_wall_s: 0           # local test = N/A (real e2e in Plan 22c.3-15)
+        verdict: PASS
+        notes: |
+          Empirically verified via spikes/recipe-hermes.md (2026-04-29 and
+          revalidated 2026-04-30 in Plan 22c.3-01 wave-0 sweep): docker run
+          with API_SERVER_ENABLED=true + API_SERVER_KEY=<token> starts the
+          api_server platform on port 8642 within ~14s. /health returns 200
+          unauthenticated; /v1/models returns 200 with the hermes-agent
+          model entry on Bearer-authenticated requests. POST
+          /v1/chat/completions with a real OpenRouter key returned a valid
+          OpenAI envelope (163-char persona-correct reply). Wave-0
+          revalidation (Plan 22c.3-01) confirmed no regression.
+        category: PASS
+
   # Discord, Slack, WhatsApp, Signal, Matrix — claimed by upstream docs
   # (https://hermes-agent.nousresearch.com/docs/user-guide/messaging: "all
   # from a single gateway process"). NOT empirically validated yet; no
