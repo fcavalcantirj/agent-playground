@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22c (oauth-google) COMPLETE — 9/9 plans shipped; Wave 5 manual smoke PASS reported by human operator 2026-04-28 (Google + GitHub happy paths + access_denied + logout invalidation all green); 3 plan-gap fixes absorbed inline (Dockerfile authlib+itsdangerous 4f7d8b0, httpx runtime fdf3924, OAuth callback frontend host f9a7df9); ANONYMOUS_USER_ID retired system-wide
-stopped_at: "2026-04-28T21:25:00Z — 22c-09 closed; Phase 22c at full exit gate; pending code_review_gate → regression_gate → schema_drift_gate → verify_phase_goal → update_roadmap → offer_next"
-last_updated: "2026-04-28T21:25:00Z"
+status: Phase 22c COMPLETE; Phase 22c.1 ("Stop Lying") + 22c.2 ("Identity Baking") + 22c.3 ("In-App Chat Channel") have CONTEXT.md seeded; 22c.3 has 46 D-decisions locked + DISCUSSION-LOG complete and is the next phase to research/plan; 22c.1 wave-1 code already shipped (commit c8ca6a5 — pass_if loosens for personality runs + agent_name plumbing) but ROADMAP entry still pending; Phase 23 (Flutter Native App) queued behind 22c.3
+stopped_at: "2026-04-29T03:30:00Z — 22c.3 CONTEXT.md fully sweeping (46 D-decisions); ready for /gsd-research-phase 22c.3-inapp-chat-channel (per-recipe HTTP-server feasibility spike) or /gsd-plan-phase 22c.3 directly"
+last_updated: "2026-04-29T03:30:00Z"
 progress:
   total_phases: 19
   completed_phases: 6
@@ -47,14 +47,27 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ### 📍 RESUME ANCHOR — READ AFTER /clear
 
-**Phase 22c is COMPLETE. The next command is:**
+**Phase 22c is COMPLETE. Three follow-on phases queued, in dependency order:**
 
 ```
-# Phase 22c at full exit gate — pending close-out gates:
-#   code_review_gate → regression_gate → schema_drift_gate → verify_phase_goal → update_roadmap → offer_next
-# These run autonomously via the GSD orchestrator's phase close-out protocol.
-# After close-out: /gsd-resume-work to pick the next phase from the milestone backlog.
+Phase 22c.1 — Stop Lying     [CONTEXT seeded; wave-1 code shipped (c8ca6a5); plans pending]
+Phase 22c.2 — Identity Baking [CONTEXT seeded; not started]
+Phase 22c.3 — In-App Chat    [CONTEXT seeded with 46 D-decisions; 4 commits; ready for /gsd-research-phase OR /gsd-plan-phase]
+Phase 23    — Flutter Native [DESIGNED via mockups; depends on 22c.3]
 ```
+
+**The next command (recommended path) is:**
+
+```
+/gsd-research-phase 22c.3-inapp-chat-channel
+```
+
+Why: 22c.3 has rich CONTEXT (46 decisions) but the per-recipe HTTP-server feasibility for hermes / picoclaw / openclaw / nullclaw / nanobot still needs an empirical spike before plans lock the per-recipe approach. The user explicitly authorized "make tests b4 commiting to the plan" mid-discussion.
+
+**Alternatives:**
+- `/gsd-plan-phase 22c.3-inapp-chat-channel` — skip research, plan directly (CONTEXT may be sufficient; per-recipe spike happens during execution)
+- `/gsd-spec-phase 22c.1-stop-lying` — switch focus to 22c.1 (UX gap closure: real DELETE endpoint, kill toast-only handlers, /#playground fragment, Alex Chen, default deployMode)
+- `/gsd-resume-work` — pick a different phase from the milestone backlog
 
 **Read these files in this order on resume (after /clear):**
 
