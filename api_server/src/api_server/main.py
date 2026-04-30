@@ -40,6 +40,7 @@ from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.session import SessionMiddleware as ApSessionMiddleware
 from .routes import agent_events as agent_events_route
 from .routes import agent_lifecycle as agent_lifecycle_route
+from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
 from .routes import health
@@ -265,6 +266,14 @@ def create_app() -> FastAPI:
     # consumed by the SC-03 Gate B test harness (Plan 22b-06).
     app.include_router(
         agent_events_route.router, prefix="/v1", tags=["agents"]
+    )
+    # Phase 22c.3-08: in-app chat channel — POST /v1/agents/:id/messages
+    # (D-07 fast-ack), GET /v1/agents/:id/messages/stream (D-01 SSE
+    # replay + live), DELETE /v1/agents/:id/messages (D-43 history
+    # clear). The lifespan attach for the dispatcher / reaper / outbox
+    # background tasks lives in Plan 22c.3-09.
+    app.include_router(
+        agent_messages_route.router, prefix="/v1", tags=["agents"]
     )
     # Phase 22b-08: dev-only POST /v1/agents/:id/events/inject-test-event.
     # Conditional include keeps the route INVISIBLE in prod (FastAPI 404
