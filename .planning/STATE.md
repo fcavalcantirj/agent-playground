@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: "Phase 22c.3 EXECUTING — Wave 2 COMPLETE 2026-04-30. Plan 22c.3-07 (inapp_outbox pump — 100ms tick PG → Redis Pub/Sub) committed (d00e459 deps+fixtures, 59445ce RED tests, 65a4989 GREEN module). 8 testcontainer-PG + testcontainer-Redis integration tests PASS in 9.77s (happy path, skip-published, D-35 abandon-after-1h, Pitfall 3 strategy 2 Redis-error rollback, D-32 SKIP LOCKED via asyncio.gather, D-09 per-agent fan-out, stop_event cancel <1s, D-34 envelope shape). First transactional-outbox pattern in api_server (PATTERNS.md GREENFIELD). Wave 3 (routes + lifespan) is next."
-stopped_at: "2026-04-30 — 22c.3-07 SHIPPED (commits d00e459, 59445ce, 65a4989); Wave 2 COMPLETE; next is /gsd-execute-phase 22c.3 to start Wave 3 (Plans 22c.3-08 routes + 22c.3-09 lifespan)"
-last_updated: "2026-04-30T20:00:00Z"
+status: "Phase 22c.3 EXECUTING — Wave 3 head COMPLETE 2026-04-30. Plan 22c.3-08 (in-app chat channel HTTP routes) committed (9f8af06 RED middleware tests, 54c777f GREEN middleware + alembic 008, cd59ec2 POST + DELETE handlers + 15 tests, 2dbd7a3 SSE handler tests with real uvicorn). 28 testcontainer-PG + testcontainer-Redis integration tests PASS (6 middleware + 9 POST + 6 DELETE + 7 SSE) covering D-01/D-07/D-09/D-10/D-18/D-19/D-22/D-25/D-26/D-29/D-39/D-41/D-42/D-43/D-44/D-46. Pitfall 1 race window mitigation proven (differential PG re-fetch surfaces seq=2 even when phase 1 missed it). 5 Rule 1/3 deviations auto-fixed (alembic 008 added to relax idempotency_keys.run_id NOT NULL FK; SSE parser CRLF fix; race-window test redesign). Plan 22c.3-09 (lifespan) is the only remaining non-test plan."
+stopped_at: "2026-04-30 — 22c.3-08 SHIPPED (commits 9f8af06, 54c777f, cd59ec2, 2dbd7a3); Wave 3 head COMPLETE; next is /gsd-execute-phase 22c.3 to start Plan 22c.3-09 (lifespan attach for the 3 background tasks + alembic 008 live apply + image rebuild)"
+last_updated: "2026-04-30T21:00:00Z"
 progress:
   total_phases: 19
   completed_phases: 5
