@@ -273,6 +273,40 @@ channels:
     multi_user_model: per_session_id
     required_user_input: []             # nothing — recipe boots with just OPENROUTER_API_KEY env
     optional_user_input: []
+    # D-20 single-channel-per-instance: when channel="inapp" is selected at
+    # deploy time, the runner uses persistent_argv_override below instead of
+    # the top-level persistent.spec block. The 4 pre_start_commands run as
+    # separate `docker run --entrypoint zeroclaw ...` invocations sharing the
+    # named volume; daemon then starts long-running. Each chained docker run
+    # is a single-shot CLI subcommand against the same /zeroclaw-data volume,
+    # which is the only multi-step bootstrap path supported by the distroless
+    # image (no shell). See spikes/recipe-zeroclaw.md for verbatim probe.
+    persistent_argv_override:
+      entrypoint: zeroclaw
+      argv: [daemon]
+      pre_start_commands:
+        - argv:
+            - zeroclaw
+            - onboard
+            - --quick
+            - --force
+            - --provider
+            - openrouter
+            - --api-key
+            - "${OPENROUTER_API_KEY}"
+            - --model
+            - "$MODEL"
+        - argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
+        - argv: [zeroclaw, config, set, gateway.host, "0.0.0.0"]
+        - argv: [zeroclaw, config, set, gateway.require-pairing, "false"]
+    activation_env:
+      # ZeroClaw consumes OPENROUTER_API_KEY at onboard time AND at daemon
+      # runtime for upstream LLM calls. The runner's existing channel-input
+      # mechanism injects the user's stored OpenRouter key per
+      # runtime.process_env.api_key above. ZEROCLAW_WORKSPACE points the
+      # daemon at the bind-mounted workspace dir.
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      ZEROCLAW_WORKSPACE: "/zeroclaw-data/workspace"
     verified_cells:
       - date: "2026-04-30"
         model: anthropic/claude-haiku-4.5
