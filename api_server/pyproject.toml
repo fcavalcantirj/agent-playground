@@ -50,17 +50,21 @@ dependencies = [
   # Phase 22c.3: SSE outbound (heartbeat + Last-Event-Id replay) +
   # Redis Pub/Sub fan-out (outbox pump publishes; SSE handler subscribes).
   # Versions verified in RESEARCH §Standard Stack against PyPI 2026-04-29:
-  # sse-starlette 3.4.1; redis 7.4.0 — pin <7 to avoid auto-upgrading on
-  # a future major.
+  # sse-starlette 3.4.1; redis 7.4.0. Plan 22c.3-07 deviation Rule 3:
+  # original pin `<7` was a false ceiling — testcontainers[redis]>=4.14.2
+  # transitively requires redis>=7, and redis 7.x asyncio API is
+  # source-compatible with the 5.x API the Plan 03 lifespan probe uses.
+  # Bumped upper bound to <8 so the Plan 07 outbox-pump test fixture
+  # (Redis testcontainer) can install cleanly alongside the runtime dep.
   "sse-starlette>=3.4,<4",
-  "redis>=5.2,<7",
+  "redis>=5.2,<8",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
-  "testcontainers[postgres]>=4.14.2",
+  "testcontainers[postgres,redis]>=4.14.2",
   "httpx>=0.27",
   # Phase 22c-01: httpx-native mock library. Supersedes CONTEXT
   # D-22c-TEST-01's `responses` (which only intercepts `requests`).

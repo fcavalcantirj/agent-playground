@@ -27,6 +27,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 API_SERVER_DIR = Path(__file__).resolve().parent.parent
 
@@ -48,6 +49,48 @@ def postgres_container():
     """One Postgres 17 container per test session — amortizes ~3-5s boot cost."""
     with PostgresContainer("postgres:17-alpine") as pg:
         yield pg
+
+
+@pytest.fixture(scope="session")
+def redis_container():
+    """One Redis 7 container per test session — amortizes container boot cost.
+
+    Phase 22c.3-07 fixture: consumed by ``redis_client`` (per-test) and the
+    outbox-pump integration tests in ``tests/test_inapp_outbox.py``. Loop-back
+    image keeps boot to a few seconds; same session-scope amortization model
+    as ``postgres_container``.
+    """
+    with RedisContainer("redis:7-alpine") as r:
+        yield r
+
+
+@pytest_asyncio.fixture
+async def redis_client(redis_container):
+    """Per-test ``redis.asyncio`` client connected to the session container.
+
+    Phase 22c.3-07 fixture: tests use this to PUBLISH/SUBSCRIBE against the
+    real Redis. ``decode_responses=False`` so messages arrive as ``bytes`` —
+    the outbox pump publishes JSON-encoded ``str`` (which redis-py upcasts to
+    bytes); the test helper decodes on read.
+
+    Per-test cleanup ``flushdb()`` + ``aclose()`` keeps test isolation —
+    one test's stale keys / channel state cannot leak into the next.
+    """
+    import redis.asyncio as redis_async
+
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    client = redis_async.from_url(
+        f"redis://{host}:{port}/0", decode_responses=False
+    )
+    try:
+        yield client
+    finally:
+        try:
+            await client.flushdb()
+        except Exception:
+            pass
+        await client.aclose()
 
 
 @pytest.fixture(scope="session")
