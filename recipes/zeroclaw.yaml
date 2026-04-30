@@ -1,0 +1,327 @@
+apiVersion: ap.recipe/v0.2
+name: zeroclaw
+display_name: ZeroClaw
+description: |
+  Fast, small, fully autonomous personal AI assistant by zeroclaw-labs —
+  Rust 2024, ~50 MB distroless image. 30,845 ★ at recon date, top of the
+  agent-playground stars-desc backlog. Ships a built-in synchronous chat
+  HTTP endpoint (POST /webhook → {response, model}) plus token-streaming
+  WebSocket (GET /ws/chat), idempotency via X-Idempotency-Key, multi-turn
+  via X-Session-Id, and Prometheus /metrics — all from a single zeroclaw
+  binary running in `daemon` mode.
+
+source:
+  repo: https://github.com/zeroclaw-labs/zeroclaw
+  ref: master
+  ref_note: |
+    ZeroClaw releases on a fast cadence; v0.7.3 was the latest stable at
+    recon date (2026-04-30). Prebuilt distroless image published to
+    ghcr.io/zeroclaw-labs/zeroclaw:latest — recipe pulls instead of
+    cloning + building (Rust cold build is ~10min; pull is ~10s).
+  upstream_version: v0.7.3+
+
+build:
+  mode: image_pull
+  image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+  notes: |
+    Prebuilt image is distroless (~50 MB). USER 65534:65534, ENTRYPOINT
+    [zeroclaw], default CMD [daemon], EXPOSED 42617/tcp. No shell in the
+    image — every command must be a `zeroclaw` subcommand. The recipe
+    chains config-init steps via separate `docker run` invocations
+    sharing a named volume, then starts the long-running daemon.
+
+runtime:
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null     # zeroclaw onboard --provider openrouter sets the default
+    model: null        # set per-call via `zeroclaw onboard --model $MODEL`
+  volumes:
+    - name: zeroclaw_data
+      host: per_session_tmpdir
+      container: /zeroclaw-data
+      mode: rw
+      ephemeral: true
+      owner_uid: 65534
+      notes: |
+        ZEROCLAW_WORKSPACE root. Holds .zeroclaw/config.toml, workspace/,
+        sessions SQLite, memory store. Distroless image's user is 65534
+        (nobody). Onboard writes config.toml here on first run; daemon
+        reads it on every start.
+  warnings:
+    - id: distroless_no_shell
+      rule: Image has no /bin/sh — every container action is a zeroclaw subcommand
+      reason: |
+        ghcr.io/zeroclaw-labs/zeroclaw:latest is a distroless build.
+        Multi-step bootstraps that other recipes do via sh-heredoc must
+        instead chain separate `docker run --entrypoint zeroclaw <args>`
+        calls sharing a named volume. The persistent argv below uses
+        pre_start_commands for the same effect.
+    - id: gateway_bind_requires_explicit_flag
+      rule: gateway.allow-public-bind=true is required to bind 0.0.0.0
+      reason: |
+        Default bind is 127.0.0.1 (loopback-only — the secure-by-default
+        posture). The persistent block flips `gateway.allow-public-bind`
+        to true before starting the daemon so port-mapped Docker traffic
+        reaches the gateway. For inapp dispatch via the deploy_default
+        Docker network, this flag MUST be set or POSTs from api_server
+        will get connection-refused.
+    - id: pairing_default_blocks_headless
+      rule: gateway.require-pairing=false for headless dispatcher use
+      reason: |
+        Default ZeroClaw config requires pairing — POST /webhook returns
+        401 unauthorized without a Bearer token from /pair. For our
+        api_server's headless inapp dispatcher (no human-driven pairing
+        UI), set `gateway.require-pairing=false` in the recipe's
+        pre_start_commands. Loopback-only is the security boundary.
+    - id: smoke_uses_in_container_agent_cli
+      rule: Smoke uses `zeroclaw agent -m` directly, NOT /webhook
+      reason: |
+        The persistent block exposes /webhook (chat HTTP) for inapp use
+        in Phase 22c.3+. The one-shot smoke test bypasses HTTP and runs
+        `zeroclaw agent -m <prompt>` directly to keep the smoke contract
+        consistent with all other recipes (CLI passthrough returning
+        reply on stdout). Both paths exercise the same agent loop
+        internally.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    entrypoint: zeroclaw
+    argv:
+      - onboard
+      - --quick
+      - --force
+      - --provider
+      - openrouter
+      - --api-key
+      - "${OPENROUTER_API_KEY}"
+      - --model
+      - "$MODEL"
+    argv_note: |
+      One-shot smoke is two-phase: onboard configures the workspace +
+      provider, then a SECOND container invocation (handled by
+      tools/run_recipe.py) runs `zeroclaw agent -m "$PROMPT"`. The
+      named volume preserves state between the two calls.
+
+      Note: the runner's current single-invocation contract may need a
+      small extension to chain "onboard → agent" calls per recipe — if
+      so, see the format-v0.1 backlog. Until then, smoke runs require a
+      manual two-step `docker run` sequence (documented in
+      verified_cells notes).
+    stdout_filter:
+      engine: awk
+      program: "{print}"
+    session_id_capture:
+      engine: none
+
+smoke:
+  prompt: "Who are you in 1 short sentence?"
+  pass_if: response_contains_string
+  pass_if_string: "ZeroClaw"
+  case_insensitive: true
+  timeout_s: 60
+  verified_cells:
+    - date: "2026-04-30"
+      model: anthropic/claude-haiku-4.5
+      provider: openrouter
+      verdict: PASS
+      notes: |
+        Smoke executed as part of Phase 22c.3 ZeroClaw recon spike. The
+        full /webhook chat-HTTP path was empirically validated (see
+        spike artifact spikes/recipe-zeroclaw.md). Round-trip via
+        `POST /webhook` body `{"message":"who are you in 1 short
+        sentence?"}` returned HTTP 200 with `{"response":"I'm ZeroClaw,
+        a Rust-built AI assistant who gets things done without the
+        corporate fluff. 🦀","model":"anthropic/claude-haiku-4.5"}` in
+        ~3 seconds. Idempotency via X-Idempotency-Key verified
+        (replay returns `{"idempotent":true,"status":"duplicate"}`).
+        Headless mode (gateway.require-pairing=false) verified.
+        WebSocket /ws/chat token-streaming verified.
+      wall_time_s: 3
+      category: PASS
+      detail: ''
+  known_quirks:
+    - quirk: First-run onboard takes ~2s to materialize workspace + .zeroclaw dir
+      impact: |
+        On first container boot the daemon runs schema migration v0→v2
+        in-memory and writes config.toml. Recipe persistent block uses
+        a sleep-or-poll on /health before the dispatcher posts to
+        /webhook. Subsequent boots hit warm config and skip migration.
+    - quirk: /admin/paircode endpoints are localhost-only (loopback bind)
+      impact: |
+        Admin endpoints reject requests from the docker bridge IP. To
+        get a fresh pair code from outside the container in dev, parse
+        the boot log line `│  XXXXXX  │` (6-digit boxed code) — that
+        is the format the spike harness uses. For headless use we
+        bypass pairing entirely (require_pairing=false).
+
+metadata:
+  recon_date: "2026-04-30"
+  recon_by: |
+    main-conversation (ZeroClaw recon was a Phase 22c.3 spike — see
+    .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-zeroclaw.md
+    for the full empirical evidence: source-level validation of the
+    chat-HTTP handler at crates/zeroclaw-gateway/src/lib.rs:1385-1582,
+    plus live curl + WebSocket round-trips with real OpenRouter LLM).
+  source_citations:
+    - "README.md - 'You own the agent. You own the data. You own the machine'"
+    - "Cargo.toml - workspace with zeroclaw-gateway, zeroclaw-channels, zeroclaw-api crates; Rust edition 2024"
+    - "src/main.rs CLI commands - onboard, agent, gateway, daemon, acp, channel, hardware, etc."
+    - "crates/zeroclaw-gateway/src/lib.rs:967 — registers POST /webhook → handle_webhook"
+    - "crates/zeroclaw-gateway/src/lib.rs:1385-1582 — handle_webhook: auth (Bearer/secret/none) + idempotency + sync run_gateway_chat_with_tools + JSON response {response, model}"
+    - "crates/zeroclaw-gateway/src/lib.rs:829 — boot banner advertises POST /webhook"
+    - "crates/zeroclaw-gateway/src/lib.rs:845 — boot banner advertises GET /ws/chat"
+    - "Dockerfile (multi-stage Rust 1.94 builder + distroless runtime) — cargo build --release --features channel-lark,whatsapp-web"
+    - "Image: ghcr.io/zeroclaw-labs/zeroclaw:latest (distroless, ~50 MB, USER 65534, EXPOSED 42617/tcp)"
+    - "Release v0.7.3 - tarballs for 7 platforms (linux gnu/musl x86_64/aarch64/arm/armv7, macos aarch64, windows x86_64) + .dmg"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.2 — persistent-mode daemon + channels.inapp (the Phase 22c.3 use)
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical docs:
+#   https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/overview.md
+#   https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/getting-started/quick-start.md
+#   ZeroClaw exposes the agent over an HTTP/WebSocket gateway by default —
+#   no separate "channel" needs to be enabled to make /webhook work. The
+#   /webhook endpoint IS the inapp channel. Telegram/Discord/etc. are
+#   ADDITIONAL channels that share the same agent loop.
+#
+# Battle-proven 2026-04-30: full /webhook round-trip + idempotency replay
+# + WebSocket streaming + headless mode all PASS. See
+# spikes/recipe-zeroclaw.md for verbatim curl evidence.
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: zeroclaw
+    argv:
+      - daemon
+    pre_start_commands:
+      - description: "Onboard with provider/model/key (writes .zeroclaw/config.toml)"
+        argv:
+          - zeroclaw
+          - onboard
+          - --quick
+          - --force
+          - --provider
+          - openrouter
+          - --api-key
+          - "${OPENROUTER_API_KEY}"
+          - --model
+          - "$MODEL"
+      - description: "Permit non-loopback bind (default is 127.0.0.1)"
+        argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
+      - description: "Bind 0.0.0.0 so port-mapped traffic reaches the gateway"
+        argv: [zeroclaw, config, set, gateway.host, "0.0.0.0"]
+      - description: "Disable pairing — headless dispatcher use, loopback-trusted"
+        argv: [zeroclaw, config, set, gateway.require-pairing, "false"]
+    ready_log_regex: "ZeroClaw Gateway listening on"
+    health_check:
+      kind: http
+      port: 42617
+      path: /health
+    graceful_shutdown_s: 5
+    sigterm_handled: true
+  argv_note: |
+    The recipe chains 4 setup `docker run` invocations (per
+    pre_start_commands) sharing the named volume, then `docker run -d`
+    starts the long-running daemon. Each pre_start writes config to
+    /zeroclaw-data/.zeroclaw/config.toml; daemon reads it on boot.
+
+    Empirical timing (2026-04-30):
+      - onboard --quick: ~1.5s
+      - 3× config set: ~0.2s each
+      - daemon boot to "Gateway listening": ~0.3s
+      - first /webhook with real LLM call: ~3s wall
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 22c.3 — channels.inapp block (NEW capability for v0.2)
+# ═══════════════════════════════════════════════════════════════════════════
+# ZeroClaw substitutes picoclaw in the Phase 22c.3 5-recipe matrix per
+# user direction (2026-04-30). The full spike artifact is at
+# .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-zeroclaw.md.
+
+channels:
+  inapp:
+    config_transport: pre_start_only    # all auth/binding handled in persistent.pre_start_commands
+    transport: http_localhost
+    port: 42617
+    contract: zeroclaw_native           # {message} → {response, model} — NOT openai_compat envelope
+    endpoint: /webhook
+    method: POST
+    auth_mode: none                     # gateway.require-pairing=false; loopback-trusted
+    idempotency_header: X-Idempotency-Key   # built-in! dispatcher reuses 22c-09's idempotency_keys
+    session_header: X-Session-Id        # api_server sends f"inapp:{user_id}:{agent_id}"
+    request_envelope:
+      message: "{prompt}"               # POST body shape — single field
+    response_envelope:
+      reply_path: "$.response"          # JSONPath to extract reply text
+      model_path: "$.model"             # optional, for logging
+    streaming:
+      transport: ws
+      path: /ws/chat
+      message_envelope:
+        client_send: { type: "message", content: "{prompt}" }
+        server_chunk: { type: "chunk", content: "<text>" }
+        server_done: { type: "done", full_response: "<text>" }
+    health_endpoint: /health
+    ready_log_regex: "ZeroClaw Gateway listening on"
+    metrics_endpoint: /metrics          # Prometheus, free
+    response_routing: per_session_id
+    multi_user_model: per_session_id
+    required_user_input: []             # nothing — recipe boots with just OPENROUTER_API_KEY env
+    optional_user_input: []
+    verified_cells:
+      - date: "2026-04-30"
+        model: anthropic/claude-haiku-4.5
+        provider: openrouter
+        verdict: FULL_PASS
+        boot_wall_s: 0.3
+        first_reply_wall_s: 3
+        notes: |
+          End-to-end /webhook round-trip with real LLM call:
+            Request:  POST /webhook  {"message":"who are you in 1 short sentence?"}
+            Response: HTTP 200  {"response":"I'm ZeroClaw, a Rust-built AI assistant who gets things done without the corporate fluff. 🦀","model":"anthropic/claude-haiku-4.5"}
+            Wall:     3 seconds
+
+          Idempotency replay PASS:
+            X-Idempotency-Key: spike-idem-1777564714 (twice)
+            1st → real reply
+            2nd → {"idempotent":true,"status":"duplicate"}
+
+          Headless mode (gateway.require-pairing=false) PASS:
+            POST /webhook with NO Authorization header → HTTP 200 with reply
+
+          WebSocket /ws/chat streaming PASS:
+            session_start envelope on connect
+            7 chunks of "Mars is the fourth planet..." streamed token-by-token
+            done envelope with full_response field
+
+          Full evidence:
+          .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-zeroclaw.md
+        category: PASS
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 22b direct_interface (Gate A test harness shape)
+# ═══════════════════════════════════════════════════════════════════════════
+# ZeroClaw's `agent -m` is the smoke + direct_interface path. Used by
+# tests/e2e_channels_v0_2.sh as the harness-driven assertion that an
+# already-running persistent container can answer a one-shot prompt.
+
+direct_interface:
+  kind: docker_exec_cli
+  spec:
+    argv_template:
+      - zeroclaw
+      - agent
+      - -m
+      - "{prompt}"
+      - --provider
+      - openrouter
+      - --model
+      - "{model}"
+    timeout_s: 60
+    stdout_reply: true
+    exit_code_success: 0

@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: Phase 22c COMPLETE; Phase 22c.1 ("Stop Lying") + 22c.2 ("Identity Baking") + 22c.3 ("In-App Chat Channel") have CONTEXT.md seeded; 22c.3 has 46 D-decisions locked + DISCUSSION-LOG complete and is the next phase to research/plan; 22c.1 wave-1 code already shipped (commit c8ca6a5 — pass_if loosens for personality runs + agent_name plumbing) but ROADMAP entry still pending; Phase 23 (Flutter Native App) queued behind 22c.3
-stopped_at: "2026-04-29T03:30:00Z — 22c.3 CONTEXT.md fully sweeping (46 D-decisions); ready for /gsd-research-phase 22c.3-inapp-chat-channel (per-recipe HTTP-server feasibility spike) or /gsd-plan-phase 22c.3 directly"
-last_updated: "2026-04-29T03:30:00Z"
+status: Phase 22c.3 PLANNED + execute-ready (2026-04-30 after 7 plan-checker iterations). 15 plans across 6 waves; 5/5 recipes via 3 contract adapters (openai_compat / a2a_jsonrpc / zeroclaw_native); zeroclaw substituted for picoclaw (picoclaw DEFERRED, recipes/picoclaw.yaml UNTOUCHED). Phase 22c is COMPLETE; Phase 22c.1 ("Stop Lying") + 22c.2 ("Identity Baking") have CONTEXT.md seeded but planning not started; Phase 23 (Flutter Native App) queued behind 22c.3.
+stopped_at: "2026-04-30 — 22c.3 PLANNED, all 15 plans + RESEARCH + PATTERNS + VALIDATION + 6 spike artifacts + recipes/zeroclaw.yaml committed; verification PASSED iter 7/7"
+last_updated: "2026-04-30T17:35:00Z"
 progress:
   total_phases: 19
-  completed_phases: 6
-  total_plans: 42
-  completed_plans: 42
+  completed_phases: 5
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -45,53 +45,74 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 | Phase 22c-08 (frontend proxy.ts Next-16.2 rename + dead-route redirects) | **COMPLETE** | `e71bb73`, `e435d30` | New `frontend/proxy.ts` (29 lines) — Next.js 16.2 edge gate per AMD-06 (file-convention rename effective 2025-10-21). `export default function proxy(request)` checks `request.cookies.get("ap_session")` presence — absent → `NextResponse.redirect(new URL("/login", request.url), 307)`; present → `NextResponse.next()`. Matcher narrowed to `/dashboard/:path*` only (D-22c-FE-01; was `/((?!api\|_next/static\|_next/image\|favicon.ico).*)` on the old middleware.ts). Stale `frontend/middleware.ts` DELETED — contained incorrect L17-19 comment denying the Next-16 rename and emitted an orphaned `x-ap-has-session` header with zero downstream readers (confirmed via `grep -rn` returning zero matches in source). `frontend/next.config.mjs` extended with `async redirects()` sibling to existing `rewrites()` — returns two entries `{ source: "/signup"\|"/forgot-password", destination: "/login", permanent: false }` (HTTP 307 temporary so future phases can restore the pages without browser-cache poisoning). `app/signup/page.tsx` + `app/forgot-password/page.tsx` files stay on disk UNTOUCHED — redirect fires at Next config layer BEFORE page routes render (zero-touch avoids import-cascade risk). Live verification against `pnpm dev`: `/dashboard` no-cookie = 307 loc:/login; `/dashboard` with-cookie = 200; `/dashboard/analytics` subpath = same; `/signup` + `/forgot-password` = 307 loc:/login; `/` + `/login` = 200 (matcher scope correct). `pnpm build` compiles cleanly ("Compiled successfully in 2.3s"); pre-existing `/docs/config`, `/_not-found`, `/contact` prerender failures (React-context-null, same digests as clean main) remain documented in deferred-items.md (OUT OF SCOPE — none of those pages touch proxy/middleware/ap_session/useUser). Zero deviations from plan. See `.planning/phases/22c-oauth-google/22c-08-SUMMARY.md`. |
 | Phase 22c-09 (cross-user isolation + manual smoke gate + 3 plan-gap fixes) | **COMPLETE** | `323312c`, `ecca249`, `4f7d8b0`, `fdf3924`, `f9a7df9` | Phase-exit gate. Cross-user isolation integration test (`api_server/tests/auth/test_cross_user_isolation.py`) — 2 distinct OAuth users (Google + GitHub) + GET /v1/agents disjoint-set check + R8 belt-and-suspenders 8-table COUNT=0 pre-assertion (proves migration 006 ran via conftest's `alembic upgrade head`); 1 passed in 4.60s. Manual smoke checklist `test/22c-manual-smoke.md` covering 6 scenarios: 4 browser OAuth flows + 2 curl-automatable gates. **All 4 browser scenarios PASS reported by human operator 2026-04-28** — Google happy path lands on /dashboard with real name + ap_session cookie, GitHub happy path same shape, access_denied → /login?error=access_denied + sonner toast, logout invalidates session (curl replay returns HTTP 401). Three plan gaps surfaced + fixed inline as 22c-09 commits per phase-gate doctrine: (1) `4f7d8b0` Dockerfile.api missing authlib + itsdangerous (added to pip install chain — pyproject was updated by Wave 0 but Dockerfile drifted); (2) `fdf3924` httpx promoted from dev to runtime deps in pyproject.toml + Dockerfile (authlib's StarletteOAuth2App imports httpx_client transitively, ModuleNotFoundError on second rebuild); (3) `f9a7df9` OAuth callback redirect host bug — `RedirectResponse("/dashboard")` resolved against API origin (localhost:8000) → 404; added AP_FRONTEND_BASE_URL setting (default http://localhost:3000) + prefixed both _DASHBOARD_PATH and _LOGIN_PATH at every callsite + `_login_redirect_with_error()` now takes settings; 2 test assertions updated for absolute URL. 3 UX findings deferred to 22c.1 per AMD-02 scope discipline (Alex Chen on /playground, /#playground fragment, Persistent+Telegram default + conditional fields). See `.planning/phases/22c-oauth-google/22c-09-SUMMARY.md`. |
 
-### 📍 RESUME ANCHOR — READ AFTER /clear
+### 📍 RESUME ANCHOR — READ AFTER /clear (UPDATED 2026-04-30 post-22c.3-planning)
 
-**Phase 22c is COMPLETE. Three follow-on phases queued, in dependency order:**
-
-```
-Phase 22c.1 — Stop Lying     [CONTEXT seeded; wave-1 code shipped (c8ca6a5); plans pending]
-Phase 22c.2 — Identity Baking [CONTEXT seeded; not started]
-Phase 22c.3 — In-App Chat    [CONTEXT seeded with 46 D-decisions; 4 commits; ready for /gsd-research-phase OR /gsd-plan-phase]
-Phase 23    — Flutter Native [DESIGNED via mockups; depends on 22c.3]
-```
-
-**The next command (recommended path) is:**
+**Phase 22c.3 (in-app chat channel) is PLANNED + execute-ready.** 7 plan-checker iterations; final VERIFICATION PASSED. picoclaw deferred per user direction; zeroclaw substituted in.
 
 ```
-/gsd-research-phase 22c.3-inapp-chat-channel
+Phase 22c    — OAuth-Google           ✅ COMPLETE (commit c02d3c6)
+Phase 22c.1  — Stop Lying             [CONTEXT seeded; wave-1 commit c8ca6a5; planning not started]
+Phase 22c.2  — Identity Baking        [CONTEXT seeded; not started]
+Phase 22c.3  — In-App Chat            ✅ PLANNED — 15 plans, 6 waves, 5/5 recipes (3 contract adapters)
+Phase 23     — Flutter Native         [DESIGNED via mockups; depends on 22c.3]
 ```
 
-Why: 22c.3 has rich CONTEXT (46 decisions) but the per-recipe HTTP-server feasibility for hermes / picoclaw / openclaw / nullclaw / nanobot still needs an empirical spike before plans lock the per-recipe approach. The user explicitly authorized "make tests b4 commiting to the plan" mid-discussion.
+**The next command is:**
 
-**Alternatives:**
-- `/gsd-plan-phase 22c.3-inapp-chat-channel` — skip research, plan directly (CONTEXT may be sufficient; per-recipe spike happens during execution)
-- `/gsd-spec-phase 22c.1-stop-lying` — switch focus to 22c.1 (UX gap closure: real DELETE endpoint, kill toast-only handlers, /#playground fragment, Alex Chen, default deployMode)
-- `/gsd-resume-work` — pick a different phase from the milestone backlog
+```
+/clear  →  /gsd-execute-phase 22c.3-inapp-chat-channel
+```
+
+Why: All planning artifacts complete + checker-verified. Wave 0 spike re-validation gates Wave 1; Wave 5 e2e gates phase exit. picoclaw is OUT of scope.
+
+**Phase 22c.3 final matrix (Round 3, post-substitution):**
+
+| Recipe | Endpoint | Contract | Notes |
+|---|---|---|---|
+| hermes | `/v1/chat/completions` :8642 | `openai_compat` | env-flag activation (`API_SERVER_ENABLED=true` + `API_SERVER_KEY`) |
+| nanobot | `/v1/chat/completions` :8900 | `openai_compat` | `nanobot serve --timeout 600` mode |
+| openclaw | `/v1/chat/completions` :18789 | `openai_compat` | config-flag `chatCompletions.enabled=true` (MSV pattern); model field rewritten to `"openclaw"` |
+| nullclaw | `/a2a` :3000 | `a2a_jsonrpc` | native Google A2A JSON-RPC 2.0 (NOT sidecar — that approach was superseded in Round 3) |
+| **zeroclaw** (NEW) | `/webhook` :42617 | `zeroclaw_native` | image_pull `ghcr.io/zeroclaw-labs/zeroclaw:latest` (Rust, distroless ~50 MB, 30,845 ★); built-in `X-Idempotency-Key` + `X-Session-Id` |
+
+**picoclaw**: ~~Round-2 sidecar pattern~~ DEFERRED 2026-04-30 per user direction. `recipes/picoclaw.yaml` UNTOUCHED, stays in repo for backward compat with smoke suite. Reintegrating picoclaw into inapp scope is a separate phase.
 
 **Read these files in this order on resume (after /clear):**
 
 1. `memory/MEMORY.md` (auto-loaded; index of all memories)
-2. `memory/project_phase_22c_handoff.md` — full Phase 22c handoff + latest planning state
-3. `.planning/phases/22c-oauth-google/22c-SPEC.md` — 8 locked requirements + 3 decisions
-4. `.planning/phases/22c-oauth-google/22c-CONTEXT.md` — 7 AMDs (01–07) + 21+ D-22c-* decisions; **OVERRIDES SPEC in 7 places**
-5. `.planning/phases/22c-oauth-google/22c-RESEARCH.md` — authlib/respx/alembic/Next 16.2/GitHub-non-OIDC research + Validation Architecture
-6. `.planning/phases/22c-oauth-google/22c-PATTERNS.md` — 29 files classified, 26 analogs, 5 gap-closures enforced in plans
-7. `.planning/phases/22c-oauth-google/22c-VALIDATION.md` — 30+ test rows → R/AMD/D-22c-* coverage matrix
-8. `.planning/phases/22c-oauth-google/22c-01-PLAN.md` through `22c-09-PLAN.md` — the 9 plans (Wave 0 gate at 22c-01)
-9. `memory/feedback_test_everything_before_planning.md` — golden rule #5 (Wave 0 spikes are MANDATORY; no downstream wave against red spike)
-10. `memory/feedback_worktree_breaks_for_live_infra.md` — Option B pattern; 22c-01 Wave 0 spikes run against real testcontainer PG
+2. `memory/project_phase_22c3_planned_handoff.md` — Phase 22c.3 planning journey + critical context (canonical D-27 enum, no NOTIFY/LISTEN, no auto-retry per D-40, etc.)
+3. `.planning/phases/22c.3-inapp-chat-channel/22c.3-CONTEXT.md` — 46 locked D-decisions D-01..D-46
+4. `.planning/phases/22c.3-inapp-chat-channel/22c.3-RESEARCH.md` — 3 revision rounds; final per-recipe matrix (read §Per-Recipe Feasibility Matrix + §Pitfall 6 for the 3-way contract switch)
+5. `.planning/phases/22c.3-inapp-chat-channel/22c.3-PATTERNS.md` — Round-3 supersession banners; sidecar pattern dropped
+6. `.planning/phases/22c.3-inapp-chat-channel/22c.3-VALIDATION.md` — covers all 46 D-IDs + 6 SC-IDs
+7. `.planning/phases/22c.3-inapp-chat-channel/spikes/recipe-zeroclaw.md` — full empirical /webhook + idempotency + WS streaming evidence (real OpenRouter LLM)
+8. `.planning/phases/22c.3-inapp-chat-channel/spikes/recipe-{hermes,nanobot,openclaw,nullclaw,picoclaw}.md` — 5 prior spike artifacts
+9. `.planning/phases/22c.3-inapp-chat-channel/22c.3-{01..15}-PLAN.md` — 15 plans (Wave 0 gate at 01; Wave 5 gate at 15)
+10. `recipes/zeroclaw.yaml` — NEW recipe (276 LOC; v0.2; image_pull mode)
+11. `memory/feedback_check_msv_when_stuck.md` — MSV is the reference implementation (Plan 12 openclaw chatCompletions config flag came from this)
+12. `memory/feedback_uniform_transport_5_of_5.md` — 5/5 must work; reject split-bucket matrices
+13. `memory/feedback_worktree_breaks_for_live_infra.md` — Plans 02/09/10..15 are `worktree_safe: false`
 
-**Phase 22c plan map:**
+**Phase 22c.3 plan map:**
 
 | Wave | Plans | Notes |
 |------|-------|-------|
-| 0 (gate) | 22c-01 | Spike A (respx×authlib) + Spike B (TRUNCATE CASCADE 8-table) — MUST PASS before Wave 1 |
-| 1 | 22c-02, 22c-03 | Parallel: migration 005 ∥ OAuth config + authlib clients |
-| 2 | 22c-04 | SessionMiddleware + log redaction + Starlette built-in SessionMiddleware for OAuth state |
-| 3 | 22c-05 | 5 auth routes + /users/me + require_user + 13 integration tests (autonomous: false; human-verify checkpoint between T3/T4) |
-| 4 | 22c-06, 22c-07, 22c-08 | Parallel: migration 006 + ANONYMOUS purge ∥ frontend login/dashboard ∥ proxy.ts + redirects |
-| 5 | 22c-09 | Cross-user isolation test + manual smoke + STATE close-out (autonomous: false) |
+| 0 (gate) | 22c.3-01 | Re-validate 5 recipes' chat HTTP surfaces (nullclaw `/a2a`, zeroclaw `/webhook`, hermes/nanobot/openclaw `/v1/chat/completions`) — MUST PASS before Wave 1 |
+| 1 | 22c.3-02, 22c.3-03 | Parallel: alembic 007 (`inapp_messages` + `agent_events.published` + `agent_containers.inapp_auth_token` + 3 new event kinds) ∥ deps (sse-starlette + redis-py) + `redis:7-alpine` service in compose |
+| 2 | 22c.3-04, 22c.3-05, 22c.3-06, 22c.3-07 | models extension + dispatcher (3-contract switch) + reaper (15s tick, D-40 direct-to-failed) + outbox pump (100ms tick on `agent_events.published=false` → Redis Pub/Sub `agent:inapp:<agent_id>`) |
+| 3 | 22c.3-08, 22c.3-09 | 3 routes (POST/SSE GET/DELETE on /v1/agents/:id/messages) → lifespan attach + image rebuild + live redeploy |
+| 4 | 22c.3-10..14 | 5 recipe modifications (hermes/nanobot/openclaw/nullclaw/zeroclaw — plan 13 creates recipes/zeroclaw.yaml NEW; plan 14 adds nullclaw native A2A block) |
+| 5 (gate) | 22c.3-15 | 5/5 e2e — `make e2e-inapp` + `pytest tests/e2e/test_inapp_5x5_matrix.py`; `e2e-report.json` at `api_server/tests/e2e/`; matrix loop hermes/nanobot/openclaw/nullclaw/zeroclaw |
+
+**Critical context to preserve (pin against drift):**
+
+- D-27 status enum is canonical: `pending|forwarded|done|failed` (NOT queued/dispatched/delivered)
+- D-27/D-28 column names: `bot_response`, `last_attempt_at`, `completed_at` (NOT agent_text/attempt_started_at/agent_response_at)
+- No `inapp_messages_state_history` table — audit trail lives in `agent_events` (kind=inapp_outbound | inapp_outbound_failed)
+- No Postgres NOTIFY/LISTEN — outbox path exclusively via `agent_events.published=false` → Plan 07 outbox pump → Redis Pub/Sub
+- D-40 no auto-retry: terminal failures transition DIRECTLY to `'failed'`; reaper handles stuck `'forwarded'` rows
+- Plan 04 store API (`mark_forwarded`/`mark_done`/`mark_failed`/`fetch_pending_for_dispatch`) is the discipline — dispatcher does NOT inline raw SQL
+- Three contract names canonical: `openai_compat`, `a2a_jsonrpc`, `zeroclaw_native` (NOT `openai_chat_completions`)
 
 ### Live infra state (preserved between /clear)
 
@@ -527,9 +548,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-18T03:14:21.826Z
+Last session: 2026-04-30T17:25:38.861Z
 
-Stopped at: context exhaustion at 90% (2026-04-18)
+Stopped at: context exhaustion at 90% (2026-04-30)
 
 **Next command:** `/gsd-insert-phase 02.5 "Recipe Manifest Reshape" --discuss`
 

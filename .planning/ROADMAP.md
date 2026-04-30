@@ -373,3 +373,34 @@ Plans:
 *Phase 2 plans split (W1 fix): Plan 04 split into 04 (foundations) + 05 (API surface); existing Plan 05 renumbered to 06 — 2026-04-14*
 *Phase 20 planned: 2026-04-17 — 5 plans in 3 waves; D-14 testing decision DEFERRED to Phase 20.1*
 *Phase 22c planned: 2026-04-19 — 9 plans in 5 waves (Wave 0 mandatory spike gate); inserted post-pivot, not in 1–8 numbered list*
+
+### Phase 22c.3: In-App Chat Channel — `inapp` transport (Flutter foundation)
+
+**Inserted 2026-04-29; planning complete 2026-04-30 (after 7 plan-checker iterations).** Adds an `inapp` channel transport so logged-in users can send chat messages to a running agent + receive replies via the API. Foundation for the Flutter native app (Phase 23) and a future web `/dashboard/agents/:id` chat surface.
+
+**Goal (Round-3 final, 2026-04-30):** Ship the inapp channel: new `inapp_messages` table (D-27), new background dispatcher + reaper + outbox-pump asyncio tasks attached at lifespan, SSE outbound stream via sse-starlette with Last-Event-Id replay (D-25/D-26), Redis Pub/Sub fan-out (D-08/D-09), 3 HTTP routes (POST /v1/agents/:id/messages D-07/D-29 fast-ack 202; GET /v1/agents/:id/messages/stream; DELETE /v1/agents/:id/messages D-43/D-44), and `channels.inapp` blocks added to **5 recipes via NATIVE chat HTTP — no sidecars, no MSV deviation**: hermes/nanobot/openclaw native /v1/chat/completions (contract `openai_compat`); nullclaw native /a2a Google A2A JSON-RPC 2.0 (contract `a2a_jsonrpc`); zeroclaw native /webhook (contract `zeroclaw_native` — NEW recipe substituting picoclaw per user direction). **picoclaw DEFERRED** out of this phase's scope; `recipes/picoclaw.yaml` UNTOUCHED. Single transport verb `http_localhost` with three contract adapters in dispatcher (~50 LOC each) per user directive "5/5 must work" (RESEARCH Rounds 1/2/3). Per-message size cap none (D-41). Rate limit 4/min per (user, agent) (D-42). Bot timeout 600s (D-40, no auto-retry — terminal failures direct to `'failed'`). Persist-before-action discipline (D-28) honors no-mocks/no-stubs across crash recovery.
+
+**Requirements**: Bound to `22c.3-CONTEXT.md` D-01..D-46 (the 46 D-decisions ARE the phase requirements per CONTEXT.md line 1133; no separate REQ-XX IDs).
+**Depends on:** Phase 22c (OAuth — `ap_session` cookie + `require_user` are the auth boundary for D-18/D-19).
+**Plans:** 15 plans across 6 waves
+
+Plans:
+- [ ] 22c.3-01-PLAN.md — Wave 0 spike re-validation against current main + A5 nanobot-auth resolution [Wave 0 GATE]
+- [ ] 22c.3-02-PLAN.md — Alembic migration 007: `inapp_messages` table + `agent_events.published` + `agent_containers.inapp_auth_token` + extend `ck_agent_events_kind` (3 new kinds); applied live to deploy-postgres-1 [Wave 1]
+- [ ] 22c.3-03-PLAN.md — `sse-starlette>=3.4,<4` + `redis>=5.2,<7` deps; `redis:7-alpine` service in docker-compose; `AP_REDIS_URL` env + Settings.redis_url field [Wave 1]
+- [ ] 22c.3-04-PLAN.md — Extend `models/events.py` (3 new payloads + VALID_KINDS); new `services/inapp_messages_store.py` (9 CRUD functions; FOR UPDATE SKIP LOCKED) [Wave 2]
+- [ ] 22c.3-05-PLAN.md — `services/inapp_dispatcher.py` (single-verb http_localhost; persist-before-action; D-40 no-auto-retry; per-agent serialization within tick) [Wave 2]
+- [ ] 22c.3-06-PLAN.md — `services/inapp_reaper.py` (15s tick; D-40 stuck-row sweep direct to failed) [Wave 2]
+- [ ] 22c.3-07-PLAN.md — `services/inapp_outbox.py` (100ms tick; Pitfall 3 strategy 2 batch-rollback; D-35 abandon-after-1h) [Wave 2]
+- [ ] 22c.3-08-PLAN.md — `routes/agent_messages.py` (POST + DELETE + SSE GET); idempotency middleware extension; rate-limit `chat:{user}:{agent}` 4/min [Wave 3]
+- [ ] 22c.3-09-PLAN.md — `main.py` lifespan: 3 background tasks attached + Redis client + httpx.AsyncClient + restart sweep (D-31); image rebuild + live deploy [Wave 3]
+- [ ] 22c.3-10-PLAN.md — hermes recipe channels.inapp (native env-flag activation, port 8642) [Wave 4]
+- [ ] 22c.3-11-PLAN.md — nanobot recipe channels.inapp (`nanobot serve` mode, port 8900, --timeout 600) [Wave 4]
+- [ ] 22c.3-12-PLAN.md — openclaw recipe channels.inapp (config-flag chatCompletions.enabled=true on gateway port 18789; MSV pattern) [Wave 4]
+- [ ] 22c.3-13-PLAN.md — **NEW recipes/zeroclaw.yaml** (substitutes picoclaw per user direction 2026-04-30; image_pull `ghcr.io/zeroclaw-labs/zeroclaw:latest` distroless ~50 MB Rust 30,845 ★; channels.inapp contract=zeroclaw_native, native /webhook on :42617; built-in X-Idempotency-Key + X-Session-Id) [Wave 4]
+- [ ] 22c.3-14-PLAN.md — nullclaw recipe channels.inapp **via native Google A2A** (contract=a2a_jsonrpc, endpoint=/a2a; persistent_argv writes config.json with `a2a.enabled=true` + `gateway.require_pairing=false` then `nullclaw gateway`; NO sidecar — Round-3 supersession) [Wave 4]
+- [ ] 22c.3-15-PLAN.md — Wave 5 e2e gate: 5/5 recipes round-trip a real chat message via SSE + 3 cross-cutting D-criteria checks; agent_lifecycle.start_persistent extension to mint inapp_auth_token; human-verify checkpoint [Wave 5 GATE]
+
+**UI hint:** no (API-only; Flutter Phase 23 + future web chat consume the new endpoints).
+
+*Phase 22c.3 planned: 2026-04-29 — 15 plans in 6 waves (Wave 0 mandatory spike re-validation gate; Wave 5 mandatory e2e gate); inserted post-pivot.*
