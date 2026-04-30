@@ -386,7 +386,7 @@ Plans:
 
 Plans:
 - [x] 22c.3-01-PLAN.md — Wave 0 spike re-validation against current main + A5 nanobot-auth resolution [Wave 0 GATE] — SHIPPED 2026-04-30 (commits f32df66, 55138e7, f0341e7); 5/5 PASS (hermes/nanobot/openclaw via openai_compat; nullclaw via native a2a_jsonrpc; zeroclaw via zeroclaw_native — Round-3 substitution for picoclaw); WAVE-0-CLOSED gate emitted in spikes/wave-0-summary.md
-- [ ] 22c.3-02-PLAN.md — Alembic migration 007: `inapp_messages` table + `agent_events.published` + `agent_containers.inapp_auth_token` + extend `ck_agent_events_kind` (3 new kinds); applied live to deploy-postgres-1 [Wave 1]
+- [x] 22c.3-02-PLAN.md — Alembic migration 007: `inapp_messages` table + `agent_events.published` + `agent_containers.inapp_auth_token` + extend `ck_agent_events_kind` (3 new kinds); applied live to deploy-postgres-1 [Wave 1] — SHIPPED 2026-04-30 (commits b4bef12, b9b5004); 2/2 testcontainers integration tests PASS; deploy-postgres-1 alembic_version transitioned 006 → 007; full-DDL + reversible-round-trip coverage
 - [ ] 22c.3-03-PLAN.md — `sse-starlette>=3.4,<4` + `redis>=5.2,<7` deps; `redis:7-alpine` service in docker-compose; `AP_REDIS_URL` env + Settings.redis_url field [Wave 1]
 - [ ] 22c.3-04-PLAN.md — Extend `models/events.py` (3 new payloads + VALID_KINDS); new `services/inapp_messages_store.py` (9 CRUD functions; FOR UPDATE SKIP LOCKED) [Wave 2]
 - [ ] 22c.3-05-PLAN.md — `services/inapp_dispatcher.py` (single-verb http_localhost; persist-before-action; D-40 no-auto-retry; per-agent serialization within tick) [Wave 2]
