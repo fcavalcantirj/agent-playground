@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: "Phase 22c.3 EXECUTING — Wave 4 IN PROGRESS 2026-04-30 evening. Plan 22c.3-10 (hermes channels.inapp) SHIPPED (commit fcf18e3). recipes/hermes.yaml +40 lines: transport=http_localhost/port=8642/endpoint=/v1/chat/completions/contract=openai_compat/contract_model_name=hermes-agent + 4 activation_env vars (API_SERVER_ENABLED/KEY/PORT/HOST) + verified_cells citing spike-recipe-hermes.md 2026-04-29 PASS. Live api_server restarted + GET /v1/recipes/hermes surfaces channels.inapp verbatim; container healthy. Recipes_loader confirmed permissive (no strict-validation relaxation needed). Existing channels.telegram block UNTOUCHED per D-20. InappRecipeIndex.get_inapp_block('hermes') parses cleanly into the dataclass. Zero deviations. First of 5 recipe inapp opt-ins; Plans 22c.3-11..14 (nanobot/openclaw/zeroclaw/nullclaw) unblocked."
-stopped_at: "2026-04-30 — 22c.3-10 SHIPPED (commit fcf18e3); first Wave-4 recipe opt-in landed; next is /gsd-execute-phase 22c.3 to continue Wave 4 with Plan 22c.3-11 (nanobot)"
-last_updated: "2026-04-30T21:14:52Z"
+status: "Phase 22c.3 EXECUTING — Wave 4 IN PROGRESS 2026-04-30 evening. Plan 22c.3-11 (nanobot channels.inapp) SHIPPED (commit e32331e). recipes/nanobot.yaml +87 lines: transport=http_localhost/port=8900/endpoint=/v1/chat/completions/contract=openai_compat/contract_model_name=agent + auth_header='none' (A5=no_auth per spike line 95) + persistent_argv_override entrypoint=nanobot argv=[serve,--port,8900,--host,127.0.0.1,--timeout,600] (D-20 single-channel-per-instance entrypoint swap from `nanobot gateway` to `nanobot serve`; D-40 600s timeout) + verified_cells citing spike-recipe-nanobot.md 2026-04-29 PASS (90-char persona-correct reply via real OpenRouter). Live api_server restarted + GET /v1/recipes/nanobot surfaces channels.inapp verbatim; container running healthy. Existing channels.telegram block UNTOUCHED per D-20 (event_log_regex 4-regex set + 2 verified_cells preserved). InappRecipeIndex.get_inapp_block('nanobot') parses cleanly into the dataclass (10 fields). v1 acceptable risk for A5=no_auth: bot binds 127.0.0.1 inside container's network namespace; api_server dispatcher reaches via Docker bridge IP; external access blocked at Docker network boundary; auth enforced upstream by require_user. Zero deviations. Second of 5 recipe inapp opt-ins (after hermes 22c.3-10); Plans 22c.3-12..14 (openclaw/zeroclaw/nullclaw) remain unblocked."
+stopped_at: "2026-04-30 — 22c.3-11 SHIPPED (commit e32331e); second Wave-4 recipe opt-in landed (nanobot via persistent_argv_override → `nanobot serve --port 8900 --host 127.0.0.1 --timeout 600`); next is /gsd-execute-phase 22c.3 to continue Wave 4 with Plan 22c.3-12 (openclaw)"
+last_updated: "2026-04-30T21:21:00Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -60,7 +60,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 Phase 22c    — OAuth-Google           ✅ COMPLETE (commit c02d3c6)
 Phase 22c.1  — Stop Lying             [CONTEXT seeded; wave-1 commit c8ca6a5; planning not started]
 Phase 22c.2  — Identity Baking        [CONTEXT seeded; not started]
-Phase 22c.3  — In-App Chat            🟡 EXECUTING — Plans 01 + 02 + 03 + 04 + 05 + 06 + 07 + 08 + 09 SHIPPED; Wave 3 COMPLETE; next is Wave 4 (Plans 22c.3-10..14 recipe modifications)
+Phase 22c.3  — In-App Chat            🟡 EXECUTING — Plans 01 + 02 + 03 + 04 + 05 + 06 + 07 + 08 + 09 + 10 + 11 SHIPPED; Wave 4 IN PROGRESS (2 of 5 recipes opted into inapp: hermes + nanobot); next is Plan 22c.3-12 (openclaw)
 Phase 23     — Flutter Native         [DESIGNED via mockups; depends on 22c.3]
 ```
 
@@ -408,6 +408,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 22c.3-02 | ~6min | 2 tasks | 2 files |
 | Phase 22c.3-03 | ~5min | 3 tasks | 7 files |
 | Phase 22c.3-06 | ~8min | 1 task (TDD RED+GREEN) | 2 files |
+| Phase 22c.3-11 | ~25min | 1 task | 1 file |
 
 ## Accumulated Context
 
