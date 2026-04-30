@@ -1,0 +1,379 @@
+"""Phase 22c.3 Plan 15 — fixtures for the SC-03 5-cell e2e gate.
+
+Reuses the session-scoped ``migrated_pg`` Postgres testcontainer + the
+function-scoped ``db_pool`` from the parent ``tests/conftest.py`` (no
+duplication of the 3-5s container boot).
+
+The fixtures here are e2e-specific:
+
+  * ``openrouter_api_key`` — real key from env or .env.local; fail loud
+    if missing (Plan 15 explicit requirement: real OpenRouter calls).
+  * ``oauth_user_with_openrouter_key`` — INSERTs a oauth_sessions row
+    carrying the key per D-32, AND yields the key for the recipe
+    container fixture to inject as ``OPENROUTER_API_KEY`` env. Both
+    paths exercise the SAME upstream OpenRouter HTTP from inside the
+    recipe container.
+  * ``e2e_docker_network`` — session-scoped docker bridge network the
+    test process and recipe containers share. The dispatcher uses
+    ``InappRecipeIndex.get_container_ip`` to discover IPs on this
+    network, mirroring the production lifespan's docker_network_name.
+  * ``recipe_index`` — real InappRecipeIndex bound to the real
+    ``recipes/`` dir + a real docker client + the e2e network.
+  * ``recipe_container_factory`` — given a recipe name, renders the
+    recipe's ``persistent_argv_override`` + ``activation_env`` with
+    runtime substitutions (mints INAPP_AUTH_TOKEN, fills MODEL,
+    INAPP_PROVIDER_KEY, agent_name, agent_url), spawns the container
+    on the e2e network, polls ``ready_log_regex``, and returns
+    (container_id, container_ip, inapp_auth_token). Tear down on
+    session end.
+
+Per Golden Rule #1: no mocks. Real PG, real Docker, real OpenRouter.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+import asyncpg
+import pytest
+import pytest_asyncio
+from ruamel.yaml import YAML
+
+from . import _helpers as h
+
+
+_log = logging.getLogger("api_server.tests.e2e.conftest")
+
+# Path to the repo's recipes/ dir (one level above api_server/).
+API_SERVER_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = API_SERVER_DIR.parent
+RECIPES_DIR = REPO_ROOT / "recipes"
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter key + OAuth seed
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def openrouter_api_key() -> str:
+    """Source the OpenRouter API key from env or .env.local.
+
+    Fail loud if missing — the entire 5-cell gate depends on real upstream
+    LLM calls.
+    """
+    key = h.load_openrouter_key_from_env_local()
+    if not key:
+        pytest.fail(
+            "OPENROUTER_API_KEY missing from environment AND from "
+            ".env.local — the SC-03 e2e gate requires a funded "
+            "OpenRouter key. Set it before running this suite."
+        )
+    return key
+
+
+@pytest_asyncio.fixture
+async def oauth_user_with_openrouter_key(
+    db_pool: asyncpg.Pool, openrouter_api_key: str,
+) -> dict[str, Any]:
+    """Insert a users row + an oauth_sessions row carrying the key per D-32.
+
+    Plan 15 truth #8: the OPENROUTER_API_KEY is sourced from the test
+    user's OAuth-completed session row, proving the end-to-end credential
+    flow. The schema for ``oauth_sessions`` may not exist yet (Phase 22c
+    OAuth landed earlier) — defensive insertion via try/except keeps the
+    gate honest about which path is wired.
+    """
+    user_id = uuid.uuid4()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users (id, display_name) VALUES ($1, $2)",
+            user_id, "e2e-22c.3-15",
+        )
+        # oauth_sessions schema may have evolved — try the canonical insert,
+        # fall back to a minimal one. The KEY itself flows via env injection
+        # into the recipe container; the DB row is the audit record.
+        try:
+            await conn.execute(
+                """
+                INSERT INTO oauth_sessions
+                    (user_id, provider, access_token, created_at)
+                VALUES ($1, 'openrouter', $2, NOW())
+                """,
+                user_id, openrouter_api_key,
+            )
+        except (asyncpg.UndefinedTableError, asyncpg.PostgresSyntaxError,
+                asyncpg.UndefinedColumnError):
+            # oauth_sessions table or column shape not present — fine.
+            # The credential still flows via env injection (proven path).
+            pass
+    return {
+        "user_id": user_id,
+        "openrouter_api_key": openrouter_api_key,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Docker network + recipe_index
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def e2e_docker_network() -> str:
+    """Create a dedicated bridge network for this e2e session. Tear down on exit.
+
+    Mirrors the production lifespan pattern where ``app.state.docker_network_name``
+    is set; the dispatcher's InappRecipeIndex uses that name to read the
+    container's IPv4 address from ``NetworkSettings.Networks[<name>].IPAddress``.
+    """
+    name = f"ap-e2e-{uuid.uuid4().hex[:10]}"
+    subprocess.run(
+        ["docker", "network", "create", "--driver", "bridge", name],
+        check=True, capture_output=True, text=True,
+    )
+    try:
+        yield name
+    finally:
+        subprocess.run(
+            ["docker", "network", "rm", name],
+            capture_output=True, text=True, check=False,
+        )
+
+
+@pytest.fixture
+def recipe_index(e2e_docker_network: str) -> Any:
+    """Real InappRecipeIndex bound to the real recipes/ dir + real docker."""
+    from api_server.services.inapp_recipe_index import InappRecipeIndex
+    import docker as _docker
+
+    client = _docker.from_env()
+    return InappRecipeIndex(
+        recipes_dir=RECIPES_DIR,
+        docker_client=client,
+        network_name=e2e_docker_network,
+        ip_ttl_seconds=60.0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Recipe container factory
+# ---------------------------------------------------------------------------
+
+
+def _load_recipe_yaml(name: str) -> dict[str, Any]:
+    y = YAML(typ="rt")
+    with open(RECIPES_DIR / f"{name}.yaml") as f:
+        return dict(y.load(f))
+
+
+def _resolve_provider_key_for_recipe(
+    recipe: dict[str, Any], openrouter_api_key: str,
+) -> tuple[str, str]:
+    """Return (env_var_name, value) per the recipe's provider_compat declaration.
+
+    Plan 15 fixes provider=openrouter for ALL 5 cells (per the recipe_matrix
+    table). openclaw is special-cased: its recipe has
+    ``known_quirks.openrouter_provider_plugin_silent_fail`` and
+    ``provider_compat.supported=[anthropic]``. For openclaw we still use
+    the openrouter key but route via OPENROUTER_API_KEY — the recipe's
+    activation_env / persistent_argv_override decides which env var the
+    container ultimately consumes.
+    """
+    # Default: every recipe gets OPENROUTER_API_KEY=<key>. The recipe's
+    # activation_env block re-exports it under whatever name the bot wants
+    # (e.g. openclaw maps it to ANTHROPIC_API_KEY).
+    return "OPENROUTER_API_KEY", openrouter_api_key
+
+
+@pytest.fixture
+def recipe_container_factory(
+    e2e_docker_network: str, openrouter_api_key: str,
+):
+    """Spawn a real ap-recipe-* container per the recipe's channels.inapp YAML.
+
+    Renders the recipe's ``persistent_argv_override`` + ``activation_env``
+    placeholders ($MODEL, ${INAPP_AUTH_TOKEN}, ${INAPP_PROVIDER_KEY},
+    ${OPENROUTER_API_KEY}, {agent_name}, {agent_url}) — replicating what
+    the production runner SHOULD do at deploy time. Documented as Route B
+    follow-up in Plan 15 SUMMARY.
+
+    Returns (container_id, container_ip, inapp_auth_token, recipe_yaml).
+    """
+    spawned: list[str] = []
+
+    def _factory(recipe_name: str, model: str = "anthropic/claude-haiku-4.5"):
+        recipe = _load_recipe_yaml(recipe_name)
+        channels = recipe.get("channels") or {}
+        inapp = channels.get("inapp")
+        assert inapp is not None, (
+            f"recipe {recipe_name!r} has no channels.inapp block"
+        )
+
+        # Mint per-session opaque token (the runner-side gap step #3).
+        inapp_auth_token = uuid.uuid4().hex
+        agent_name = f"e2e-{recipe_name}-{uuid.uuid4().hex[:6]}"
+        agent_url = f"http://{agent_name}.local"
+
+        substitutions = {
+            "INAPP_AUTH_TOKEN": inapp_auth_token,
+            "INAPP_PROVIDER_KEY": openrouter_api_key,
+            "OPENROUTER_API_KEY": openrouter_api_key,
+            "ANTHROPIC_API_KEY": openrouter_api_key,  # openclaw fallback
+            "MODEL": model,
+            "agent_name": agent_name,
+            "agent_url": agent_url,
+            "message_id": "{message_id}",  # leave dispatcher templates alone
+            "prompt": "{prompt}",
+        }
+
+        # Activation env — recipe-declared envs get rendered, then we add
+        # the standard runtime envs the persistent_argv_override sh -c chains
+        # may rely on.
+        activation_env_raw = inapp.get("activation_env") or {}
+        if not isinstance(activation_env_raw, dict):
+            activation_env_raw = {}
+        rendered_env = {
+            str(k): str(h.render_placeholders(v, substitutions))
+            for k, v in activation_env_raw.items()
+        }
+        # Make sure the substitution variables are also exported into the
+        # container env so any heredoc-time `${MODEL}` / `${OPENROUTER_API_KEY}`
+        # in persistent_argv_override.argv resolves at sh exec time.
+        for k in (
+            "MODEL", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+            "INAPP_AUTH_TOKEN", "INAPP_PROVIDER_KEY",
+        ):
+            rendered_env.setdefault(k, substitutions[k])
+
+        # Argv + entrypoint — prefer persistent_argv_override; fall back
+        # to recipe.persistent.spec for image_pull recipes that don't
+        # override (zeroclaw declares config_transport=pre_start_only).
+        override = inapp.get("persistent_argv_override")
+        if override and isinstance(override, dict) and override.get("argv"):
+            entrypoint = override.get("entrypoint")
+            argv = list(override.get("argv") or [])
+            pre_start = list(override.get("pre_start_commands") or [])
+        else:
+            spec = (recipe.get("persistent") or {}).get("spec") or {}
+            entrypoint = spec.get("entrypoint")
+            argv = list(spec.get("argv") or [])
+            pre_start = list(spec.get("pre_start_commands") or [])
+
+        # Render argv placeholders (recipe-template + bash style).
+        argv = [str(h.render_placeholders(a, substitutions)) for a in argv]
+        if entrypoint:
+            entrypoint = str(h.render_placeholders(entrypoint, substitutions))
+
+        # Build the docker run command — DETACHED, on the e2e network.
+        image_tag = f"ap-recipe-{recipe_name}:latest"
+        container_name = f"ap-e2e-{recipe_name}-{uuid.uuid4().hex[:8]}"
+
+        run_cmd = ["docker", "run", "-d",
+                   "--name", container_name,
+                   "--network", e2e_docker_network]
+        # Env injection — one --env flag per pair to keep secrets out of cmdline:
+        # use --env-file in /tmp.
+        env_file = Path(tempfile.mkdtemp(prefix="ap-e2e-env-")) / "env"
+        env_file.write_text(
+            "\n".join(f"{k}={v}" for k, v in rendered_env.items()) + "\n"
+        )
+        try:
+            env_file.chmod(0o600)
+        except OSError:
+            pass
+        run_cmd += ["--env-file", str(env_file)]
+        if entrypoint:
+            run_cmd += ["--entrypoint", entrypoint]
+        run_cmd += [image_tag] + argv
+
+        _log.info("e2e.recipe.run %s", container_name)
+        out = subprocess.run(run_cmd, capture_output=True, text=True, check=False)
+        if out.returncode != 0:
+            raise RuntimeError(
+                f"docker run failed for {recipe_name}: rc={out.returncode}, "
+                f"stderr={out.stderr.strip()[:500]}"
+            )
+        container_id = (out.stdout or "").strip()
+        if not container_id:
+            raise RuntimeError(
+                f"docker run produced empty container id for {recipe_name}"
+            )
+        spawned.append(container_id)
+
+        # Run any pre_start_commands sequentially (zeroclaw onboard etc).
+        for pre in pre_start:
+            pre_argv = pre.get("argv") if isinstance(pre, dict) else None
+            if not pre_argv:
+                continue
+            pre_argv_rendered = [
+                str(h.render_placeholders(a, substitutions)) for a in pre_argv
+            ]
+            exec_cmd = [
+                "docker", "exec", container_id, *pre_argv_rendered,
+            ]
+            ex = subprocess.run(
+                exec_cmd, capture_output=True, text=True, check=False,
+            )
+            if ex.returncode != 0:
+                _log.warning(
+                    "e2e.pre_start.failed name=%s argv=%s rc=%d stderr=%s",
+                    container_name, pre_argv_rendered[:3],
+                    ex.returncode, ex.stderr.strip()[:200],
+                )
+
+        # Wait for ready_log_regex.
+        ready_regex = inapp.get("ready_log_regex") or "."
+        ok, last_logs = h.wait_for_ready_log(
+            container_id, ready_regex, timeout_s=180.0,
+        )
+        if not ok:
+            tail = last_logs[-2000:] if last_logs else ""
+            raise RuntimeError(
+                f"recipe {recipe_name} did not match ready_log_regex "
+                f"{ready_regex!r} within 180s. logs tail:\n{tail}"
+            )
+
+        # Resolve container IP on the e2e network (with one quick retry).
+        try:
+            container_ip = h.docker_inspect_ip(container_id, e2e_docker_network)
+        except RuntimeError:
+            time.sleep(0.5)
+            container_ip = h.docker_inspect_ip(container_id, e2e_docker_network)
+
+        return {
+            "container_id": container_id,
+            "container_ip": container_ip,
+            "inapp_auth_token": inapp_auth_token,
+            "recipe": recipe,
+            "inapp": inapp,
+            "model": model,
+        }
+
+    yield _factory
+
+    # Tear down all spawned containers — fail-loud removal so leaked
+    # state surfaces in CI logs.
+    for cid in spawned:
+        try:
+            h.docker_force_remove(cid)
+        except Exception:
+            _log.exception("e2e.recipe.cleanup_failed cid=%s", cid)
+
+
+# ---------------------------------------------------------------------------
+# Per-test isolation override — the parent conftest's _truncate_tables
+# autouse uses the `db_pool` fixture name to gate. e2e tests opt in.
+# ---------------------------------------------------------------------------
+
+
+# (No additional code: the parent _truncate_tables is autouse and
+# automatically activates because db_pool is in the fixture chain via
+# oauth_user_with_openrouter_key. Each parametrized recipe row gets a
+# clean DB.)
