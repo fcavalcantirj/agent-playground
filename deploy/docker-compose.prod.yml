@@ -26,6 +26,36 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    # Phase 22c.3 (D-08 + D-11): Redis Pub/Sub fan-out for inapp chat events.
+    # Loopback-only inside the compose network — NO `ports:` block, so the
+    # external host has no path to this service. Caddy is in front for
+    # public ingress, not Redis. (D-08 hardening rule: never expose Redis
+    # publicly; the bridge network IS the security boundary.)
+    #
+    # NOTE on protected-mode: Redis 7's `--protected-mode yes` is designed
+    # for the case where Redis binds to 0.0.0.0 with no auth on a hostile
+    # public network — it silently RST-closes any non-loopback client.
+    # That semantic does NOT match this deploy: redis here lives on a
+    # private compose bridge network, has no host port in the prod
+    # compose, and api_server is the only client (which connects from
+    # the bridge IP, not loopback). Leaving protected-mode on therefore
+    # blocks the legitimate api_server connection (verified empirically
+    # — `Connection reset by peer` from `redis.asyncio.from_url` calls).
+    # Disabling it is correct because the security boundary is the
+    # bridge network itself (D-08), not the per-process Redis flag.
+    # Local override (deploy/docker-compose.local.yml) does expose
+    # 127.0.0.1:6379 for host-venv tests, which is host-loopback-only
+    # too, so still no public exposure.
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--protected-mode", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   api_server:
     build:
       context: ..
@@ -36,11 +66,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       AP_ENV: prod
       AP_TRUSTED_PROXY: "true"
       AP_MAX_CONCURRENT_RUNS: "2"
       AP_RECIPES_DIR: /app/recipes
+      # Phase 22c.3 (D-08): Redis Pub/Sub URL — compose-internal hostname
+      # (the `redis` service above). The outbox pump publishes here; the
+      # SSE handler subscribes here. No host port; no public exposure.
+      AP_REDIS_URL: "redis://redis:6379/0"
       # NOTE: password is injected via env_file (.env.prod) so the secret never
       # appears in compose config output or `docker inspect`. deploy.sh writes
       # .env.prod from secrets/pg_password at deploy time.

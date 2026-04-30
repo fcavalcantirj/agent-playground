@@ -21,3 +21,13 @@ services:
     # laptop. NEVER apply this override on the prod Hetzner box.
     environment:
       AP_ENV: dev
+
+  redis:
+    # Phase 22c.3 local override: expose redis on 127.0.0.1:6379 so host-
+    # venv tests (per CONTEXT.md line 299) can hit it via
+    # AP_REDIS_URL=redis://localhost:6379/0. Compose-internal name `redis`
+    # still works for the api_server container; this just adds a host
+    # path. NEVER apply on the prod box — the prod compose has no ports
+    # block on redis (D-08 loopback-only inside compose net).
+    ports:
+      - "127.0.0.1:6379:6379"
