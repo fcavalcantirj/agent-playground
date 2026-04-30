@@ -109,11 +109,22 @@ def isolated_recipes_dir(tmp_path) -> Path:
 
 
 @pytest.fixture
-def app_env(monkeypatch, isolated_recipes_dir, migrated_pg, sysadmin_env):
-    """Set env vars create_app() needs at lifespan-startup."""
+def app_env(
+    monkeypatch, isolated_recipes_dir, migrated_pg, sysadmin_env,
+    inapp_redis_env,
+):
+    """Set env vars create_app() needs at lifespan-startup.
+
+    Phase 22c.3-09: depends on ``inapp_redis_env`` (conftest.py) to
+    point ``AP_REDIS_URL`` at the session-scoped Redis testcontainer
+    BEFORE the FastAPI lifespan PINGs Redis at boot. Without this
+    dependency, the lifespan fails loud against the prod-default
+    ``redis://redis:6379/0`` hostname (D-15/D-16 invariant).
+    """
     monkeypatch.setenv("AP_ENV", "dev")
     monkeypatch.setenv("AP_RECIPES_DIR", str(isolated_recipes_dir))
     # AP_SYSADMIN_TOKEN is set by sysadmin_env fixture (chained dependency).
+    # AP_REDIS_URL is set by inapp_redis_env (chained dependency).
 
     def _normalize(raw: str) -> str:
         return raw.replace(
