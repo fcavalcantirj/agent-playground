@@ -1,7 +1,8 @@
-"""Idempotency middleware (Plan 19-05).
+"""Idempotency middleware (Plan 19-05; extended Plan 22c.3-08 for chat).
 
 Replaces the Plan 19-02 pass-through stub. Implements Stripe-style
-idempotency for ``POST /v1/runs`` ONLY (CONTEXT.md §D-01 / §D-07):
+idempotency for ``POST /v1/runs`` AND ``POST /v1/agents/:id/messages``
+(D-39 — chat path extended in Plan 22c.3-08; CONTEXT.md §D-01 / §D-07):
 
 - Request has no ``Idempotency-Key`` header → pass through.
 - Cache hit (same ``(user_id, key)`` + same body hash, not expired)
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -46,6 +48,29 @@ from ..models.errors import ErrorCode, make_error_envelope
 from ..services.idempotency import check_or_reserve, hash_body, write_idempotency
 
 _log = logging.getLogger("api_server.idempotency")
+
+
+# Phase 22c.3-08: chat path predicate. ``POST /v1/agents/<uuid>/messages``
+# is the user-facing inbound chat endpoint (D-39). We extend the
+# Plan 19-05 ``POST /v1/runs`` gate to ALSO honor this path so duplicate
+# Idempotency-Keys replay the original 202 response with the same
+# ``message_id`` instead of inserting a second inapp_messages row.
+_AGENT_MESSAGES_PATTERN = re.compile(r"^/v1/agents/[^/]+/messages$")
+
+
+def _is_idempotency_eligible(method: str, path: str) -> bool:
+    """True for paths that honor Idempotency-Key.
+
+    Phase 19: ``POST /v1/runs``.
+    Phase 22c.3: ``POST /v1/agents/:id/messages`` (D-39).
+    """
+    if method != "POST":
+        return False
+    if path == "/v1/runs":
+        return True
+    if _AGENT_MESSAGES_PATTERN.match(path):
+        return True
+    return False
 
 
 def _get_header(scope: Scope, name_lower: bytes) -> bytes | None:
@@ -127,15 +152,16 @@ class IdempotencyMiddleware:
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send
     ) -> None:
-        # Only applies to POST /v1/runs. Everything else (lifespan,
-        # other routes, GET /v1/runs/{id}, OPTIONS, etc.) passes
-        # through unmodified.
+        # Path eligibility (Phase 19 + Phase 22c.3-08): POST /v1/runs and
+        # POST /v1/agents/<uuid>/messages. Everything else (lifespan,
+        # other routes, GET /v1/runs/{id}, OPTIONS, etc.) passes through
+        # unmodified.
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        method = scope.get("method")
-        path = scope.get("path")
-        if not (method == "POST" and path == "/v1/runs"):
+        method = scope.get("method") or ""
+        path = scope.get("path") or ""
+        if not _is_idempotency_eligible(method, path):
             await self.app(scope, receive, send)
             return
 
@@ -223,22 +249,35 @@ class IdempotencyMiddleware:
 
         await self.app(scope, _replay_receive(body), send_wrapper)
 
-        if response_status["code"] == 200:
+        # Phase 22c.3-08 (D-39): widen cache-write predicate from {200} to
+        # {200, 202} so the chat-path 202 fast-ack response (POST
+        # /v1/agents/:id/messages — see ``routes/agent_messages.py``) gets
+        # cached for replay. /v1/runs still emits 200 on success so its
+        # caching behavior is unchanged. 4xx/5xx are still not cached
+        # (transient or legitimately reproducible).
+        if response_status["code"] in (200, 202):
             try:
                 resp_body = b"".join(response_body_chunks)
                 verdict_json = json.loads(resp_body)
-                # Only cache entries that correspond to a real run — the
-                # route handler always includes ``run_id`` on success.
-                # Without it the cache entry is useless for replay.
-                run_id = verdict_json.get("run_id")
-                if run_id:
+                # Only cache entries that correspond to a real successful
+                # outcome:
+                #   * /v1/runs success body has ``run_id``.
+                #   * /v1/agents/:id/messages success body has
+                #     ``message_id`` (Phase 22c.3-08).
+                # Without one of these, the cache entry is useless for
+                # replay.
+                cache_id = (
+                    verdict_json.get("run_id")
+                    or verdict_json.get("message_id")
+                )
+                if cache_id:
                     async with app.state.db.acquire() as conn:
                         await write_idempotency(
                             conn, user_id, key, body_hash,
-                            run_id, verdict_json,
+                            cache_id, verdict_json,
                         )
             except Exception:
                 # Non-fatal: the user's request already succeeded; a
                 # failed cache-write just means the next retry will
-                # re-run. Don't turn a 200 into an error.
+                # re-run. Don't turn a successful response into an error.
                 _log.exception("idempotency write failed (non-fatal)")

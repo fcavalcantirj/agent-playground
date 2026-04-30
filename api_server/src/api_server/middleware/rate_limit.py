@@ -1,9 +1,10 @@
-"""Rate-limit middleware (Plan 19-05).
+"""Rate-limit middleware (Plan 19-05; extended Plan 22c.3-08 for chat).
 
 Replaces the Plan 19-02 pass-through stub with a real ASGI body that:
 
-- Maps (method, path) → bucket per CONTEXT.md §D-05:
+- Maps (method, path) → bucket per CONTEXT.md §D-05 + §D-42:
   ``POST /v1/runs`` → 10/min, ``POST /v1/lint`` → 120/min,
+  ``POST /v1/agents/:id/messages`` → 4/min (D-42, chat),
   ``GET /v1/*`` → 300/min. All other paths pass through
   unconditionally (health probes, docs, OpenAPI, root).
 - Derives the subject (IP or user) per the XFF-trust policy —
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -36,11 +38,18 @@ from ..services.rate_limit import check_and_increment
 
 _log = logging.getLogger("api_server.rate_limit")
 
-# (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05.
+# Phase 22c.3-08: chat path predicate. Capture group 1 is the agent UUID
+# (a string here — we don't validate UUID-ness; the rate-limit subject
+# composition treats it as opaque). The path-shape gate AND the
+# composite-subject derivation share this regex.
+_AGENT_MESSAGES_PATTERN = re.compile(r"^/v1/agents/([^/]+)/messages$")
+
+# (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05 + §D-42.
 _LIMITS: dict[str, tuple[int, int]] = {
     "runs": (10, 60),    # POST /v1/runs
     "lint": (120, 60),   # POST /v1/lint
     "get":  (300, 60),   # GET /v1/*
+    "chat": (4, 60),     # POST /v1/agents/:id/messages — D-42
 }
 
 
@@ -59,6 +68,11 @@ def _bucket_for(scope: Scope) -> str | None:
         return "runs"
     if method == "POST" and path == "/v1/lint":
         return "lint"
+    # Phase 22c.3-08 (D-42): POST /v1/agents/<uuid>/messages → chat bucket.
+    # The composite-subject derivation in __call__ ensures per-agent
+    # quotas don't share a bucket (Pitfall 7).
+    if method == "POST" and _AGENT_MESSAGES_PATTERN.match(path):
+        return "chat"
     # Any GET under /v1 is the "get" bucket. POSTs we didn't map above
     # are NOT rate-limited (there aren't any in Phase 19 — all v1 POSTs
     # are explicitly mapped above).
@@ -140,6 +154,18 @@ class RateLimitMiddleware:
         app = scope["app"]
         trusted = bool(getattr(app.state.settings, "trusted_proxy", False))
         subject = _subject_from_scope(scope, trusted)
+
+        # Phase 22c.3-08 (D-42; Pitfall 7 mitigation): for the chat bucket,
+        # mix the agent_id from the URL into the subject so each (user,
+        # agent) pair gets its own counter row. Without this, a user
+        # posting to agent A would exhaust the same bucket they would
+        # use for agent B — empirically rejected by
+        # ``test_chat_rate_limit_per_agent``.
+        if bucket == "chat":
+            match = _AGENT_MESSAGES_PATTERN.match(scope.get("path", ""))
+            agent_id_str = match.group(1) if match else ""
+            if agent_id_str:
+                subject = f"chat:{subject}:{agent_id_str}"
 
         try:
             async with app.state.db.acquire() as conn:

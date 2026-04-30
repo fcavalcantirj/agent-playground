@@ -350,10 +350,13 @@ async def test_migration_007_round_trip(pg):
 
     conn = await _connect(pg)
     try:
-        # Sanity: head is at 007.
+        # Sanity: head is at 007 OR a later additive migration (e.g.
+        # 008_idempotency_relax_run_fk landed in Phase 22c.3-08; it does
+        # not touch any 007-owned object so the 007 round-trip below is
+        # still well-defined).
         head = await conn.fetchval("SELECT version_num FROM alembic_version")
-        assert head == "007_inapp_messages", (
-            f"pre-round-trip head {head!r} != '007_inapp_messages'"
+        assert head in ("007_inapp_messages", "008_idempotency_relax_run_fk"), (
+            f"pre-round-trip head {head!r} not in expected set"
         )
         # Test 1 (when run before this) inserts an agent_events row with
         # kind='inapp_inbound'. The downgrade rebuilds ck_agent_events_kind
@@ -367,6 +370,10 @@ async def test_migration_007_round_trip(pg):
     finally:
         await conn.close()
 
+    # If we are sitting on 008, downgrade -1 to land back on 007 first;
+    # the rest of the round-trip then proceeds from 007 → 006 → 007.
+    if head == "008_idempotency_relax_run_fk":
+        _alembic(pg, "downgrade", "-1")
     # Downgrade -1 → 006.
     _alembic(pg, "downgrade", "-1")
     conn = await _connect(pg)
@@ -422,13 +429,15 @@ async def test_migration_007_round_trip(pg):
     finally:
         await conn.close()
 
-    # Re-upgrade → 007.
+    # Re-upgrade → 007 (or 008 if 008_idempotency_relax_run_fk has been
+    # added on top of 007 — the additive 008 migration does not touch
+    # any 007-owned object so the 007 invariants below are still valid).
     _alembic(pg, "upgrade", "head")
     conn = await _connect(pg)
     try:
         head = await conn.fetchval("SELECT version_num FROM alembic_version")
-        assert head == "007_inapp_messages", (
-            f"post-re-upgrade head {head!r} != '007_inapp_messages'"
+        assert head in ("007_inapp_messages", "008_idempotency_relax_run_fk"), (
+            f"post-re-upgrade head {head!r} not in expected set"
         )
         # Every migration-owned object must exist again with same shape.
         assert await conn.fetchval(
