@@ -182,6 +182,28 @@ async def _truncate_tables(request):
         await cleanup_pool.close()
 
 
+@pytest.fixture
+def inapp_redis_env(redis_container, monkeypatch):
+    """Inject ``AP_REDIS_URL`` pointing at the session-scoped testcontainer.
+
+    Phase 22c.3-09 fixture: any test that boots the FastAPI app via
+    ``create_app() + lifespan_context`` triggers the lifespan's hard PING
+    of Redis at boot (D-15/D-16 invariant — fail-loud-not-silent in prod).
+    File-local fixtures predating Plan 09 only set ``AP_ENV``, ``AP_RECIPES_DIR``,
+    and ``DATABASE_URL`` — they would fail with ``redis.ConnectionError``
+    against the prod-default ``redis://redis:6379/0`` hostname unresolvable
+    outside docker compose.
+
+    Compose this fixture into every file-local ``app_env_*`` fixture that
+    boots a new app for the test. The ``async_client`` shared fixture
+    above wires the same env directly without using this helper (kept for
+    backward compatibility with Plan 09's original wire-up).
+    """
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    monkeypatch.setenv("AP_REDIS_URL", f"redis://{host}:{port}/0")
+
+
 @pytest_asyncio.fixture
 async def async_client(db_pool, migrated_pg, redis_container, monkeypatch):
     """httpx ASGI client wired to a freshly-built FastAPI app.

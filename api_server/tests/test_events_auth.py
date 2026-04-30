@@ -96,7 +96,9 @@ def sysadmin_env(monkeypatch):
 
 
 @pytest.fixture
-def app_env_no_sysadmin(monkeypatch, isolated_recipes_dir, migrated_pg):
+def app_env_no_sysadmin(
+    monkeypatch, isolated_recipes_dir, migrated_pg, inapp_redis_env
+):
     """Set env for create_app() WITHOUT AP_SYSADMIN_TOKEN."""
     monkeypatch.delenv("AP_SYSADMIN_TOKEN", raising=False)
     monkeypatch.setenv("AP_ENV", "dev")
@@ -115,7 +117,7 @@ def app_env_no_sysadmin(monkeypatch, isolated_recipes_dir, migrated_pg):
 
 @pytest.fixture
 def app_env_with_sysadmin(
-    monkeypatch, isolated_recipes_dir, migrated_pg, sysadmin_env
+    monkeypatch, isolated_recipes_dir, migrated_pg, sysadmin_env, inapp_redis_env
 ):
     """Set env for create_app() WITH AP_SYSADMIN_TOKEN active."""
     monkeypatch.setenv("AP_ENV", "dev")
