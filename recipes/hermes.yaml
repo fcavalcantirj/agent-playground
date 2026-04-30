@@ -337,6 +337,12 @@ channels:
     endpoint: /v1/chat/completions      # OpenAI-compat
     contract: openai_compat
     contract_model_name: "hermes-agent" # the bot answers when client sends model=hermes-agent
+    auth_mode: bearer                   # Plan 22c.3-15: required for InappRecipeIndex
+                                         # to surface auth_mode='bearer' on the
+                                         # InappChannelConfig — the dispatcher's
+                                         # openai_compat adapter only forwards the
+                                         # Authorization header when auth_mode='bearer'.
+                                         # auth_header below documents the literal shape.
     auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
     ready_log_regex: "\\[Api_Server\\] API server listening on http://127\\.0\\.0\\.1:8642"
     response_routing: per_session       # 1:1 with the agent_instance
