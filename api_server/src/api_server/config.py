@@ -49,6 +49,18 @@ class Settings(BaseSettings):
         False, validation_alias="AP_TRUSTED_PROXY"
     )
 
+    # --- Redis (Phase 22c.3) ---
+    # Pub/Sub fan-out for inapp chat events (D-08 + D-11). Compose default
+    # points at the ``redis`` service in deploy/docker-compose.prod.yml.
+    # Tests override via monkeypatch.setenv("AP_REDIS_URL",
+    # "redis://localhost:6379/0") to talk to the host-port mapping in
+    # deploy/docker-compose.local.yml. The outbox pump publishes here;
+    # the SSE handler subscribes here. Single source of env-driven config
+    # for Redis client construction.
+    redis_url: str = Field(
+        "redis://redis:6379/0", validation_alias="AP_REDIS_URL"
+    )
+
     # --- OAuth (Phase 22c) ---
     # Google OAuth2 (OIDC). Test-users mode in dev; confidential client creds
     # required in prod. Fail-loud happens in ``auth/oauth.py::get_oauth()`` —
