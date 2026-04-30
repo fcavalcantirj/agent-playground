@@ -47,6 +47,13 @@ dependencies = [
   # dev deps; promoted to runtime after smoke gate uncovered
   # ModuleNotFoundError: httpx in api_server container boot.
   "httpx>=0.27",
+  # Phase 22c.3: SSE outbound (heartbeat + Last-Event-Id replay) +
+  # Redis Pub/Sub fan-out (outbox pump publishes; SSE handler subscribes).
+  # Versions verified in RESEARCH §Standard Stack against PyPI 2026-04-29:
+  # sse-starlette 3.4.1; redis 7.4.0 — pin <7 to avoid auto-upgrading on
+  # a future major.
+  "sse-starlette>=3.4,<4",
+  "redis>=5.2,<7",
 ]
 
 [project.optional-dependencies]
