@@ -332,19 +332,20 @@ async def test_migration_007_creates_table_and_columns(migrated):
 async def test_migration_007_round_trip(pg):
     """``upgrade head → downgrade -1 → upgrade head`` is clean.
 
-    Uses a SECOND container (the ``pg`` fixture, not ``migrated``) so the
-    round-trip is isolated from the first test's assertions and starts
-    from a known empty schema. After the cycle completes, every object
-    that the migration owns must exist again with the same shape.
+    Reuses the module-scoped ``pg`` container shared with the first test
+    (alembic is idempotent on already-up DBs, and we drain the inapp-kind
+    rows from ``agent_events`` before downgrade so the rebuilt 4-kind
+    CHECK doesn't trip on test-1's seeded ``inapp_inbound`` row). After
+    the cycle completes, every object that the migration owns must exist
+    again with the same shape.
 
     NOTE: this test depends on ``test_migration_007_creates_table_and_columns``
     exercising the full DDL shape against ``migrated``; here we only verify
     that the up→down→up cycle is idempotent.
     """
-    # Initial upgrade — pg fixture starts fresh (module-scoped, but the
-    # other test reuses ``migrated`` which derives from ``pg``; alembic
-    # is idempotent so a second 'upgrade head' on an already-up DB is a
-    # no-op and safe).
+    # Initial upgrade — alembic is idempotent on already-up DBs so this
+    # is a no-op when test 1 ran first; if this test runs alone it gets
+    # a fresh upgrade head on the bare container.
     _alembic(pg, "upgrade", "head")
 
     conn = await _connect(pg)
@@ -353,6 +354,15 @@ async def test_migration_007_round_trip(pg):
         head = await conn.fetchval("SELECT version_num FROM alembic_version")
         assert head == "007_inapp_messages", (
             f"pre-round-trip head {head!r} != '007_inapp_messages'"
+        )
+        # Test 1 (when run before this) inserts an agent_events row with
+        # kind='inapp_inbound'. The downgrade rebuilds ck_agent_events_kind
+        # as the 4-kind shape, which would reject that row. Drain new-kind
+        # rows here so the downgrade exercises a clean schema-only revert
+        # — exactly the contract the truths.bullet asks of the migration.
+        await conn.execute(
+            "DELETE FROM agent_events WHERE kind IN "
+            "('inapp_inbound','inapp_outbound','inapp_outbound_failed')"
         )
     finally:
         await conn.close()
