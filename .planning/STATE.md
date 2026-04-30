@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: "Phase 22c.3 EXECUTING — Wave 4 IN PROGRESS 2026-04-30 evening. Plan 22c.3-12 (openclaw channels.inapp) SHIPPED (commit e026345). recipes/openclaw.yaml +134 lines: transport=http_localhost/port=18789/endpoint=/v1/chat/completions/contract=openai_compat/contract_model_name=openclaw (FIRST recipe with non-default contract_model_name — dispatcher rewrites client's `model` field to `openclaw` per spike line 117 since openclaw's gateway returns HTTP 400 for raw upstream model ids) + auth_header='Authorization: Bearer ${INAPP_AUTH_TOKEN}' + auth_mode=bearer + persistent_argv_override entrypoint=sh argv=[-c, sh-chain] writing openclaw.json with chatCompletions.enabled=true + auth.mode=token + auth.token=${INAPP_AUTH_TOKEN} + agents.defaults.model.primary=${MODEL} (NO openrouter/ prefix per recipe's provider_compat.deferred=[openrouter] + known_quirks.openrouter_provider_plugin_silent_fail) + rm -f openclaw.json5 defense + exec openclaw gateway run --port 18789 (NOT --allow-unconfigured which suppresses chat HTTP — MSV production pattern provision_ops.go:380-401) + verified_cells citing spike-recipe-openclaw.md 2026-04-29 PM PASS (Boot 11s; auth-gate proof 401/200/400 progression; 142-char OpenAI envelope content surfacing developer's zero-credit ANTHROPIC_API_KEY billing error verbatim per dumb-pipe D-22). activation_env declares INAPP_AUTH_TOKEN + MODEL + ANTHROPIC_API_KEY (NOT OPENROUTER_API_KEY per provider_compat.supported=[anthropic]). Live api_server restarted + GET /v1/recipes/openclaw surfaces channels.inapp verbatim; container running healthy; zero recipe-load errors. Existing channels.telegram block UNTOUCHED per D-20 (3 verified_cells + provider_compat + known_quirks + event_source_fallback file_tail_in_container + pairing.approve_argv all preserved). invoke smoke spec UNTOUCHED. persistent gateway-daemon (telegram path) UNTOUCHED. direct_interface UNTOUCHED. InappRecipeIndex.get_inapp_block('openclaw') returns InappChannelConfig(auth_mode='bearer', contract_model_name='openclaw', port=18789, endpoint=/v1/chat/completions). One Rule-1 deviation auto-fixed inline: plan template at PLAN.md:130 specified `openrouter/${MODEL}` and PLAN.md:163 specified OPENROUTER_API_KEY; both contradict the must_haves.key_links requirement (heredoc must mirror spike's verbatim config line 27 `\"primary\": \"anthropic/claude-haiku-4-5\"`) AND the recipe's own provider_compat declaration AND the documented openrouter_provider_plugin_silent_fail upstream bug — fixed by using bare `${MODEL}` (runner injects pre-prefixed model id) + ANTHROPIC_API_KEY in activation_env. Third of 5 recipe inapp opt-ins (after hermes 22c.3-10 + nanobot 22c.3-11); Plans 22c.3-13..14 (zeroclaw/nullclaw) remain unblocked."
-stopped_at: "2026-04-30 — 22c.3-12 SHIPPED (commit e026345); third Wave-4 recipe opt-in landed (openclaw via persistent_argv_override sh-chain writing openclaw.json with chatCompletions.enabled=true + auth.token + agents.defaults.model bare-model-id + exec openclaw gateway run --port 18789); next is /gsd-execute-phase 22c.3 to continue Wave 4 with Plan 22c.3-13 (zeroclaw)"
-last_updated: "2026-04-30T21:32:00Z"
+status: "Phase 22c.3 EXECUTING — Wave 4 IN PROGRESS 2026-04-30 night. Plan 22c.3-13 (zeroclaw channels.inapp) SHIPPED (commit 1f01d67). recipes/zeroclaw.yaml +34 lines: added channels.inapp.persistent_argv_override (entrypoint=zeroclaw, argv=[daemon], 4 pre_start_commands chaining `onboard --quick --provider openrouter --api-key ${OPENROUTER_API_KEY} --model $MODEL` + `config set gateway.allow-public-bind true` + `config set gateway.host 0.0.0.0` + `config set gateway.require-pairing false`) + channels.inapp.activation_env (OPENROUTER_API_KEY + ZEROCLAW_WORKSPACE). The recipe shipped at planning-commit c98fd95 already had channels.inapp top-level fields (transport=http_localhost/port=42617/endpoint=/webhook/contract=zeroclaw_native/idempotency_header=X-Idempotency-Key/session_header=X-Session-Id/streaming.path=/ws/chat/health_endpoint=/health/ready_log_regex='ZeroClaw Gateway listening on'/auth_mode=none/response_envelope.reply_path=$.response) + build.mode=image_pull + build.image=ghcr.io/zeroclaw-labs/zeroclaw:latest (Rust distroless ~50 MB) + verified_cells citing spikes/recipe-zeroclaw.md 2026-04-30 FULL_PASS — but lacked the channels.inapp-scoped persistent_argv_override required by must_have #4 + the plan's <interfaces> shape. Rule 1 fix added it inline (D-20 single-channel-per-instance: the runner SWAPS persistent argv at deploy time; channels.inapp.persistent_argv_override IS that swap declaration). Top-level persistent.spec.pre_start_commands kept (CLAUDE.md golden rule #4 — no unprompted code changes). Live api_server restarted via `docker compose -f docker-compose.prod.yml -f docker-compose.local.yml restart api_server`; /healthz=200 within ~5s; GET /v1/recipes/zeroclaw surfaces channels.inapp.persistent_argv_override (entrypoint=zeroclaw, argv=[daemon], pre_start_commands.length=4) + channels.inapp.activation_env verbatim. InappRecipeIndex.get_inapp_block('zeroclaw') returns InappChannelConfig(contract='zeroclaw_native', port=42617, endpoint=/webhook, auth_mode='none', idempotency_header='X-Idempotency-Key', session_header='X-Session-Id'). One Rule-1 deviation (recipe authored at planning time lacked channels.inapp.persistent_argv_override; fixed inline) + one Rule-3 deviation (plan verify cmd #3 referenced nonexistent --list-recipes flag; substituted /v1/recipes registry check). picoclaw remains untouched (recipes/picoclaw.yaml unchanged in working tree per user direction 2026-04-30 — DEFERRED out of Phase 22c.3 inapp scope; backward compat with smoke suite preserved). Fourth of 5 recipe inapp opt-ins (after hermes 22c.3-10 + nanobot 22c.3-11 + openclaw 22c.3-12); only Plan 22c.3-14 (nullclaw — native A2A JSON-RPC contract=a2a_jsonrpc) remains in Wave 4 before the e2e gate Plan 22c.3-15."
+stopped_at: "2026-04-30 — 22c.3-13 SHIPPED (commit 1f01d67); fourth Wave-4 recipe opt-in (zeroclaw via image_pull + 4 distroless pre_start_commands + zeroclaw_native contract + built-in X-Idempotency-Key/X-Session-Id headers); next is /gsd-execute-phase 22c.3 to continue Wave 4 with Plan 22c.3-14 (nullclaw native A2A)"
+last_updated: "2026-04-30T21:44:22.198Z"
 progress:
   total_phases: 19
   completed_phases: 5
-  total_plans: 33
-  completed_plans: 33
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -60,7 +60,7 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 Phase 22c    — OAuth-Google           ✅ COMPLETE (commit c02d3c6)
 Phase 22c.1  — Stop Lying             [CONTEXT seeded; wave-1 commit c8ca6a5; planning not started]
 Phase 22c.2  — Identity Baking        [CONTEXT seeded; not started]
-Phase 22c.3  — In-App Chat            🟡 EXECUTING — Plans 01 + 02 + 03 + 04 + 05 + 06 + 07 + 08 + 09 + 10 + 11 + 12 SHIPPED; Wave 4 IN PROGRESS (3 of 5 recipes opted into inapp: hermes + nanobot + openclaw); next is Plan 22c.3-13 (zeroclaw)
+Phase 22c.3  — In-App Chat            🟡 EXECUTING — Plans 01 + 02 + 03 + 04 + 05 + 06 + 07 + 08 + 09 + 10 + 11 + 12 + 13 SHIPPED; Wave 4 IN PROGRESS (4 of 5 recipes opted into inapp: hermes + nanobot + openclaw + zeroclaw); next is Plan 22c.3-14 (nullclaw)
 Phase 23     — Flutter Native         [DESIGNED via mockups; depends on 22c.3]
 ```
 
@@ -409,6 +409,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 22c.3-03 | ~5min | 3 tasks | 7 files |
 | Phase 22c.3-06 | ~8min | 1 task (TDD RED+GREEN) | 2 files |
 | Phase 22c.3-11 | ~25min | 1 task | 1 file |
+| Phase 22c.3-inapp-chat-channel P13 | 25 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -571,7 +572,7 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-30T19:30:00Z
+Last session: 2026-04-30T21:44:00.097Z
 
 Stopped at: Plan 22c.3-06 (inapp_reaper — 15s tick D-40 direct-to-failed) SHIPPED — 6 testcontainer-PG integration tests PASS
 
