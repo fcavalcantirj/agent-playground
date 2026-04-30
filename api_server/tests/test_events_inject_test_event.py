@@ -93,6 +93,7 @@ def _normalize(raw: str) -> str:
 @pytest_asyncio.fixture
 async def dev_app_and_client(
     monkeypatch, isolated_recipes_dir, migrated_pg, db_pool, sysadmin_env,
+    inapp_redis_env,
 ):
     """Build a fresh FastAPI app with AP_ENV=dev + sysadmin token set.
 
@@ -131,6 +132,7 @@ async def dev_app_and_client(
 @pytest_asyncio.fixture
 async def prod_app_and_client(
     monkeypatch, isolated_recipes_dir, migrated_pg, db_pool, sysadmin_env,
+    inapp_redis_env,
 ):
     """Build a fresh FastAPI app with AP_ENV=prod (inject route NOT registered)."""
     monkeypatch.setenv("AP_ENV", "prod")
@@ -345,13 +347,19 @@ async def test_inject_test_event_wrong_bearer_404_opaque(
 
 
 async def test_inject_test_event_sysadmin_token_unset_404(
-    monkeypatch, isolated_recipes_dir, migrated_pg, db_pool, seed_running_container,
+    monkeypatch, isolated_recipes_dir, migrated_pg, db_pool,
+    seed_running_container, inapp_redis_env,
 ):
     """Defense-in-depth gate #2: AP_SYSADMIN_TOKEN unset → 404 even with matching Bearer.
 
     A misconfigured dev box must NOT expose admin actions to anyone who
     can craft a request. Builds the app inline (NOT via the dev_app_and_client
     fixture) so we control whether AP_SYSADMIN_TOKEN is present at all.
+
+    Phase 22c.3-09: depends on ``inapp_redis_env`` to wire ``AP_REDIS_URL``
+    at the session-scoped Redis testcontainer BEFORE the FastAPI lifespan
+    PINGs Redis at boot (D-15/D-16 invariant — without it, the app boot
+    fails loud against the prod-default ``redis://redis:6379/0``).
     """
     monkeypatch.delenv("AP_SYSADMIN_TOKEN", raising=False)
     monkeypatch.setenv("AP_ENV", "dev")
