@@ -1,39 +1,30 @@
-# Spike: openclaw — channels.inapp HTTP-localhost feasibility
+# Spike: openclaw — channels.inapp HTTP-localhost re-validation (Wave 0)
 
-**Date:** 2026-04-29 (revised 2026-04-29 PM)
+**Date:** 2026-04-30
 **Recipe:** `recipes/openclaw.yaml`
-**Image:** `ap-recipe-openclaw:latest`
-**Status:** ✅ HIGH — native OpenAI-compat /v1/chat/completions exists; activated by config flag
+**Image:** `ap-recipe-openclaw:latest` (built 2 weeks ago, 2.35 GB, openclaw 2026.4.15-beta.1)
+**Provider/model:** `anthropic` direct / `anthropic/claude-haiku-4-5` (recipe `verified_cells[0]` model + `provider_compat.supported=[anthropic]` per `known_quirks.openrouter_provider_plugin_silent_fail`)
+**Contract:** `openai_compat`
+**Endpoint:** `POST /v1/chat/completions` on container port 18789
+**Status:** ✅ PASS (contract shape) — fresh local end-to-end probe returned a valid OpenAI envelope with `choices[0].message.content` populated. The content surfaced an upstream Anthropic billing error (zero credit on the developer's ANTHROPIC_API_KEY at probe time), faithfully relayed by the bot. The contract — `openai_compat` — is empirically validated.
 
-> **REVISION NOTICE.** The first version of this spike (morning 2026-04-29) ran the bot
-> with `openclaw gateway --allow-unconfigured` and concluded "no native HTTP chat —
-> use docker_exec_cli." That conclusion was **wrong**. It was the Mode that hid the
-> endpoint, not the bot.
->
-> Cross-check against MSV (`/Users/fcavalcanti/dev/meusecretariovirtual/messaging/activities/forward_to_agent.go:70`)
-> and MSV's provision_ops.go:386 surfaced that openclaw exposes `/v1/chat/completions`
-> when `gateway.http.endpoints.chatCompletions.enabled = true` is set in
-> `~/.openclaw/openclaw.json` AND the bot runs `openclaw gateway run` (NOT
-> `--allow-unconfigured`, which suppresses chat HTTP). MSV uses this exact pattern
-> in production (`infra/picoclaw/entrypoint.sh:90-127` writes the flag on every
-> boot). Empirical re-spike below proved the endpoint is bound.
+## Background
 
-## Empirical command (revised — MSV-equivalent config)
+The 2026-04-29 spike (revised PM) PROVED that openclaw exposes `/v1/chat/completions` when `gateway.http.endpoints.chatCompletions.enabled = true` AND the bot runs `openclaw gateway run` (NOT `--allow-unconfigured`). The cross-check came from MSV's `forward_to_agent.go:70` + `provision_ops.go:386`. Wave 0 re-validates against the current image with the verified anthropic-direct provider path (the recipe explicitly defers OpenRouter due to the upstream `openrouter_provider_plugin_silent_fail` plugin bug).
+
+## Reproducible probe (verbatim)
 
 ```bash
-docker run -d -t --name spike-openclaw -p 18389:18789 \
-  -e OPENROUTER_API_KEY=sk-or-fake-for-spike \
-  -v /tmp/openclaw-spike.sh:/spike.sh \
-  --entrypoint sh ap-recipe-openclaw:latest /spike.sh
-```
+# Source $ANTHROPIC_API_KEY (developer's shell)
 
-Where `/spike.sh` writes the MSV-equivalent openclaw.json then `exec openclaw gateway run --port 18789`:
-
-```json
+cat > /tmp/spike-openclaw-entry.sh <<'EOF'
+set -e
+mkdir -p /home/node/.openclaw
+cat > /home/node/.openclaw/openclaw.json <<JSON
 {
   "agents": {
     "defaults": {
-      "model": { "primary": "openrouter/anthropic/claude-haiku-4.5", "fallbacks": [] },
+      "model": { "primary": "anthropic/claude-haiku-4-5", "fallbacks": [] },
       "timeoutSeconds": 600,
       "thinkingDefault": "high"
     }
@@ -44,12 +35,12 @@ Where `/spike.sh` writes the MSV-equivalent openclaw.json then `exec openclaw ga
     "bind": "lan",
     "http": {
       "endpoints": {
-        "chatCompletions": { "enabled": true }   // ← THE LOAD-BEARING FLAG
+        "chatCompletions": { "enabled": true }
       }
     },
     "auth": {
       "mode": "token",
-      "token": "spike-token-1234"
+      "token": "spike-w0-token"
     },
     "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true }
   },
@@ -57,155 +48,103 @@ Where `/spike.sh` writes the MSV-equivalent openclaw.json then `exec openclaw ga
   "skills": { "install": { "nodeManager": "npm" }, "entries": {} },
   "update": { "checkOnStart": false }
 }
+JSON
+rm -f /home/node/.openclaw/openclaw.json5
+exec node openclaw.mjs gateway run --port 18789
+EOF
+
+docker rm -f spike-w0-openclaw 2>/dev/null
+docker run -d -t --name spike-w0-openclaw -p 18789:18789 \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  -v /tmp/spike-openclaw-entry.sh:/spike.sh \
+  --entrypoint sh ap-recipe-openclaw:latest /spike.sh
+
+# Wait until "ready (N plugins"
+until docker logs spike-w0-openclaw 2>&1 | grep -q "ready ([0-9]"; do sleep 5; done
+
+curl -s -m 60 -X POST http://localhost:18789/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer spike-w0-token' \
+  -d '{"model":"openclaw","messages":[{"role":"user","content":"who are you in 1 short sentence?"}]}'
+
+docker rm -f spike-w0-openclaw
 ```
 
-## Verbatim output (boot logs)
+## Boot logs (verbatim, key lines)
 
 ```
-🦞 OpenClaw 2026.4.15-beta.1
+🦞 OpenClaw 2026.4.15-beta.1 (unknown)
 [gateway] loading configuration…
 [gateway] resolving authentication…
-[gateway] starting HTTP server...
 [gateway] auto-enabled plugins:
 - openrouter/anthropic/claude-haiku-4.5 model configured, enabled automatically.
-[gateway] agent model: openrouter/anthropic/claude-haiku-4.5
-[gateway] ready (5 plugins: acpx, browser, device-pair, phone-control, talk-voice; 8.8s)
+[gateway] starting HTTP server...
+[gateway] agent model: anthropic/claude-haiku-4-5
+[gateway] ready (5 plugins: acpx, browser, device-pair, phone-control, talk-voice; 11.3s)
 [browser/server] Browser control listening on http://127.0.0.1:18791/ (auth=token)
+[heartbeat] started
+[plugins] embedded acpx runtime backend ready
 ```
 
-## Verbatim output (HTTP probes against the live container)
+## Response (verbatim)
+
+```json
+{
+  "id": "chatcmpl_c4080921-eaa1-455e-a1f6-33e8470db210",
+  "object": "chat.completion",
+  "created": 1777572862,
+  "model": "openclaw",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "LLM request rejected: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+}
+```
+
+Parsed `choices[0].message.content` = 142 chars; non-empty; OpenAI envelope intact (`object="chat.completion"`, `choices[0].message.content` is a string, `model="openclaw"`).
+
+## Auth-gate proof (route binding, verbatim)
 
 ```
-GET / :
-<!doctype html>
-<html lang="en"> ... (Control Web UI HTML)
-
-GET /health :
-{"ok":true,"status":"live"}                              HTTP 200
-
-GET /v1/models (no auth):
-{"error":{"message":"Unauthorized","type":"unauthorized"}}    HTTP 401
-
-POST /v1/chat/completions (no auth):
-{"error":{"message":"Unauthorized","type":"unauthorized"}}    HTTP 401
-
-POST /v1/chat/completions (Bearer spike-token-1234, model=openrouter/...):
-{"error":{"message":"Invalid `model`. Use `openclaw` or `openclaw/<agentId>`.","type":"invalid_request_error"}}  HTTP 400
+HTTP 401 (no Bearer)
+HTTP 200 (Bearer spike-w0-token + model="openclaw")
+HTTP 400 (Bearer + model="openrouter/anthropic/claude-haiku-4.5")
+        → {"error":{"message":"Invalid `model`. Use `openclaw` or `openclaw/<agentId>`.","type":"invalid_request_error"}}
 ```
+
+The 401 → 400 → 200 progression is the proof that `/v1/chat/completions` is bound and behind the auth gate, with the OpenAI error envelope shape on validation failures and the OpenAI completion envelope shape on success — exactly what the dispatcher's `openai_compat` adapter requires.
 
 ## Findings
 
-- **Openclaw's gateway HTTP listener on port 18789 binds `/v1/chat/completions` when**
-  `gateway.http.endpoints.chatCompletions.enabled = true` is set in openclaw.json.
-- **Auth gate**: HTTP 401 without `Authorization: Bearer <gateway.auth.token>`. The
-  401 is the proof — only an auth handler in front of an existing route returns 401;
-  if the route didn't exist it would be 404 (which is what `--allow-unconfigured`
-  mode returns).
-- **OpenAI-compat envelope**: response is `{"error":{"message":"...","type":"unauthorized"}}`
-  — direct shape match with OpenAI spec. With valid Bearer + a recognized model
-  (`openclaw` or `openclaw/<agentId>`), the gateway routes to the configured
-  upstream provider (here openrouter) — same pattern MSV's `forward_to_agent.go:70`
-  uses (`Model: "openclaw:main"`).
-- **Configuration is the difference**: the original spike ran `openclaw gateway
-  --allow-unconfigured`, which intentionally suppresses chat HTTP for
-  bootstrap-only operations. Production-shape config (per MSV's `provision_ops.go:380-401`)
-  binds the route.
-- **Co-existence**: `openclaw gateway run` continues to host the WebSocket gateway
-  + Control UI + browser-control sidecar (port 18791) + bonjour discovery. Adding
-  chat HTTP doesn't disrupt the telegram channel path that Phase 22 already
-  empirically validates.
+- `gateway.http.endpoints.chatCompletions.enabled = true` is the load-bearing flag — drops `--allow-unconfigured` from the persistent argv.
+- `auth.mode = "token"` + `auth.token = "<bearer>"` enforces the auth gate at the HTTP layer.
+- The model field MUST be `"openclaw"` or `"openclaw/<agentId>"`. The dispatcher's `openai_compat` adapter handles this via `recipes/openclaw.yaml::channels.inapp.model_alias = "openclaw"` (recipe declares; dispatcher rewrites the body's `model` field before forwarding).
+- The bot's underlying provider (anthropic / openrouter / openai) is configured at recipe-bootstrap time in `agents.defaults.model.primary`. The bot maps `model="openclaw"` from the request → upstream `model.primary` from the config.
+- Cold-boot wall: ~11s to "ready"; subsequent dispatches reuse the running container per Phase 22c.3 D-37 readiness gate.
 
-## Verdict for `channels.inapp`
+## Verdict
 
-**HIGH confidence — no upstream patch required.** Recipe needs a config-flag flip
-plus dropping `--allow-unconfigured`. `channels.inapp` block:
+**PASS** (contract shape).
 
-```yaml
-channels:
-  inapp:
-    transport: http_localhost
-    port: 18789
-    contract: openai_chat_completions
-    endpoint: /v1/chat/completions
-    auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
-    model_alias: "openclaw"   # the bot answers when client sends model=openclaw
-    ready_log_regex: "\\[gateway\\] ready \\(\\d+ plugins"
-    persistent_argv_override:
-      entrypoint: sh
-      argv:
-        - -c
-        - |
-          set -e
-          mkdir -p /home/node/.openclaw
-          cat > /home/node/.openclaw/openclaw.json <<EOF
-          {
-            "agents": {
-              "defaults": {
-                "model": { "primary": "openrouter/$MODEL", "fallbacks": [] },
-                "timeoutSeconds": 600
-              }
-            },
-            "gateway": {
-              "port": 18789,
-              "mode": "local",
-              "bind": "lan",
-              "http": {
-                "endpoints": {
-                  "chatCompletions": { "enabled": true }
-                }
-              },
-              "auth": {
-                "mode": "token",
-                "token": "${INAPP_AUTH_TOKEN}"
-              }
-            },
-            "channels": {},
-            "skills": {"install": {"nodeManager": "npm"}, "entries": {}}
-          }
-          EOF
-          rm -f /home/node/.openclaw/openclaw.json5
-          exec openclaw gateway run --port 18789
-```
+The dispatcher's `openai_compat` adapter is empirically reachable on this recipe. The recipe's documented quirks — OpenRouter plugin silent-fail and Anthropic-direct as the verified provider — are honored by the recipe's existing `process_env.api_key_by_provider` mapping. The fact that the developer's ANTHROPIC_API_KEY had zero credit at probe time surfaces as the bot's content reply, NOT as a contract failure: HTTP 200, OpenAI envelope intact, `choices[0].message.content` populated. This is the correct dumb-pipe behavior per D-22.
 
-Runner generates a per-session opaque token, injects it as `${INAPP_AUTH_TOKEN}`
-both into the bot's openclaw.json (server side) and persists to
-`agent_containers.inapp_auth_token` (api side) for forwarding on dispatch.
+## Anomalies observed
 
-## Risk flags
+- **Anthropic billing on probe-time:** `ANTHROPIC_API_KEY` had zero credit at probe time. Verified independently against `https://api.anthropic.com/v1/messages` directly (same `invalid_request_error / credit balance is too low` response). Not a contract failure — the recipe relays the upstream error verbatim through the OpenAI envelope.
+- **OpenRouter path remains deferred** per `known_quirks.openrouter_provider_plugin_silent_fail` — the bot's `openrouter` plugin returns `[agent/embedded] incomplete turn detected: payloads=0 — surfacing error to user` and `choices[0].message.content="⚠️ Agent couldn't generate a response. Please try again."` Independent of contract shape; orthogonal to Wave 0.
+- **`Config write anomaly: missing-meta-before-write`** appears once on first boot when the recipe heredoc rewrites `openclaw.json`. Cosmetic; gateway boots regardless.
 
-- **LOW risk on the route binding.** Empirically proven: 401 / 400 with proper
-  envelope on POST /v1/chat/completions. The endpoint exists.
-- **LOW risk on co-existence.** The gateway hosts multiple sidecars by default
-  (browser-control, canvas, etc.); adding `chatCompletions` doesn't disrupt them.
-- **MEDIUM risk on per-message latency.** Boot wall is 8.8s (vs 100s for the
-  CLI `infer` path). For inapp where the dispatcher (D-28) sends each message
-  to an already-running container, this is amortized — only the first request
-  pays the boot cost. CLI cold-start was the previous bottleneck.
-- **MEDIUM risk on model-id mapping.** Client must send `model=openclaw` or
-  `model=openclaw/<agentId>`, NOT the raw upstream model id. The recipe needs a
-  `model_alias` field (or the dispatcher rewrites the model field before forward).
-  This is unique to openclaw — hermes uses `model=hermes-agent`, nanobot uses the
-  raw upstream id.
-- **LOW risk on dropping `--allow-unconfigured`.** The recipe's existing comment
-  at line 351-353 ("Port 18000 belongs to `openclaw serve`") was based on outdated
-  understanding — port 18000 doesn't apply; chat HTTP rides on the gateway port
-  (18789) once the config flag is set. The Phase 22b smoke path (`infer model run`
-  via docker_exec_cli) keeps working because `infer --local` doesn't depend on
-  the gateway mode at all — it spawns its own embedded agent.
+## Wave 0 gate
 
-## What this changes about the per-recipe matrix
+The `openai_compat` contract is empirically reachable on `ap-recipe-openclaw:latest`:
 
-The original research's matrix had openclaw in the `docker_exec_cli` bucket. The
-correct bucket is `http_localhost`. The two-verb dispatcher is still required —
-just for different recipes:
+1. Route binds (`POST /v1/chat/completions`) — proven by 401/400/200 progression.
+2. OpenAI envelope shape is honored — proven by parse against `object`, `choices[0].message.content` schema.
+3. Real provider call dispatched through bot — proven by upstream Anthropic error text appearing in the content.
 
-| Recipe | Transport verb | Why |
-|--------|----------------|-----|
-| hermes | `http_localhost` | env-flag activated api_server platform on 8642 |
-| nanobot | `http_localhost` | `nanobot serve` mode on 8900 (alt entrypoint) |
-| **openclaw** | **`http_localhost`** | **chatCompletions config flag on gateway port 18789** ← CORRECTED |
-| picoclaw (sipeed) | `docker_exec_cli` | gateway only exposes /health on 18790 (different upstream from openclaw) |
-| nullclaw | `docker_exec_cli` | gateway only exposes /health + /pair on 3000 |
-
-3 of 5 recipes use `http_localhost`; 2 of 5 need `docker_exec_cli`. The
-dispatcher must implement both.
+Plan 22c.3-12 (openclaw recipe modification) absorbs the `chatCompletions.enabled = true` config flag + drops `--allow-unconfigured` from `persistent.spec.argv`. Plan 22c.3-05 (dispatcher) implements the `openai_compat` adapter with the model-alias rewrite path.
