@@ -38,6 +38,15 @@ VALID_KINDS: set[str] = {
     "reply_failed",
     "agent_ready",
     "agent_error",
+    # Phase 22c.3 (D-12, D-24, D-13): in-app chat channel adds 3 kinds.
+    # ``inapp_inbound``         — user → bot, persisted on POST /v1/agents/:id/messages.
+    # ``inapp_outbound``        — bot → user, persisted on bot-reply success.
+    # ``inapp_outbound_failed`` — bot couldn't reply (5xx / timeout / empty / dead container).
+    # Per D-22 dumb-pipe: these payloads CARRY user-visible content; the
+    # extra='forbid' guard remains as defense against accidental drift.
+    "inapp_inbound",
+    "inapp_outbound",
+    "inapp_outbound_failed",
 }
 
 
@@ -105,11 +114,95 @@ class AgentErrorPayload(BaseModel):
     captured_at: datetime
 
 
+class InappInboundPayload(BaseModel):
+    """Captured when a user POSTs to ``/v1/agents/:id/messages`` (D-12).
+
+    Per D-22 (dumb-pipe), the API carries the user's message verbatim
+    through to the bot. ``content`` therefore IS the user-visible text;
+    privacy boundary is the auth layer + per-user filter, NOT field
+    omission. ``extra='forbid'`` remains as defense-in-depth against
+    accidental field drift.
+
+    ``source`` is constrained to the literal ``"user"`` so a future
+    misuse that constructs an inbound payload with ``source="agent"`` is
+    rejected at parse time — the pair (kind=inapp_inbound, source=user)
+    is the canonical inbound shape.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1)
+    source: str = Field(..., pattern=r"^user$")
+    from_user_id: UUID
+    captured_at: datetime
+
+
+class InappOutboundPayload(BaseModel):
+    """Captured when the bot replies to a forwarded message (D-12).
+
+    The dispatcher (Plan 22c.3-05) constructs this payload after a
+    successful bot HTTP round-trip and INSERTs it into ``agent_events``
+    (kind=inapp_outbound, published=false) within the same transaction
+    that flips ``inapp_messages.status`` to ``done`` (D-28 persist-before
+    -publish). The outbox pump (Plan 22c.3-07) then PUBLISHes it to
+    Redis so SSE subscribers fan out to all live tabs.
+
+    ``source`` is constrained to the literal ``"agent"`` — symmetrical
+    pair with :class:`InappInboundPayload`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1)
+    source: str = Field(..., pattern=r"^agent$")
+    captured_at: datetime
+
+
+class InappOutboundFailedPayload(BaseModel):
+    """Captured when the bot can't deliver a reply (D-24).
+
+    The 9 ``error_type`` enum values cover every failure mode the
+    dispatcher (Plan 22c.3-05) and reaper (Plan 22c.3-06) can produce:
+
+      * ``bot_5xx``                  — bot returned HTTP 5xx
+      * ``bot_timeout``              — D-40 600s per-attempt timeout
+      * ``bot_empty``                — bot returned 200 with empty content
+      * ``container_dead``           — agent_containers.container_status != 'running'
+      * ``recipe_no_inapp_channel``  — recipe doesn't declare channels.inapp
+      * ``container_not_ready``      — ready_at IS NULL or stopped_at IS NOT NULL
+      * ``recipe_missing``           — recipe yaml gone / not in app.state.recipes
+      * ``reaper_timeout``           — reaper swept a stuck 'forwarded' row
+      * ``internal``                 — defensive bucket for unclassified bugs
+
+    ``message`` is a free-form classification string — the dispatcher
+    redacts secrets BEFORE constructing this payload (mirrors the
+    discipline already enforced in :class:`AgentErrorPayload`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    error_type: str = Field(
+        ...,
+        pattern=(
+            r"^(bot_5xx|bot_timeout|bot_empty|container_dead|"
+            r"recipe_no_inapp_channel|container_not_ready|recipe_missing|"
+            r"reaper_timeout|internal)$"
+        ),
+    )
+    message: str = Field(..., min_length=1, max_length=512)
+    retry_count: int = Field(..., ge=0)
+    captured_at: datetime
+
+
 KIND_TO_PAYLOAD: dict[str, type[BaseModel]] = {
     "reply_sent": ReplySentPayload,
     "reply_failed": ReplyFailedPayload,
     "agent_ready": AgentReadyPayload,
     "agent_error": AgentErrorPayload,
+    # Phase 22c.3 (D-12, D-24).
+    "inapp_inbound": InappInboundPayload,
+    "inapp_outbound": InappOutboundPayload,
+    "inapp_outbound_failed": InappOutboundFailedPayload,
 }
 
 
@@ -152,6 +245,10 @@ __all__ = [
     "ReplyFailedPayload",
     "AgentReadyPayload",
     "AgentErrorPayload",
+    # Phase 22c.3 (D-12, D-24).
+    "InappInboundPayload",
+    "InappOutboundPayload",
+    "InappOutboundFailedPayload",
     "AgentEvent",
     "AgentEventsResponse",
 ]

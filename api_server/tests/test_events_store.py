@@ -40,12 +40,18 @@ from api_server.models.events import (
 
 
 def test_valid_kinds_exact():
-    assert VALID_KINDS == {
+    # Phase 22c.3-04 (D-12, D-24, D-13): VALID_KINDS extended from 4 → 7
+    # to admit ``inapp_inbound`` / ``inapp_outbound`` / ``inapp_outbound_failed``.
+    # The Phase 22b invariant we still care about is "the 4 prior kinds
+    # are present" — exact-equality would now reject the spec-required
+    # extension. Switch to superset check; the extended-kinds membership
+    # is asserted in ``tests/models/test_inapp_payloads.py``.
+    assert {
         "reply_sent",
         "reply_failed",
         "agent_ready",
         "agent_error",
-    }
+    }.issubset(VALID_KINDS)
 
 
 def test_kind_to_payload_coverage():
