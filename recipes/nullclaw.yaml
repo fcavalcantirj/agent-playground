@@ -377,6 +377,114 @@ channels:
         category: PASS_WITH_FLAG
         spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01c-nullclaw.md"
 
+  # ============================================================================
+  # Phase 22c.3 — in-app chat channel (D-20: additive with telegram).
+  # Empirically verified 2026-04-30 in Wave-0 re-validation
+  # (spikes/recipe-nullclaw.md, revised v3 native A2A).
+  #
+  # nullclaw exposes Google's native A2A JSON-RPC 2.0 protocol on port 3000
+  # path /a2a. NO sidecar, NO python3, NO apk add, NO INAPP_BOT_BIN. The
+  # `nullclaw gateway` binary IS the bridge. v2's HTTP-to-CLI sidecar pattern
+  # (Round 2 — runtime package install + HTTP-to-CLI bridge) was SUPERSEDED
+  # by Round 3 in favor of the native A2A protocol nullclaw already
+  # implements; that pattern is fully dropped from this recipe.
+  #
+  # Activation knobs in /nullclaw-data/config.json:
+  #   gateway.allow_public_bind = true  → permit non-loopback host bind
+  #   gateway.host = "0.0.0.0"          → bind all interfaces inside container
+  #   gateway.require_pairing = false   → loopback-trusted; dispatcher reaches
+  #                                       us only via the per-session bridge
+  #                                       network (Plan 22c.3-09), never via
+  #                                       the public internet — auth lives
+  #                                       upstream at `require_user`
+  #   a2a.enabled = true                → enables /a2a JSON-RPC + agent-card
+  #   a2a.name / a2a.url / a2a.version  → identity surfaced via
+  #                                       /.well-known/agent-card.json
+  #                                       (protocolVersion=0.3.0)
+  #
+  # Contract = a2a_jsonrpc — the THIRD adapter in the dispatcher's
+  # contract switch (Plan 22c.3-05), alongside openai_compat (hermes/
+  # nanobot/openclaw) and zeroclaw_native (zeroclaw). Adding a 4th
+  # contract is a Literal[...] extension + new match arm in the
+  # dispatcher; no schema change.
+  #
+  # Reply parse path: $.result.artifacts[0].parts[0].text — verified
+  # empirically 2026-04-30 against ap-recipe-nullclaw:latest (102-char
+  # reply at this path; `result.status.state == "completed"` marks task
+  # done; agent-card returns protocolVersion=0.3.0). The dispatcher's
+  # a2a_jsonrpc adapter (services/inapp_dispatcher.py) hardcodes this
+  # exact parse path; the response_envelope.reply_path field below is
+  # documentation that mirrors the dispatcher's behavior so future
+  # generic-contract paths can read it programmatically.
+  # ============================================================================
+  inapp:
+    transport: http_localhost           # D-04: only verb in v1 (5/5 recipes uniform)
+    port: 3000                          # nullclaw gateway default port (per Dockerfile ENV NULLCLAW_GATEWAY_PORT=3000)
+    contract: a2a_jsonrpc               # third adapter alongside openai_compat + zeroclaw_native
+    endpoint: /a2a                      # native Google A2A JSON-RPC 2.0 path
+    method: POST
+    auth_mode: none                     # gateway.require_pairing=false; loopback-trusted via Docker bridge net
+    request_envelope:
+      jsonrpc: "2.0"
+      id: "{message_id}"                # api_server's inapp_messages.id substituted at dispatch time
+      method: "message/send"
+      params:
+        message:
+          role: "user"
+          parts:
+            - kind: "text"
+              text: "{prompt}"
+          messageId: "{message_id}"
+    response_envelope:
+      reply_path: "$.result.artifacts[0].parts[0].text"
+      task_id_path: "$.result.id"
+      state_path: "$.result.status.state"
+    streaming:
+      transport: sse
+      method: "message/stream"          # POST /a2a body method=message/stream returns text/event-stream
+      reply_path: "$.result.artifact.parts[0].text"
+      delta_field: "append"             # boolean: append=true marks delta chunk
+      done_field: "lastChunk"           # boolean: lastChunk=true marks final chunk
+    health_endpoint: /health
+    ready_log_regex: "Gateway listening on"
+    persistent_argv_override:
+      # D-20 single-channel-per-instance: when channel="inapp" is selected
+      # at deploy time, the runner SWAPS the persistent.spec entrypoint
+      # from `nullclaw gateway` (channels.telegram path with awk-edit of
+      # config.json injecting the telegram block) to the native A2A
+      # config-write below. The sh-c chain writes a fresh /nullclaw-data/
+      # config.json with a2a.enabled=true + gateway.require_pairing=false
+      # + the agent-card identity, chowns the dir, then execs `nullclaw
+      # gateway`. NO sidecar, NO python3, NO apk add, NO INAPP_BOT_BIN.
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+          cat > /nullclaw-data/config.json <<EOF
+          {
+            "agents":{"defaults":{"model":{"primary":"openrouter/$MODEL"}}},
+            "models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}","base_url":"https://openrouter.ai/api/v1"}}},
+            "gateway":{"port":3000,"host":"0.0.0.0","allow_public_bind":true,"require_pairing":false},
+            "a2a":{"enabled":true,"name":"${INAPP_AGENT_NAME}","description":"Phase 22c.3 inapp","url":"${INAPP_AGENT_URL}","version":"0.3.0"}
+          }
+          EOF
+          chown -R nobody:nobody /nullclaw-data
+          exec nullclaw gateway --host 0.0.0.0 --port 3000
+    activation_env:
+      # OPENROUTER_API_KEY is consumed at heredoc-write time by sh's
+      # ${OPENROUTER_API_KEY} expansion. The runner injects
+      # ${INAPP_PROVIDER_KEY} as the per-user/per-provider OpenRouter key
+      # at container start time (sourced from runtime.process_env.api_key
+      # mapping = OPENROUTER_API_KEY).
+      OPENROUTER_API_KEY: "${INAPP_PROVIDER_KEY}"
+      # ${INAPP_AGENT_NAME} + ${INAPP_AGENT_URL} populate the agent-card
+      # identity surfaced at /.well-known/agent-card.json. Both are
+      # recipe-template placeholders the dispatcher / runner substitutes
+      # at dispatch time from the agent_instance row.
+      INAPP_AGENT_NAME: "{agent_name}"
+      INAPP_AGENT_URL: "{agent_url}"
+
   # Discord, Slack, Matrix, WhatsApp, IRC, Signal, Email, Line, QQ, OneBot,
   # MaixCam, iMessage, Mattermost, Lark, DingTalk, WeChat, WeCom, Weixin,
   # Teams, External, Nostr, Web, Max — all 23 other channels declared in
