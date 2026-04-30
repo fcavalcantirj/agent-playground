@@ -484,6 +484,27 @@ channels:
       # at dispatch time from the agent_instance row.
       INAPP_AGENT_NAME: "{agent_name}"
       INAPP_AGENT_URL: "{agent_url}"
+    verified_cells:
+      - date: "2026-04-30"
+        provider: "openrouter"
+        model: "anthropic/claude-haiku-4.5"
+        verdict: "FULL_PASS"
+        evidence: "spikes/recipe-nullclaw.md (revised v3 native A2A)"
+        notes: |
+          Empirical round-trips against nullclaw's native /a2a endpoint:
+          - POST /a2a method=message/send → result.status.state=completed,
+            result.artifacts[0].parts[0].text non-empty (102-char model
+            self-identification reply against ap-recipe-nullclaw:latest).
+          - POST /a2a method=message/stream → text/event-stream with chunks
+            where result.append=true marks deltas and result.lastChunk=true
+            marks the final chunk (capabilities.streaming=true on agent-card).
+          - /.well-known/agent-card.json returns protocolVersion=0.3.0 and
+            the a2a.name/url written by persistent_argv_override config.json
+            (preferredTransport=JSONRPC; supportedInterfaces protocolBinding
+            =JSONRPC).
+          See RESEARCH §Per-Recipe Feasibility Matrix nullclaw row +
+          §Revision Notice Round 3 (sidecar pattern superseded by native
+          A2A — v3 entry).
 
   # Discord, Slack, Matrix, WhatsApp, IRC, Signal, Email, Line, QQ, OneBot,
   # MaixCam, iMessage, Mattermost, Lark, DingTalk, WeChat, WeCom, Weixin,
