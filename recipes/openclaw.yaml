@@ -758,6 +758,140 @@ channels:
           plugin, not model).
         category: BLOCKED_UPSTREAM
 
+  # ============================================================================
+  # Phase 22c.3 — in-app chat channel (D-20: additive with telegram).
+  # Empirically verified 2026-04-29 PM + Wave-0 re-validation 2026-04-30
+  # (spikes/recipe-openclaw.md). MSV production pattern (provision_ops.go:380-401):
+  # openclaw exposes native POST /v1/chat/completions on gateway port 18789 when
+  # `gateway.http.endpoints.chatCompletions.enabled = true` is set in
+  # ~/.openclaw/openclaw.json AND `gateway.auth.token` is set AND the bot runs
+  # `openclaw gateway run` (NOT --allow-unconfigured, which suppresses chat HTTP).
+  # The original v1 spike used --allow-unconfigured and was wrong; this revised
+  # config-flag activation path is the empirically-PASS shape.
+  #
+  # Provider note: heredoc uses bare ${MODEL} (NO `openrouter/` prefix) per the
+  # Wave 0 spike's `"primary": "anthropic/claude-haiku-4-5"` and the recipe's
+  # `provider_compat.deferred=[openrouter]` + `provider_compat.supported=[anthropic]`
+  # — the runner's model-id substitution flows the v0.2 provider-prefixed
+  # model id (e.g. "anthropic/claude-haiku-4-5") verbatim into model.primary.
+  # An openrouter/-prefixed primary would route through the upstream-broken
+  # openrouter plugin per known_quirks.openrouter_provider_plugin_silent_fail.
+  #
+  # contract_model_name="openclaw" — the dispatcher (Plan 22c.3-05 openai_compat
+  # adapter) rewrites the request body's `model` field to "openclaw" because
+  # openclaw's gateway rejects raw upstream model ids with HTTP 400
+  # `{"error":{"message":"Invalid model. Use openclaw or openclaw/<agentId>"}}`
+  # (verified spike line 117). The bot internally maps model="openclaw" to the
+  # configured agents.defaults.model.primary (the upstream provider call).
+  #
+  # rm -f openclaw.json5 — defends against an existing JSON5 config in the
+  # image taking precedence over our written .json (verified spike findings:
+  # this matters; without it, the runtime may reconcile against stale .json5).
+  # ============================================================================
+  inapp:
+    transport: http_localhost           # D-04: only verb in v1 (5/5 recipes uniform)
+    port: 18789                         # openclaw gateway default
+    endpoint: /v1/chat/completions      # OpenAI-compat (native, behind config flag)
+    contract: openai_compat
+    contract_model_name: "openclaw"     # dispatcher rewrites the client's `model`
+                                         # field to "openclaw" per spike line 117
+                                         # (raw upstream ids return HTTP 400)
+    auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
+    auth_mode: bearer                   # InappRecipeIndex parses this; bearer
+                                         # token is openclaw.json gateway.auth.token
+                                         # (the runner mints + persists per-session
+                                         # to agent_containers.inapp_auth_token).
+    ready_log_regex: "\\[gateway\\] ready \\(\\d+ plugins"
+    response_routing: per_session       # 1:1 with the agent_instance
+    persistent_argv_override:
+      # D-20 single-channel-per-instance: when channel="inapp" is selected at
+      # deploy time, the runner SWAPS the persistent.spec entrypoint from
+      # `openclaw gateway --allow-unconfigured` (channels.telegram path) to
+      # the inapp config-flag activation path below. The sh-chain is the same
+      # shape as the persistent.spec.argv heredoc above (write openclaw.json
+      # + remove .json5 + exec openclaw) but rewrites the JSON to enable
+      # chatCompletions HTTP endpoint and drops --allow-unconfigured.
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+          mkdir -p /home/node/.openclaw
+          cat > /home/node/.openclaw/openclaw.json <<EOF
+          {
+            "agents": {
+              "defaults": {
+                "model": { "primary": "${MODEL}", "fallbacks": [] },
+                "timeoutSeconds": 600,
+                "thinkingDefault": "high"
+              }
+            },
+            "gateway": {
+              "port": 18789,
+              "mode": "local",
+              "bind": "lan",
+              "http": {
+                "endpoints": {
+                  "chatCompletions": { "enabled": true }
+                }
+              },
+              "auth": {
+                "mode": "token",
+                "token": "${INAPP_AUTH_TOKEN}"
+              },
+              "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true }
+            },
+            "channels": {},
+            "skills": { "install": { "nodeManager": "npm" }, "entries": {} },
+            "update": { "checkOnStart": false }
+          }
+          EOF
+          rm -f /home/node/.openclaw/openclaw.json5
+          exec openclaw gateway run --port 18789
+    activation_env:
+      # Runner injects ${INAPP_AUTH_TOKEN} as a per-session opaque bearer token
+      # at container start time + persists it to agent_containers.inapp_auth_token
+      # (consumed by the dispatcher's openai_compat adapter when constructing the
+      # Authorization: Bearer header per Plan 22c.3-05).
+      INAPP_AUTH_TOKEN: "${INAPP_AUTH_TOKEN}"
+      # Runner injects ${MODEL} = the agent_instance.model column verbatim
+      # (already provider-prefixed per v0.2 schema, e.g. "anthropic/claude-haiku-4-5").
+      # This flows into agents.defaults.model.primary in the heredoc above.
+      MODEL: "${MODEL}"
+      # ANTHROPIC_API_KEY (NOT OPENROUTER_API_KEY) per provider_compat.supported=[anthropic]
+      # and known_quirks.openrouter_provider_plugin_silent_fail. The recipe's
+      # runtime.process_env.api_key_by_provider.anthropic mapping resolves this
+      # to the user's stored API key for the anthropic provider at start time.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    verified_cells:
+      - date: "2026-04-29"
+        boot_wall_s: 11
+        first_reply_wall_s: 0           # contract-shape only (real e2e is Plan 22c.3-15)
+        verdict: PASS
+        notes: |
+          Empirically verified via spikes/recipe-openclaw.md (revised 2026-04-29 PM
+          + Wave 0 re-validation 2026-04-30 in Plan 22c.3-01). docker run with
+          --entrypoint sh + the openclaw.json heredoc above (chatCompletions.enabled
+          =true + auth.mode=token + auth.token set) + `openclaw gateway run --port
+          18789` produces a bound POST /v1/chat/completions endpoint within ~11s.
+          Boot log: "[gateway] ready (5 plugins: acpx, browser, device-pair,
+          phone-control, talk-voice; 11.3s)". Auth-gate proof (verbatim spike
+          lines 113-117): HTTP 401 (no Bearer) / HTTP 200 (Bearer + model="openclaw")
+          / HTTP 400 (Bearer + model="openrouter/anthropic/claude-haiku-4.5"
+          → "Invalid `model`. Use `openclaw` or `openclaw/<agentId>`."). The
+          200-path response was a valid OpenAI envelope (object="chat.completion",
+          choices[0].message.content populated string, model="openclaw"); content
+          surfaced the developer's zero-credit ANTHROPIC_API_KEY billing error
+          verbatim through the bot — NOT a contract failure (independently verified
+          against api.anthropic.com directly with the same key returns the same
+          error). This is the correct dumb-pipe behavior per D-22.
+
+          MSV production pattern (provision_ops.go:380-401). The original v1
+          spike was wrong (used --allow-unconfigured which hides chat HTTP);
+          this revised spike captures the correct activation path. Wave 0
+          revalidation (Plan 22c.3-01) confirmed no regression on current image.
+        category: PASS
+
   # All other channels listed in docs/llms.txt — not empirically validated.
   # Upstream agent-loop bug blocks per-model rollout of this recipe until
   # the @agent/embedded issue is resolved or an alternative path is wired.
