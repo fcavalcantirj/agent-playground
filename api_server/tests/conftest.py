@@ -183,13 +183,20 @@ async def _truncate_tables(request):
 
 
 @pytest_asyncio.fixture
-async def async_client(db_pool, migrated_pg, monkeypatch):
+async def async_client(db_pool, migrated_pg, redis_container, monkeypatch):
     """httpx ASGI client wired to a freshly-built FastAPI app.
 
     Overrides the lifespan-created pool with the test's ``db_pool`` so we
     don't double-connect to the container. The lifespan is entered
     manually via ``app.router.lifespan_context`` so startup hooks
     (including the pool init the tests are about to override) actually run.
+
+    Phase 22c.3-09: depends on the session-scoped ``redis_container``
+    fixture and wires ``AP_REDIS_URL`` to the testcontainer because the
+    lifespan now PINGs Redis at boot and FAILS LOUD if it can't connect
+    (D-15/D-16 invariant). Without this dependency, every test that
+    consumes ``async_client`` would fail with a Redis ConnectionError
+    against the prod-default ``redis://redis:6379/0`` hostname.
     """
     # AP_ENV=dev keeps /docs on so tests can assert its presence without
     # re-instantiating the app. Tests that need prod semantics construct
@@ -208,6 +215,13 @@ async def async_client(db_pool, migrated_pg, monkeypatch):
     # time — the migrated container's URL is perfect for that.
     dsn = _normalize_testcontainers_dsn(migrated_pg.get_connection_url())
     monkeypatch.setenv("DATABASE_URL", dsn)
+    # Phase 22c.3-09 lifespan PINGs Redis at boot — point at the
+    # session-scoped testcontainer.
+    _redis_host = redis_container.get_container_host_ip()
+    _redis_port = redis_container.get_exposed_port(6379)
+    monkeypatch.setenv(
+        "AP_REDIS_URL", f"redis://{_redis_host}:{_redis_port}/0"
+    )
 
     from api_server.main import create_app
 

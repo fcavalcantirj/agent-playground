@@ -26,6 +26,8 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import httpx
+import redis.asyncio as redis_async
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware as StarletteSessionMiddleware
 
@@ -90,6 +92,98 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.log_watchers = {}            # container_row_id -> (Task, Event)
     app.state.event_poll_signals = {}      # agent_container_id -> asyncio.Event
     app.state.event_poll_locks = {}        # agent_container_id -> asyncio.Lock
+
+    # ====================================================================
+    # Phase 22c.3-09 — inapp chat channel: Redis + httpx + 3 background tasks
+    # ====================================================================
+    #
+    # Ordering rationale (must come BEFORE the 22b watcher re-attach
+    # below so the per-test lifespan exit time stays bounded — the
+    # watcher block performs Docker calls that can hang on a dead
+    # daemon, and a fail-loud Redis ping should NOT be gated on Docker
+    # responding):
+    #
+    #   1. Redis client — fail loud at boot if PING fails (D-15/D-16:
+    #      SSE + outbox depend on Redis; silent degradation would let
+    #      the inapp channel start in a broken state).
+    #   2. Shared httpx.AsyncClient (D-40 — 600s read timeout per
+    #      single bot call; 5s connect; max_connections=50).
+    #   3. Restart sweep (D-31) — re-queue rows stuck in 'forwarded'
+    #      past 15 minutes BEFORE the dispatcher pump starts, so the
+    #      first dispatcher tick has a clean state machine.
+    #   4. Background tasks: dispatcher_loop (250ms), reaper_loop (15s),
+    #      outbox_pump_loop (100ms). Each is named so operators can
+    #      grep ``asyncio.all_tasks()`` output.
+
+    # 1. Redis client — fail-loud at boot.
+    app.state.redis = redis_async.from_url(
+        settings.redis_url,
+        decode_responses=False,        # outbox publishes str; SSE handler decodes
+        max_connections=20,
+    )
+    try:
+        await app.state.redis.ping()
+    except Exception:
+        _log.exception("phase22c3.redis.ping_failed_boot")
+        # Close the half-open connection pool so the failed boot does
+        # not leak file descriptors / sockets to the unreachable host.
+        try:
+            await app.state.redis.aclose()
+        except Exception:
+            pass
+        raise   # boot fails — Redis is required for inapp channel
+
+    # 2. Shared httpx.AsyncClient for the inapp dispatcher (D-40).
+    app.state.bot_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(600.0, connect=5.0),
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+    )
+
+    # 3. Restart sweep (D-31) — re-queue rows stuck in 'forwarded' past
+    #    15 minutes. Runs BEFORE the dispatcher loop is created so the
+    #    first dispatcher tick has a clean state machine to consume
+    #    from. Failure here is non-fatal: a stuck row is worse than a
+    #    sweep, but the reaper (Plan 22c.3-06) will catch them on its
+    #    next 15s tick.
+    try:
+        from .services.inapp_messages_store import restart_sweep
+
+        async with app.state.db.acquire() as _conn:
+            _swept = await restart_sweep(_conn, threshold_minutes=15)
+            _log.info(
+                "phase22c3.restart_sweep",
+                extra={"swept": _swept},
+            )
+    except Exception:
+        _log.exception("phase22c3.restart_sweep_failed_nonfatal")
+
+    # 4. Background tasks — cancellable via inapp_stop event.
+    from .services.inapp_dispatcher import dispatcher_loop
+    from .services.inapp_outbox import outbox_pump_loop
+    from .services.inapp_reaper import reaper_loop
+
+    app.state.inapp_stop = asyncio.Event()
+    # Wire the stop_event onto state so dispatcher_loop (which takes
+    # only ``state``) can read it via ``state.inapp_stop`` per the
+    # source-of-truth ``getattr(state, "inapp_stop", ...)`` lookup.
+    app.state.inapp_tasks = [
+        asyncio.create_task(
+            dispatcher_loop(app.state),
+            name="inapp_dispatcher",
+        ),
+        asyncio.create_task(
+            reaper_loop(app.state, app.state.inapp_stop),
+            name="inapp_reaper",
+        ),
+        asyncio.create_task(
+            outbox_pump_loop(app.state, app.state.inapp_stop),
+            name="inapp_outbox",
+        ),
+    ]
+    _log.info(
+        "phase22c3.lifespan.inapp_tasks_started",
+        extra={"task_names": [t.get_name() for t in app.state.inapp_tasks]},
+    )
 
     # Phase 22b-04 D-11: re-attach log-watchers for containers that survived
     # an API restart. Rows whose container_id no longer exists in Docker are
@@ -167,6 +261,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Phase 22c.3-09 — drain inapp tasks first (they may publish to
+        # redis during teardown; flush them before closing the redis
+        # client). 5s aggregate budget per the must_haves.truths.
+        try:
+            if getattr(app.state, "inapp_stop", None) is not None:
+                app.state.inapp_stop.set()
+            inapp_tasks = getattr(app.state, "inapp_tasks", []) or []
+            if inapp_tasks:
+                _done, _pending = await asyncio.wait(
+                    inapp_tasks, timeout=5.0,
+                )
+                for _p in _pending:
+                    _p.cancel()
+                # Best-effort wait so cancelled tasks finish cleanly
+                # (each loop awaits CancelledError → returns).
+                if _pending:
+                    try:
+                        await asyncio.wait(_pending, timeout=1.0)
+                    except Exception:
+                        pass
+                _log.info(
+                    "phase22c3.lifespan.inapp_tasks_drained",
+                    extra={
+                        "done": len(_done),
+                        "cancelled": len(_pending),
+                    },
+                )
+        except Exception:
+            _log.exception("phase22c3.lifespan.inapp_drain_failed")
+
+        # Phase 22c.3-09 — close the shared httpx + redis clients AFTER
+        # the inapp tasks drain so a still-running publish or http call
+        # doesn't fault on a closed transport.
+        try:
+            if getattr(app.state, "bot_http_client", None) is not None:
+                await app.state.bot_http_client.aclose()
+        except Exception:
+            _log.exception("phase22c3.lifespan.http_client_close_failed")
+        try:
+            if getattr(app.state, "redis", None) is not None:
+                await app.state.redis.aclose()
+        except Exception:
+            _log.exception("phase22c3.lifespan.redis_close_failed")
+
         # Phase 22b-04: drain all watchers before closing the DB pool.
         # 2s aggregate budget; tasks still running after budget are cancelled.
         # Spike-03 has never observed teardown >2s; the cancel branch is the

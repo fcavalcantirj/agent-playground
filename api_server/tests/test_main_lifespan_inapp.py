@@ -193,8 +193,6 @@ async def test_lifespan_runs_restart_sweep(
     """
     user_id = uuid4()
     agent_id = uuid4()
-    container_row_id = uuid4()
-    docker_container_id = f"deadbeef{uuid4().hex[:24]}"
     recipe_name = f"recipe-{uuid4().hex[:8]}"
 
     async with db_pool.acquire() as conn:
@@ -209,27 +207,20 @@ async def test_lifespan_runs_restart_sweep(
             """,
             agent_id, user_id, recipe_name, f"agent-{uuid4().hex[:8]}",
         )
-        await conn.execute(
-            """
-            INSERT INTO agent_containers
-                (id, agent_instance_id, user_id, recipe_name,
-                 deploy_mode, container_status, container_id, ready_at)
-            VALUES ($1, $2, $3, $4, 'persistent', 'running', $5, NOW())
-            """,
-            container_row_id, agent_id, user_id, recipe_name,
-            docker_container_id,
-        )
         # Insert an inapp_messages row stuck in 'forwarded' for 16 min.
+        # Schema (alembic 007): inapp_messages has user_id + agent_id but
+        # NO container_row_id column — the dispatcher resolves the
+        # container at fetch time via the agent_containers JOIN.
         message_id = await conn.fetchval(
             """
             INSERT INTO inapp_messages
-                (user_id, agent_id, container_row_id, content,
+                (user_id, agent_id, content,
                  status, attempts, last_attempt_at)
-            VALUES ($1, $2, $3, $4, 'forwarded', 1,
+            VALUES ($1, $2, $3, 'forwarded', 1,
                     NOW() - make_interval(mins => 16))
             RETURNING id
             """,
-            user_id, agent_id, container_row_id, "stuck message",
+            user_id, agent_id, "stuck message",
         )
 
     _wire_env(monkeypatch, migrated_pg, _redis_url_for(redis_container), tmp_path)
