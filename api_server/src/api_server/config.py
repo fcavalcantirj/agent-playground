@@ -61,6 +61,16 @@ class Settings(BaseSettings):
         "redis://redis:6379/0", validation_alias="AP_REDIS_URL"
     )
 
+    # Phase 22c.3-09 follow-up: docker bridge network where the api_server
+    # and the per-user agent containers share IPs. The InappRecipeIndex
+    # needs the network name to look up a container's IP for HTTP dispatch
+    # via NetworkSettings.Networks[<name>].IPAddress. Default matches the
+    # compose project ``deploy`` (deploy_default). Tests can override via
+    # AP_DOCKER_NETWORK to point at the testcontainer bridge.
+    docker_network_name: str = Field(
+        "deploy_default", validation_alias="AP_DOCKER_NETWORK"
+    )
+
     # --- OAuth (Phase 22c) ---
     # Google OAuth2 (OIDC). Test-users mode in dev; confidential client creds
     # required in prod. Fail-loud happens in ``auth/oauth.py::get_oauth()`` —

@@ -157,6 +157,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         _log.exception("phase22c3.restart_sweep_failed_nonfatal")
 
+    # 3.5 InappRecipeIndex — the dispatcher reads ``state.recipe_index``
+    # to look up channels.inapp blocks + container IPs. Without this
+    # binding the dispatcher AttributeError's on the first chat message
+    # (the gap flagged by Plans 10-14 SUMMARYs and gsd-verifier). Construct
+    # with a process-wide docker client so container-IP lookups don't pay
+    # ``from_env()`` cost on every dispatch.
+    import docker as _docker_for_index
+    from .services.inapp_recipe_index import InappRecipeIndex
+
+    app.state.docker_client = _docker_for_index.from_env()
+    app.state.recipe_index = InappRecipeIndex(
+        recipes_dir=settings.recipes_dir,
+        docker_client=app.state.docker_client,
+        network_name=settings.docker_network_name,
+    )
+
     # 4. Background tasks — cancellable via inapp_stop event.
     from .services.inapp_dispatcher import dispatcher_loop
     from .services.inapp_outbox import outbox_pump_loop
@@ -304,6 +320,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await app.state.redis.aclose()
         except Exception:
             _log.exception("phase22c3.lifespan.redis_close_failed")
+        # Close the docker client owned by the InappRecipeIndex (separate
+        # from the watcher-reattach _dclient above, which is already closed
+        # in its own try/finally).
+        try:
+            if getattr(app.state, "docker_client", None) is not None:
+                app.state.docker_client.close()
+        except Exception:
+            _log.exception("phase22c3.lifespan.docker_client_close_failed")
 
         # Phase 22b-04: drain all watchers before closing the DB pool.
         # 2s aggregate budget; tasks still running after budget are cancelled.
