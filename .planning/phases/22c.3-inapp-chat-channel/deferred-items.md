@@ -91,34 +91,55 @@ Rule 3 deviation; documented in 22c.3-13 SUMMARY.
 
 Plans 22c.3-{10,11,12,13,14} each flagged this in their SUMMARYs.
 Plan 22c.3-15 took Route B (test-fixture-side replication) per the
-plan's `key_links` line 60. The production runner-side wiring is now
-explicitly filed for a follow-up plan:
+plan's `key_links` line 60. The production runner-side wiring is
+now formally filed as the follow-up phase **22c.3.1-runner-inapp-wiring**
+(see ROADMAP.md). Status of the 3 sub-items at 2026-04-30 phase close:
 
-1. `tools/run_recipe.py::run_cell_persistent` — extend the function
-   signature with a `channel_id` parameter and read
+1. **PENDING (~80 LOC)** — `tools/run_recipe.py::run_cell_persistent`:
+   extend the function signature with a `channel_id` parameter and read
    `recipe.channels.inapp.persistent_argv_override` when
    `channel_id == "inapp"`. Read `channels.inapp.activation_env` and
    merge it into the env-file. Render `${INAPP_AUTH_TOKEN}` /
    `${INAPP_PROVIDER_KEY}` / `{agent_name}` / `{agent_url}` /
    `${MODEL}` placeholders before docker-run.
-2. `api_server/src/api_server/routes/agent_lifecycle.py::start_persistent`
-   — when `body.channel == "inapp"`, mint a per-session opaque UUID
+
+2. **PENDING (~50 LOC)** — `api_server/src/api_server/routes/agent_lifecycle.py::start_persistent`:
+   when `body.channel == "inapp"`, mint a per-session opaque UUID
    `inapp_auth_token`, pass it to `execute_persistent_start` so
    `run_cell_persistent` can substitute the placeholder. After
    `write_agent_container_running`, `UPDATE agent_containers SET
    inapp_auth_token = $1 WHERE id = $2`.
-3. `api_server/src/api_server/main.py` lifespan — wire
-   `app.state.recipe_index = InappRecipeIndex(recipes_dir,
-   docker.from_env(), settings.docker_network_name)` at boot. The
-   dispatcher reads `state.recipe_index` (already coded that way in
-   Plan 22c.3-05); without this wiring `_handle_row` would
-   AttributeError on first call in production.
-4. Reference implementation: the substitution + minting discipline is
-   already encoded in `api_server/tests/e2e/conftest.py::_factory`.
-   Copy the substitution dict + render_placeholders + INAPP_AUTH_TOKEN
-   minting verbatim into the production handler.
 
-Estimate: ~150 lines across the 3 files. Single follow-up plan.
+3. **DONE 2026-04-30 (commit `24e582b`)** — `api_server/src/api_server/main.py`
+   lifespan now wires `app.state.recipe_index = InappRecipeIndex(...)` +
+   `app.state.docker_client = docker.from_env()` at boot.
+   `Settings.docker_network_name` (default `deploy_default`, env
+   `AP_DOCKER_NETWORK`) added in `config.py`. Teardown closes
+   `docker_client` cleanly. The dispatcher's `state.recipe_index`
+   lookup at `inapp_dispatcher.py:358` no longer AttributeErrors.
+
+4. **Reference implementation** (still relevant for items #1 + #2): the
+   substitution + minting discipline is encoded in
+   `api_server/tests/e2e/conftest.py::_factory`. Copy the substitution
+   dict + render_placeholders + INAPP_AUTH_TOKEN minting verbatim into
+   the production handler.
+
+**Remaining estimate: ~130 LOC across 2 files. Single follow-up plan.**
+
+**Why this is "ship phase + file follow-up" rather than "hold phase open":**
+
+- D-45 declares Flutter as the v1 client target; Phase 23 has not started.
+- The web `/dashboard/agents/:id` chat surface is explicitly out of
+  Phase 22c.3 scope (CONTEXT.md line 24).
+- No frontend ships an "inapp deploy" button — nothing in production
+  calls `start_persistent` with `channel: "inapp"` today.
+- The 5/5 e2e PASS proves the dispatcher contract layer + Redis
+  fan-out + SSE replay all work correctly with real infra.
+- The substitution discipline is fully encoded in the e2e harness;
+  porting to production is a straight copy when there's an actual
+  frontend driving deploys.
+- Holding 22c.3 open for items #1 + #2 would block Phase 23 planning
+  for what is structurally a Phase 23 prerequisite.
 
 ### Dispatcher fallback to row['model'] when contract_model_name is "agent"
 

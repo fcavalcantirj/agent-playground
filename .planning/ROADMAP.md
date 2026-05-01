@@ -404,3 +404,22 @@ Plans:
 **UI hint:** no (API-only; Flutter Phase 23 + future web chat consume the new endpoints).
 
 *Phase 22c.3 planned: 2026-04-29 — 15 plans in 6 waves (Wave 0 mandatory spike re-validation gate; Wave 5 mandatory e2e gate); inserted post-pivot.*
+
+*Phase 22c.3 phase-exit gate fixes 2026-04-30 (post-verifier): 3 commits closing the verifier's 3 gaps — `0b5bee3` Dockerfile.api redis pin `<7→<8` (CR-01), `24e582b` `app.state.recipe_index` + `app.state.docker_client` wired in `main.py` lifespan + `Settings.docker_network_name`, `a5bf8cb` e2e harness no longer aliases `ANTHROPIC_API_KEY := openrouter_api_key` (env-driven; loud RuntimeWarning if unset). Re-verification (`0377a4b`) flipped status to `passed` (7/8 must-haves; 1 deferred). Re-run of `make e2e-inapp` with both keys loaded confirmed 5/5 PASS with persona-correct replies for hermes/nanobot/nullclaw/zeroclaw; openclaw cell honest "credit balance too low" (Anthropic upstream — fund the account or accept honest blocker).*
+
+---
+
+### Phase 22c.3.1: Runner-side inapp wiring (follow-up to 22c.3)
+
+**Status:** Filed; not started. ~130 LOC across 2 files. Single plan.
+**Prerequisite for:** Phase 23 (Flutter native app) — needs production deploy of inapp-channel containers with placeholder substitution + `INAPP_AUTH_TOKEN` minting.
+**Why deferred from 22c.3:** No frontend ships an "inapp deploy" button today; the substitution discipline is fully encoded in the e2e harness as Route B; the dispatcher contract layer + Redis fan-out + SSE replay all proven via 5/5 e2e PASS. Holding 22c.3 open for this would block Phase 23 planning for what is structurally a Phase 23 prerequisite.
+
+**Scope:**
+
+- [ ] 22c.3.1-01-PLAN.md — `tools/run_recipe.py::run_cell_persistent` extends with `channel_id` parameter; reads `recipe.channels.inapp.persistent_argv_override` when `channel_id == "inapp"`; merges `channels.inapp.activation_env` into env-file; renders `${INAPP_AUTH_TOKEN}` / `${INAPP_PROVIDER_KEY}` / `{agent_name}` / `{agent_url}` / `${MODEL}` placeholders before docker-run. (~80 LOC)
+- [ ] 22c.3.1-02-PLAN.md — `api_server/src/api_server/routes/agent_lifecycle.py::start_persistent` mints per-session opaque `INAPP_AUTH_TOKEN` (UUID hex); passes to `execute_persistent_start`; persists via `UPDATE agent_containers SET inapp_auth_token = $1 WHERE id = $2` after `write_agent_container_running`. (~50 LOC)
+
+**Reference impl already on main:** `api_server/tests/e2e/conftest.py::_factory` (substitution dict + `render_placeholders` + `INAPP_AUTH_TOKEN` minting). Direct copy + a `dev_only_via_e2e_harness=False` argument flip is most of the work.
+
+**Verification:** Deploy a recipe with `channel: "inapp"` against the live api_server, POST `/v1/agents/:id/messages`, assert non-error reply. The current e2e gate substitutes the inline harness for these two production codepaths; this phase re-runs `make e2e-inapp` against the production handler path and confirms 5/5 PASS without Route B substitution.
