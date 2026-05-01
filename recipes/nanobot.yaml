@@ -399,25 +399,48 @@ channels:
     auth_header: "none"                 # A5 = no_auth (spike line 95); v1 acceptable
                                          # risk = loopback-only inside container
                                          # network namespace + Docker bridge boundary.
-    ready_log_regex: "Endpoint : http://127\\.0\\.0\\.1:8900"
+    # Phase 22c.3.1-01-AC01 (Rule-1 fix, 2026-05-01): bind 0.0.0.0 not 127.0.0.1.
+    # See hermes.yaml inapp block for the long-form explanation. The
+    # production dispatcher is in a different container; loopback bind in
+    # the recipe container is unreachable cross-container. Was masked by
+    # the host-pytest harness's `-p 127.0.0.1:HOST_PORT:8900` publish.
+    ready_log_regex: "Endpoint : http://0\\.0\\.0\\.0:8900"
     response_routing: per_session       # 1:1 with the agent_instance
     persistent_argv_override:
       # D-20 single-channel-per-instance: when channel="inapp" is selected at
       # deploy time, the runner SWAPS the persistent.spec entrypoint from
       # `nanobot gateway` (channels.telegram) to `nanobot serve` (channels.inapp).
-      # Config.json bootstrap (agents.defaults + providers.openrouter) is still
-      # required — the runner sources it from the same sh-chain pattern the
-      # `persistent` block uses; only the trailing `exec nanobot ...` line
-      # changes. See spikes/recipe-nanobot.md for the verbatim sh-chain.
-      entrypoint: nanobot
+      # Config.json bootstrap (agents.defaults + providers.openrouter) is
+      # required because nanobot serve has NO CLI flags for provider/api_key
+      # — the spike's verbatim sh-chain (Plan 22c.3 spike-A nanobot) writes
+      # the config + execs nanobot serve in a single sh -c. Phase 22c.3.1-01
+      # AC-01 fix (Rule-2 deviation): port the spike's full sh-chain into
+      # the recipe override since the previous declaration assumed the
+      # config would materialize on its own. See
+      # `.planning/phases/22c.3-inapp-chat-channel/spikes/recipe-nanobot.md`.
+      entrypoint: sh
       argv:
-        - "serve"
-        - "--port"
-        - "8900"
-        - "--host"
-        - "127.0.0.1"
-        - "--timeout"
-        - "600"                         # D-40: 10min per-request budget
+        - "-c"
+        - |
+          set -e
+          mkdir -p /home/nanobot/.nanobot
+          cat > /home/nanobot/.nanobot/config.json <<JSON
+          {
+            "agents": {
+              "defaults": {
+                "provider": "openrouter",
+                "model": "$MODEL"
+              }
+            },
+            "providers": {
+              "openrouter": {
+                "api_key": "${OPENROUTER_API_KEY}",
+                "api_base": "https://openrouter.ai/api/v1"
+              }
+            }
+          }
+          JSON
+          exec nanobot serve --port 8900 --host 0.0.0.0 --timeout 600
     activation_env:
       # nanobot serve consumes the same OPENROUTER_API_KEY the gateway path
       # uses for upstream LLM calls — the runner's existing channel-input

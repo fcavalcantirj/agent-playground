@@ -344,7 +344,17 @@ channels:
                                          # Authorization header when auth_mode='bearer'.
                                          # auth_header below documents the literal shape.
     auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
-    ready_log_regex: "\\[Api_Server\\] API server listening on http://127\\.0\\.0\\.1:8642"
+    # Phase 22c.3.1-01-AC01 (Rule-1 fix, 2026-05-01): bind 0.0.0.0 not 127.0.0.1.
+    # The production dispatcher reaches the bot from a DIFFERENT container
+    # (api_server) via the recipe container's docker bridge IP. A 127.0.0.1
+    # bind is only reachable from inside the recipe's own network namespace;
+    # it is NOT reachable across containers on the same docker bridge. The
+    # original 127.0.0.1 was a test-only artifact from when the e2e harness
+    # ran on the macOS host with `-p 127.0.0.1:HOST_PORT:8642` host-publish
+    # — that masked the cross-container reachability gap. The dockerized
+    # e2e harness (option b) exercises the production container→container
+    # bridge path which requires 0.0.0.0 here.
+    ready_log_regex: "\\[Api_Server\\] API server listening on http://0\\.0\\.0\\.0:8642"
     response_routing: per_session       # 1:1 with the agent_instance
     activation_env:
       # Runner injects ${INAPP_AUTH_TOKEN} as a per-session opaque token at
@@ -353,7 +363,7 @@ channels:
       API_SERVER_ENABLED: "true"
       API_SERVER_KEY: "${INAPP_AUTH_TOKEN}"
       API_SERVER_PORT: "8642"
-      API_SERVER_HOST: "127.0.0.1"
+      API_SERVER_HOST: "0.0.0.0"        # Rule-1 fix above; was "127.0.0.1"
     verified_cells:
       - date: "2026-04-29"
         boot_wall_s: 14
