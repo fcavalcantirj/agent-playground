@@ -30,6 +30,11 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
+# Phase 22c.3.1 (D-14): activation-time placeholder substitution helper —
+# lifted from api_server/tests/e2e/_helpers.py. Lives next to run_recipe.py
+# in tools/ so both files can share it.
+from _placeholders import render_placeholders
+
 _yaml = YAML(typ="rt")
 _yaml.preserve_quotes = True
 _yaml.width = 4096
@@ -53,6 +58,11 @@ DEFAULT_SMOKE_TIMEOUT_S = 180
 DEFAULT_BUILD_TIMEOUT_S = 900
 DEFAULT_CLONE_TIMEOUT_S = 300
 DOCKER_DAEMON_PROBE_TIMEOUT_S = 5
+
+# Phase 22c.3.1 (D-25, B-4 fix): pre_start_command timeout. Module-level so
+# tests can monkey-patch via ``tools.run_recipe.PRE_START_COMMAND_TIMEOUT_S``
+# without rewriting the function signature.
+PRE_START_COMMAND_TIMEOUT_S = 120
 
 # ANSI colors for lint output (D-08)
 _RED = "\033[31m"
@@ -984,6 +994,7 @@ def _redact_channel_creds(
     required_inputs: list,
     optional_inputs: list,
     channel_creds: dict[str, str],
+    extra_secrets: tuple[str, ...] | list[str] = (),
 ) -> str:
     """Apply _redact_api_key for the API key + every secret channel cred.
 
@@ -991,6 +1002,12 @@ def _redact_channel_creds(
     bare-value occurrences. Non-secret inputs are still redacted via the
     `VAR=` regex pass so stderr lines like `TELEGRAM_ALLOWED_USER=152099202`
     don't leak the numeric id.
+
+    Phase 22c.3.1 (D-26 + RESEARCH §Risks §7): ``extra_secrets`` carries
+    activation_substitutions values (e.g. ``INAPP_AUTH_TOKEN``,
+    ``INAPP_PROVIDER_KEY``) that aren't in ``channel_creds`` but flow into
+    the env-file. Each value with len ≥ 8 gets bare-substring replaced.
+    Backwards-compat: defaults to empty tuple — existing callers unchanged.
     """
     out = _redact_api_key(text, api_key_var, api_key_val)
     for entry in (required_inputs or []) + (optional_inputs or []):
@@ -999,7 +1016,51 @@ def _redact_channel_creds(
             continue
         val = channel_creds.get(var)
         out = _redact_api_key(out, var, val if entry.get("secret") else None)
+    # D-26: redact activation-time secrets (INAPP_AUTH_TOKEN, provider key).
+    for s in (extra_secrets or ()):
+        if s and len(s) >= 8:
+            out = out.replace(s, "<REDACTED>")
     return out
+
+
+def _build_env_file_content(
+    api_key_var: str,
+    api_key_val: str,
+    required_inputs: list,
+    optional_inputs: list,
+    channel_creds: dict[str, str],
+    rendered_activation_env: dict[str, str] | None = None,
+) -> str:
+    """Pure-function env-file builder (Phase 22c.3.1 — B-6 fix).
+
+    Returns the env-file content as a single string (newline-terminated lines).
+    Single source of truth for env-file shape — used by both the legacy
+    code path (rendered_activation_env=None — D-27 byte-identical) AND the
+    new override path (rendered_activation_env=<rendered dict> — D-24 overlay).
+
+    Order:
+      1. ``api_key_var=api_key_val``                (legacy first line)
+      2. required_inputs + optional_inputs in order, with prefix_required
+      3. rendered_activation_env entries (D-24 — last lines win on collision)
+
+    Per docker ``--env-file`` semantics, later lines win for duplicate keys,
+    so activation_env values OVERRIDE any colliding api_key/cred values.
+    Do NOT deduplicate — duplicates are how the overlay works.
+    """
+    lines = [f"{api_key_var}={api_key_val}"]
+    for entry in (required_inputs or []) + (optional_inputs or []):
+        var = entry.get("env")
+        if not var:
+            continue
+        val = channel_creds.get(var)
+        if val is None or val == "":
+            continue
+        prefix = entry.get("prefix_required") or ""
+        lines.append(f"{var}={prefix}{val}")
+    if rendered_activation_env:
+        for k, v in rendered_activation_env.items():
+            lines.append(f"{k}={v}")
+    return "\n".join(lines) + "\n"
 
 
 def run_cell_persistent(
@@ -1014,6 +1075,7 @@ def run_cell_persistent(
     run_id: str,
     quiet: bool = True,
     boot_timeout_s: int = 180,
+    activation_substitutions: dict[str, str] | None = None,
 ) -> tuple[Verdict, dict]:
     """Spawn a persistent container, poll readiness, return (Verdict, details).
 
@@ -1026,6 +1088,26 @@ def run_cell_persistent(
         within boot_timeout_s
       - once ready, runs health_check probe (process_alive or http)
       - returns container_id + ready_at + boot_wall_s in details dict
+
+    Phase 22c.3.1 (D-04..D-08, D-12..D-15, D-24, D-25, D-27, D-31, D-32, D-34
+    + AMD-37): when ``channels[channel_id].persistent_argv_override`` is
+    declared AND ``activation_substitutions`` is non-None, switch to the
+    "channel-aware override" code path:
+      * read override.entrypoint / argv / pre_start_commands / user_override
+      * render placeholders (${VAR}, $VAR, {key}) in argv + entrypoint +
+        activation_env using activation_substitutions
+      * allocate data_dir + env_file UPFRONT (D-34); env-file content built
+        via _build_env_file_content with rendered_activation_env overlay
+        (D-24 — last lines win)
+      * run pre_start_commands as `docker run --rm` per command (D-04..D-08),
+        with --cidfile + PRE_START_COMMAND_TIMEOUT_S timeout (D-25, D-32)
+      * reset boot timeout budget after pre_start (D-31 — Risks §8)
+      * docker run -d the daemon with rendered argv + entrypoint
+      * details["pre_start_wall_s"] + details["boot_wall_s"] = sum (D-31)
+
+    When the gate is closed (override absent OR activation_substitutions=None),
+    fall through to the legacy code path — D-27 byte-identical invariant
+    enforced via the `test_run_recipe_telegram_invariant.py` snapshot test.
 
     The caller (runner_bridge in Plan 22-04) is responsible for persisting
     the container_id to the agent_containers table and for invoking
@@ -1067,68 +1149,263 @@ def run_cell_persistent(
             f"channel {channel_id} missing required inputs: {missing}"
         )
 
-    # 2. Assemble argv with model substitution (no $PROMPT in persistent mode).
-    raw_argv = spec["argv"]
-    argv = substitute_argv(list(raw_argv), prompt="", model=model)
+    # AMD-37 + D-27: gate the new path on BOTH conjuncts. Either fall-through
+    # → legacy byte-identical path (telegram openclaw verified by Wave 0
+    # snapshot test_baseline_capture).
+    override_raw = channel.get("persistent_argv_override")
+    gate_open = bool(
+        activation_substitutions is not None
+        and override_raw
+        and isinstance(override_raw, dict)
+        and override_raw.get("argv")
+    )
 
-    # 3. Build env-file with secrets + channel creds + prefix_required transforms.
-    env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
-    lines = [f"{api_key_var}={api_key_val}"]
-    for entry in required_inputs + optional_inputs:
-        var = entry.get("env")
-        if not var:
-            continue
-        val = channel_creds.get(var)
-        if val is None or val == "":
-            continue
-        # Honor prefix_required (openclaw: "tg:" prepends to user ID value).
-        prefix = entry.get("prefix_required") or ""
-        lines.append(f"{var}={prefix}{val}")
-    env_file.write_text("\n".join(lines) + "\n")
-    try:
-        env_file.chmod(0o600)
-    except OSError:
-        pass
-
-    # 4. Build docker run command — DETACHED + NAMED + no --rm.
+    # Common: per-recipe volume mount target.
     vol = recipe["runtime"]["volumes"][0]
     container_mount = vol["container"]
-    entrypoint = spec.get("entrypoint")
-    user_override = spec.get("user_override")
-    data_dir = Path(tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-"))
     container_name = f"ap-agent-{run_id}"
+    image_default_user = spec.get("user_override")  # may be overridden below
 
-    docker_cmd = [
-        "docker", "run", "-d",
-        "--name", container_name,
-        "--env-file", str(env_file),
-        "-v", f"{data_dir}:{container_mount}",
-    ]
-    if user_override:
-        docker_cmd += ["--user", user_override]
-    if entrypoint:
-        docker_cmd += ["--entrypoint", entrypoint]
-    docker_cmd += [image_tag] + argv
-
-    log(f"  $ docker run -d --name {container_name} ... {image_tag} [argv elided]",
-        quiet=quiet)
-
-    # 5. Execute `docker run -d`, capture container_id from stdout.
-    t0 = time.time()
-    try:
-        result = subprocess.run(
-            docker_cmd, timeout=30, capture_output=True, text=True, check=False,
+    # Common: secrets list for redaction (D-26 + RESEARCH §Risks §7).
+    extra_secrets: tuple[str, ...] = ()
+    if activation_substitutions:
+        extra_secrets = tuple(
+            v for v in activation_substitutions.values()
+            if isinstance(v, str) and len(v) >= 8
         )
-    except subprocess.TimeoutExpired:
-        _cleanup(env_file, data_dir)
-        raise RuntimeError("docker run -d timed out after 30s")
+
+    if gate_open:
+        # ===================================================================
+        # NEW PATH — channel-aware override + activation_env overlay +
+        # pre_start_commands loop with cidfile cleanup (Phase 22c.3.1).
+        # ===================================================================
+        override = override_raw
+        entrypoint = override.get("entrypoint")
+        argv_raw = list(override.get("argv") or [])
+        pre_start_specs = list(override.get("pre_start_commands") or [])
+        user_override = override.get("user_override") or image_default_user
+        activation_env_raw = channel.get("activation_env") or {}
+        if not isinstance(activation_env_raw, dict):
+            activation_env_raw = {}
+
+        # 2. Render placeholders.
+        argv = [
+            str(render_placeholders(a, activation_substitutions))
+            for a in argv_raw
+        ]
+        if entrypoint:
+            entrypoint = str(
+                render_placeholders(entrypoint, activation_substitutions)
+            )
+        rendered_env: dict[str, str] = {
+            str(k): str(render_placeholders(v, activation_substitutions))
+            for k, v in activation_env_raw.items()
+        }
+
+        # 3. Allocate data_dir + env_file UPFRONT (D-34 — pre_start needs
+        # both volumes mounted, so they MUST exist before the loop).
+        data_dir = Path(
+            tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-")
+        )
+        env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
+        env_file.write_text(_build_env_file_content(
+            api_key_var, api_key_val,
+            required_inputs, optional_inputs,
+            channel_creds,
+            rendered_activation_env=rendered_env,
+        ))
+        try:
+            env_file.chmod(0o600)
+        except OSError:
+            pass
+
+        # 4. Pre-start loop. Each command runs as `docker run --rm` with
+        # --cidfile + PRE_START_COMMAND_TIMEOUT_S timeout. State accumulates
+        # in data_dir.
+        pre_start_t0 = time.time()
+        for pre in pre_start_specs:
+            pre_argv_raw = pre.get("argv") if isinstance(pre, dict) else None
+            if not pre_argv_raw:
+                continue
+            pre_argv_rendered = [
+                str(render_placeholders(a, activation_substitutions))
+                for a in pre_argv_raw
+            ]
+            if not pre_argv_rendered:
+                continue
+            pre_entry = pre_argv_rendered[0]
+            pre_args = pre_argv_rendered[1:]
+            pre_cidfile = Path(f"/tmp/ap-pre-cid-{uuid.uuid4().hex}.cid")
+            pre_cmd = [
+                "docker", "run", "--rm",
+                f"--cidfile={pre_cidfile}",
+                "--env-file", str(env_file),
+                "-v", f"{data_dir}:{container_mount}",
+                "--entrypoint", pre_entry,
+            ]
+            if user_override:
+                pre_cmd += ["--user", str(user_override)]
+            pre_cmd += [image_tag, *pre_args]
+            log(
+                f"  $ docker run --rm pre_start [argv elided]",
+                quiet=quiet,
+            )
+            try:
+                ex = subprocess.run(
+                    pre_cmd,
+                    timeout=PRE_START_COMMAND_TIMEOUT_S,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                # D-32: cidfile-kill the hung container.
+                try:
+                    cid = pre_cidfile.read_text().strip()
+                    if cid:
+                        subprocess.run(
+                            ["docker", "kill", cid],
+                            timeout=10, check=False, capture_output=True,
+                        )
+                        subprocess.run(
+                            ["docker", "rm", "-f", cid],
+                            timeout=10, check=False, capture_output=True,
+                        )
+                except OSError:
+                    pass
+                try:
+                    pre_cidfile.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                _cleanup(env_file, data_dir)
+                raise RuntimeError(
+                    f"pre_start_command timed out after "
+                    f"{PRE_START_COMMAND_TIMEOUT_S}s: {pre_entry} "
+                    f"{' '.join(pre_args)[:100]}"
+                )
+            finally:
+                try:
+                    pre_cidfile.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+            if ex.returncode != 0:
+                tail = _redact_channel_creds(
+                    ex.stderr or "",
+                    api_key_var, api_key_val,
+                    required_inputs, optional_inputs, channel_creds,
+                    extra_secrets=extra_secrets,
+                )
+                _cleanup(env_file, data_dir)
+                raise RuntimeError(
+                    f"pre_start_command failed rc={ex.returncode}: "
+                    f"{pre_entry} {' '.join(pre_args)[:50]} "
+                    f"stderr={tail[-200:]}"
+                )
+        pre_start_wall_s = round(time.time() - pre_start_t0, 2)
+
+        # 5. Build daemon docker run command. Reset t0 (D-31 — boot_timeout_s
+        # applies only to the persistent container's ready-poll budget, NOT
+        # to the pre_start loop total).
+        docker_cmd = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--env-file", str(env_file),
+            "-v", f"{data_dir}:{container_mount}",
+        ]
+        if user_override:
+            docker_cmd += ["--user", str(user_override)]
+        if entrypoint:
+            docker_cmd += ["--entrypoint", entrypoint]
+        docker_cmd += [image_tag] + argv
+
+        log(
+            f"  $ docker run -d --name {container_name} ... {image_tag} "
+            f"[argv elided]",
+            quiet=quiet,
+        )
+
+        t0 = time.time()
+        try:
+            result = subprocess.run(
+                docker_cmd, timeout=30, capture_output=True, text=True,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            _cleanup(env_file, data_dir)
+            raise RuntimeError("docker run -d timed out after 30s")
+    else:
+        # ===================================================================
+        # LEGACY PATH — D-27 byte-identical invariant. Steps verbatim from
+        # pre-Phase-22c.3.1 main HEAD, with the env-file write routed through
+        # _build_env_file_content (rendered_activation_env=None) per B-6 fix
+        # so there's a single source of truth for env-file shape. The Wave 0
+        # snapshot test enforces byte-identical output for this branch.
+        # ===================================================================
+        pre_start_wall_s = 0.0
+
+        # 2. Assemble argv with model substitution (no $PROMPT in persistent mode).
+        raw_argv = spec["argv"]
+        argv = substitute_argv(list(raw_argv), prompt="", model=model)
+
+        # 3. Build env-file via the shared helper (rendered_activation_env=None
+        # so output is byte-identical to the legacy direct-write).
+        env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
+        env_file.write_text(_build_env_file_content(
+            api_key_var, api_key_val,
+            required_inputs, optional_inputs,
+            channel_creds,
+            rendered_activation_env=None,
+        ))
+        try:
+            env_file.chmod(0o600)
+        except OSError:
+            pass
+
+        # 4. Build docker run command — DETACHED + NAMED + no --rm.
+        entrypoint = spec.get("entrypoint")
+        user_override = image_default_user
+        data_dir = Path(
+            tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-")
+        )
+
+        docker_cmd = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--env-file", str(env_file),
+            "-v", f"{data_dir}:{container_mount}",
+        ]
+        if user_override:
+            docker_cmd += ["--user", user_override]
+        if entrypoint:
+            docker_cmd += ["--entrypoint", entrypoint]
+        docker_cmd += [image_tag] + argv
+
+        log(
+            f"  $ docker run -d --name {container_name} ... {image_tag} "
+            f"[argv elided]",
+            quiet=quiet,
+        )
+
+        # 5. Execute `docker run -d`, capture container_id from stdout.
+        t0 = time.time()
+        try:
+            result = subprocess.run(
+                docker_cmd, timeout=30, capture_output=True, text=True,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            _cleanup(env_file, data_dir)
+            raise RuntimeError("docker run -d timed out after 30s")
 
     if result.returncode != 0:
         _cleanup(env_file, data_dir)
         stderr = _redact_channel_creds(
             result.stderr or "", api_key_var, api_key_val,
             required_inputs, optional_inputs, channel_creds,
+            extra_secrets=extra_secrets,
         )
+        persistent_wall = round(time.time() - t0, 2)
         return Verdict(
             Category.INVOKE_FAIL,
             f"docker run -d exit {result.returncode}: {stderr[:200]}",
@@ -1137,7 +1414,8 @@ def run_cell_persistent(
             "model": model,
             "channel": channel_id,
             "container_name": container_name,
-            "boot_wall_s": round(time.time() - t0, 2),
+            "boot_wall_s": round(pre_start_wall_s + persistent_wall, 2),
+            "pre_start_wall_s": pre_start_wall_s,
         }
 
     container_id = (result.stdout or "").strip()
@@ -1177,7 +1455,9 @@ def run_cell_persistent(
             redacted_logs = _redact_channel_creds(
                 combined[-500:], api_key_var, api_key_val,
                 required_inputs, optional_inputs, channel_creds,
+                extra_secrets=extra_secrets,
             )
+            persistent_wall = round(time.time() - t0, 2)
             return Verdict(
                 Category.INVOKE_FAIL,
                 f"container exited (code={exit_code}) before ready: "
@@ -1188,7 +1468,8 @@ def run_cell_persistent(
                 "channel": channel_id,
                 "container_id": container_id,
                 "container_name": container_name,
-                "boot_wall_s": round(time.time() - t0, 2),
+                "boot_wall_s": round(pre_start_wall_s + persistent_wall, 2),
+                "pre_start_wall_s": pre_start_wall_s,
                 "exit_code": exit_code,
             }
         time.sleep(2)
@@ -1196,6 +1477,7 @@ def run_cell_persistent(
     if not ready:
         _force_remove(container_id)
         _cleanup(env_file, data_dir)
+        persistent_wall = round(time.time() - t0, 2)
         return Verdict(
             Category.TIMEOUT,
             f"ready_log_regex not matched within {boot_timeout_s}s",
@@ -1205,7 +1487,8 @@ def run_cell_persistent(
             "channel": channel_id,
             "container_id": container_id,
             "container_name": container_name,
-            "boot_wall_s": round(time.time() - t0, 2),
+            "boot_wall_s": round(pre_start_wall_s + persistent_wall, 2),
+            "pre_start_wall_s": pre_start_wall_s,
         }
 
     # 7. Health check probe (log-match already proves readiness; HC is
@@ -1238,8 +1521,13 @@ def run_cell_persistent(
     # 8. Return success details. Env-file is safe to unlink NOW — docker CLI
     #    has already read it and delivered env vars to the container's kernel
     #    namespace. data_dir stays until stop (container references its mount).
+    #
+    # D-31: boot_wall_s is the SUM of pre_start_wall_s + persistent ready
+    # poll wall — operators see end-to-end latency. pre_start_wall_s is
+    # exposed as a sub-field for diagnostics.
     ready_at = datetime.now(timezone.utc)
-    boot_wall_s = round(time.time() - t0, 2)
+    persistent_wall = round(time.time() - t0, 2)
+    boot_wall_s = round(pre_start_wall_s + persistent_wall, 2)
     try:
         env_file.unlink(missing_ok=True)
     except OSError:
@@ -1253,6 +1541,7 @@ def run_cell_persistent(
         "container_name": container_name,
         "ready_at": ready_at.isoformat(),
         "boot_wall_s": boot_wall_s,
+        "pre_start_wall_s": pre_start_wall_s,
         "ready_log_matched": True,
         "health_check_ok": hc_ok,
         "health_check_kind": hc["kind"],
