@@ -90,6 +90,24 @@ A mobile-first web platform where users create any number of agent instances —
 | Mission: democratize agent deployment | The easiest way to deploy any agent × any model combination, in one click. | User decision during Phase 1 discuss |
 | Use Temporal for durable workflows | User override of research recommendation. Session spawn/destroy, recipe install, reconciliation, billing reconciliation all run as Temporal workflows. Mirrors MSV's executor. | — Pending |
 
+## Current Milestone: v0.3 Mobile MVP
+
+**User-facing brand:** Solvr Labs (repo codename remains "Agent Playground")
+
+**Goal:** Ship a Flutter native mobile app that drives the agent-spawn substrate end-to-end on localhost — Deploy → Dashboard → Chat with persisted history. No deploy, no auth, no streaming. "Code we'll reuse."
+
+**Target features:**
+- Backend chat-proxy + persistence: `POST /v1/agents/:id/chat`, `GET /v1/agents/:id/messages`, `GET /v1/agents`, model catalog proxy, dev-mode auth shim (additive shape — OAuth plugs in later swapping impl, not call sites)
+- Flutter project scaffold: Riverpod (default) + go_router + dio + flat Material 3 theme matching Solvr design language (monochrome, 0 radius, Inter + JetBrains Mono) + LAN/ngrok env config
+- Three screens wired end-to-end against local API: Dashboard, New Agent (Deploy), Chat
+
+**Key context:**
+- Phase 22c.3.1 (runner-inapp-wiring) just shipped — this milestone CONSUMES the uniform agent-spawn route, doesn't rebuild it
+- Locked architectural decisions in `.planning/notes/mobile-mvp-decisions.md` — do not re-litigate during phase planning
+- Streaming chat captured as an additive seed in `.planning/seeds/streaming-chat.md` — out of milestone scope
+- Hetzner deploy + remote-API switch is OUT of milestone — separate later effort once the local demo lands
+- Look-and-feel reference: the mockups in conversation + `/Users/fcavalcanti/dev/solvr/frontend` (Tailwind v4, Radix/shadcn, monochrome high-contrast, flat 0 radius, Inter + JetBrains Mono)
+
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
@@ -108,4 +126,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-13 — multi-agent model, mobile-first, mission statement, multi-surface access (Phase 1 discuss)*
+*Last updated: 2026-05-01 — milestone v0.3 (Mobile MVP / Solvr Labs) opened; Flutter native targeting localhost end-to-end first*

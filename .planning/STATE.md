@@ -1,32 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.2
-milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: "Phase 22c.3.1-01 ARCHITECTURALLY COMPLETE 2026-05-01 — runner+route+harness wired per 36 D-decisions + AMD-37 + 15 ACs; AC-01 e2e gate BLOCKED on macOS Docker Desktop port reachability (Rule-4 architectural follow-up; <50 LOC; needs publish-ports flag or dockerized harness). 14 of 15 ACs GREEN or partial-GREEN; D-27 byte-identical invariant 3/3 snapshot tests PASS; 274 passed / 8 pre-existing failures unchanged. 7 commits: cfedafd (Wave 0) + ca9bb19/bdbb6f0 (T1 RED/GREEN) + 702558c/7ad381d (T2 RED/GREEN) + e61bd1d (T3) + dc69a36 (Rule-1 deviations: runner import path + AMD-37 gate widening for hermes activation_env-only + exc_info logging)."
-stopped_at: "Plan 22c.3.1-01 SHIPPED architecturally; e2e gate AC-01 deferred for macOS networking follow-up. See .planning/phases/22c.3.1-runner-inapp-wiring/22c.3.1-01-SUMMARY.md"
-last_updated: "2026-05-01T20:35:00.000Z"
+milestone: v0.3
+milestone_name: "Mobile MVP (Solvr Labs) — Flutter native + backend chat-proxy + persistence; localhost end-to-end first; deploy + auth + streaming explicitly out of scope"
+status: "Milestone v0.3 OPENED 2026-05-01 — defining requirements + roadmap. Predecessor work Phase 22c.3.1 SHIPPED (runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS). Locked decisions in .planning/notes/mobile-mvp-decisions.md."
+stopped_at: "Defining requirements for v0.3."
+last_updated: "2026-05-01T22:00:00.000Z"
 progress:
-  total_phases: 19
-  completed_phases: 5
-  total_plans: 33
-  completed_plans: 33
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-11)
+See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 22c.3.1 — runner-inapp-wiring
+**Current focus:** Milestone v0.3 (Mobile MVP / Solvr Labs) — defining requirements
 
 ## Current Position
 
-Phase: 22c.3.1 (runner-inapp-wiring) — EXECUTING
-Plan: 1 of 1
-**Phase 22c (oauth-google) — PLANNED (9 plans, 6 waves), ready for /gsd-execute-phase** at current uncommitted state (see stack below).
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements for milestone v0.3
+Last activity: 2026-05-01 — Milestone v0.3 (Mobile MVP) opened
+**Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`.
 
 ### Stack of completed work this session (2026-04-19)
 
