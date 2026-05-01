@@ -138,7 +138,8 @@ async def test_recipe_inapp_round_trip(
 
     try:
         # --- Step 1: real recipe container ---
-        spawned = recipe_container_factory(recipe, model=model)
+        # Phase 22c.3.1 (B-1 fix): _factory is now async (POSTs the route).
+        spawned = await recipe_container_factory(recipe, model=model)
         container_id = spawned["container_id"]
         container_ip = spawned["container_ip"]
         inapp_auth_token = spawned["inapp_auth_token"]

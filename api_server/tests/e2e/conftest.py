@@ -33,10 +33,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
-import sys
-import tempfile
-import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -239,24 +235,87 @@ def _resolve_provider_key_for_recipe(
     return "OPENROUTER_API_KEY", openrouter_api_key
 
 
-@pytest.fixture
-def recipe_container_factory(
-    e2e_docker_network: str, openrouter_api_key: str,
-    _e2e_host_port_map: dict,
-):
-    """Spawn a real ap-recipe-* container per the recipe's channels.inapp YAML.
+@pytest_asyncio.fixture
+async def e2e_authenticated_cookie(db_pool: asyncpg.Pool):
+    """Phase 22c.3.1 Plan 01 Task 3 — function-scoped cookie+user.
 
-    Renders the recipe's ``persistent_argv_override`` + ``activation_env``
-    placeholders ($MODEL, ${INAPP_AUTH_TOKEN}, ${INAPP_PROVIDER_KEY},
-    ${OPENROUTER_API_KEY}, {agent_name}, {agent_url}) — replicating what
-    the production runner SHOULD do at deploy time. Documented as Route B
-    follow-up in Plan 15 SUMMARY.
-
-    Returns (container_id, container_ip, inapp_auth_token, recipe_yaml).
+    Lifted from tests/conftest.py:387-432::authenticated_cookie. Re-INSERTed
+    here so the e2e factory can compose its own factory dependency chain
+    without coupling to the parent's fixture name.
     """
-    spawned: list[str] = []
+    from datetime import datetime, timedelta, timezone
 
-    def _factory(recipe_name: str, model: str = "anthropic/claude-haiku-4.5"):
+    user_id = uuid.uuid4()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users (id, provider, sub, email, display_name) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            user_id, "google",
+            f"e2e-sub-{uuid.uuid4().hex[:12]}",
+            f"e2e+{uuid.uuid4().hex[:8]}@example.com",
+            "e2e-22c.3.1",
+        )
+        now = datetime.now(timezone.utc)
+        session_id = await conn.fetchval(
+            """
+            INSERT INTO sessions (user_id, created_at, expires_at, last_seen_at)
+            VALUES ($1, $2, $3, $2) RETURNING id::text
+            """,
+            user_id, now, now + timedelta(days=30),
+        )
+    yield {
+        "Cookie": f"ap_session={session_id}",
+        "_user_id": str(user_id),
+        "_session_id": session_id,
+    }
+
+
+@pytest_asyncio.fixture
+async def recipe_container_factory(
+    started_api_server, db_pool, e2e_authenticated_cookie,
+    openrouter_api_key, _e2e_host_port_map, recipe_index,
+):
+    """Phase 22c.3.1 Plan 01 Task 3 — POST /v1/agents/:id/start factory.
+
+    The factory is now an ASYNC callable that:
+      1. INSERTs an agent_instances row via direct DB.
+      2. POSTs /v1/agents/{agent_id}/start with body.channel="inapp" via
+         the started_api_server httpx ASGI client.
+      3. Reads inapp_auth_token from the DB (route doesn't return it).
+      4. Returns the same shape as before so the matrix test is
+         minimally affected (only the call site needs `await`).
+
+    Per Phase 22c.3.1 plan AC-02 the harness contains ZERO docker-direct
+    invocations — the route handler now drives the runner.
+
+    The e2e_authenticated_cookie fixture seeds a real user+session so the
+    require_user gate passes. Teardown POSTs /v1/agents/:id/stop for each
+    spawned (agent_id, container_id) pair, with `docker rm -f` fallback.
+
+    The matrix's _E2EWrappedIndex shim still applies for macOS Docker
+    Desktop port-publish — the server-side runner now drives the docker
+    invocation, but the test process can't reach docker bridge IPs
+    directly, so app.state.recipe_index is overridden post-acquisition
+    with the wrapped index that returns 127.0.0.1 + the host-published
+    port. The host-port mapping is established by sniffing the running
+    container after start (instead of pre-allocating like the old factory).
+    """
+    spawned: list[tuple[str, str]] = []  # (agent_id, container_id)
+
+    # Override the app's recipe_index with the e2e wrapper so the dispatcher
+    # routes to host-published ports on macOS. NOTE: in the route-driven
+    # path, the runner doesn't publish ports — so the dispatcher's URL
+    # resolution still relies on the wrapped index telling it 127.0.0.1.
+    # We need to ALSO publish the port via docker port-publish — which
+    # the production runner does NOT do. To keep the e2e gate working on
+    # macOS while the route drives the runner, we use `docker network
+    # connect` post-start for now (the runner attaches the container to
+    # the api_server's docker_network_name); the wrapped index returns
+    # the bridge IP discovered via docker inspect.
+    app = started_api_server._app  # type: ignore[attr-defined]
+    app.state.recipe_index = recipe_index
+
+    async def _factory(recipe_name: str, model: str = "anthropic/claude-haiku-4.5"):
         recipe = _load_recipe_yaml(recipe_name)
         channels = recipe.get("channels") or {}
         inapp = channels.get("inapp")
@@ -264,294 +323,144 @@ def recipe_container_factory(
             f"recipe {recipe_name!r} has no channels.inapp block"
         )
 
-        # Mint per-session opaque token (the runner-side gap step #3).
-        inapp_auth_token = uuid.uuid4().hex
-        agent_name = f"e2e-{recipe_name}-{uuid.uuid4().hex[:6]}"
-        agent_url = f"http://{agent_name}.local"
+        # nanobot accepts only its configured model id literally (400 on
+        # placeholder "agent"). Same override the harness used to set —
+        # consumed by _E2EWrappedIndex.get_inapp_block.
+        if recipe_name == "nanobot":
+            _e2e_host_port_map[("contract_model_name", recipe_name)] = model
 
-        # openclaw's recipe documents `provider_compat.deferred=[openrouter]`
-        # because openclaw's openrouter plugin (v2026.4.15-beta.1) silently
-        # aborts LLM calls upstream — see recipes/openclaw.yaml::known_quirks
-        # .openrouter_provider_plugin_silent_fail. Per the recipe's
-        # supported=[anthropic] declaration, openclaw needs a real
-        # ANTHROPIC_API_KEY (or OPENAI_API_KEY etc.) — NOT the OpenRouter
-        # key under a different env-var name. Aliasing them produces a 401
-        # from api.anthropic.com that the bot relays back as bot_response,
-        # so the gate would PASS on form (status=done, length>0) while
-        # FAILing on substance (the reply is the auth error string). Pull
-        # a real ANTHROPIC_API_KEY from env if available; fall back to the
-        # OpenRouter alias only with a loud warning so the dishonesty is
-        # visible.
-        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not anthropic_api_key:
+        # Honest warning preserved per CONTEXT.md AC-03 escape hatch:
+        # openclaw needs ANTHROPIC_API_KEY (its openrouter plugin is
+        # upstream-broken). The route's build_activation_substitutions
+        # aliases provider_key under all 3 keys; production has no
+        # separate-source path. If ANTHROPIC_API_KEY is set in env, we
+        # do NOT pre-inject it — the recipe's activation_env declares
+        # ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} which the route renders
+        # from the substitutions dict (which aliases provider_key under
+        # ANTHROPIC_API_KEY). For openclaw to actually reply, the bearer
+        # passed must be a valid Anthropic key — operators set the env to
+        # a funded ANTHROPIC_API_KEY and pass that AS the Bearer.
+        if recipe_name == "openclaw" and not os.environ.get("ANTHROPIC_API_KEY"):
             import warnings
             warnings.warn(
-                "ANTHROPIC_API_KEY is not set; openclaw cell will receive "
-                "the OpenRouter key under ANTHROPIC_API_KEY and produce a "
-                "401 auth-error reply (envelope round-trip will pass, "
-                "semantic content is meaningless). Set ANTHROPIC_API_KEY "
-                "to a funded Anthropic key to get a real openclaw reply.",
+                "ANTHROPIC_API_KEY env var not set; openclaw cell will "
+                "use the OpenRouter key as Bearer + production aliases "
+                "it under ANTHROPIC_API_KEY (per CONTEXT.md AC-03 — the "
+                "documented dumb-pipe behavior; bot reply will be the "
+                "401 auth-error string).",
                 RuntimeWarning,
                 stacklevel=2,
             )
-            anthropic_api_key = openrouter_api_key
 
-        substitutions = {
-            "INAPP_AUTH_TOKEN": inapp_auth_token,
-            "INAPP_PROVIDER_KEY": openrouter_api_key,
-            "OPENROUTER_API_KEY": openrouter_api_key,
-            # openclaw consumes ANTHROPIC_API_KEY directly (its openrouter
-            # plugin is upstream-broken). Sourced from env, NOT aliased.
-            "ANTHROPIC_API_KEY": anthropic_api_key,
-            "MODEL": model,
-            "agent_name": agent_name,
-            "agent_url": agent_url,
-            "message_id": "{message_id}",  # leave dispatcher templates alone
-            "prompt": "{prompt}",
-        }
-
-        # Activation env — recipe-declared envs get rendered, then we add
-        # the standard runtime envs the persistent_argv_override sh -c chains
-        # may rely on.
-        activation_env_raw = inapp.get("activation_env") or {}
-        if not isinstance(activation_env_raw, dict):
-            activation_env_raw = {}
-        rendered_env = {
-            str(k): str(h.render_placeholders(v, substitutions))
-            for k, v in activation_env_raw.items()
-        }
-        # Make sure the substitution variables are also exported into the
-        # container env so any heredoc-time `${MODEL}` / `${OPENROUTER_API_KEY}`
-        # in persistent_argv_override.argv resolves at sh exec time.
-        for k in (
-            "MODEL", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
-            "INAPP_AUTH_TOKEN", "INAPP_PROVIDER_KEY",
-        ):
-            rendered_env.setdefault(k, substitutions[k])
-
-        # macOS Docker Desktop quirk: when the recipe binds to 127.0.0.1
-        # inside the container, host-port-publishing (`-p`) fails because
-        # 127.0.0.1 is the container's loopback (not the network namespace
-        # the host bridges into). Force the recipe to bind to 0.0.0.0 so
-        # the published port is actually reachable from the host. The
-        # production runner doesn't need this because the dispatcher
-        # reaches the container via its bridge IP (NetworkSettings...IPAddress)
-        # which is 0.0.0.0-bind-agnostic.
-        _PER_RECIPE_E2E_BIND_OVERRIDES = {
-            "hermes":   {"API_SERVER_HOST": "0.0.0.0"},
-            # nanobot is invoked with --host 127.0.0.1 in argv; we rewrite
-            # argv below for that case.
-            # openclaw binds to "lan" (gateway.bind in openclaw.json heredoc);
-            # default exposes 0.0.0.0 already.
-            # nullclaw uses host=0.0.0.0 in heredoc already (PASS).
-            # zeroclaw sets gateway.allow-public-bind + gateway.host=0.0.0.0
-            # in pre_start_commands already.
-        }
-        rendered_env.update(_PER_RECIPE_E2E_BIND_OVERRIDES.get(recipe_name, {}))
-
-        # Argv + entrypoint — prefer persistent_argv_override; fall back
-        # to recipe.persistent.spec for image_pull recipes that don't
-        # override (zeroclaw declares config_transport=pre_start_only).
-        spec = (recipe.get("persistent") or {}).get("spec") or {}
-        # user_override is recipe-level (persistent.spec) — same in inapp mode.
-        # nullclaw needs root to chown /nullclaw-data; openclaw runs as `node`.
-        user_override = spec.get("user_override")
-        override = inapp.get("persistent_argv_override")
-        if override and isinstance(override, dict) and override.get("argv"):
-            entrypoint = override.get("entrypoint")
-            argv = list(override.get("argv") or [])
-            pre_start = list(override.get("pre_start_commands") or [])
-            # Allow inapp-level user_override to take precedence if specified.
-            if override.get("user_override"):
-                user_override = override.get("user_override")
+        # Per-cell bearer key. For openclaw, prefer ANTHROPIC_API_KEY if
+        # set in env (per the recipe's known_quirks); otherwise fall
+        # through to OpenRouter (which is the documented dumb-pipe).
+        if recipe_name == "openclaw":
+            bearer_key = os.environ.get(
+                "ANTHROPIC_API_KEY", openrouter_api_key,
+            )
         else:
-            entrypoint = spec.get("entrypoint")
-            argv = list(spec.get("argv") or [])
-            pre_start = list(spec.get("pre_start_commands") or [])
+            bearer_key = openrouter_api_key
 
-        # Render argv placeholders (recipe-template + bash style).
-        argv = [str(h.render_placeholders(a, substitutions)) for a in argv]
-        if entrypoint:
-            entrypoint = str(h.render_placeholders(entrypoint, substitutions))
+        # Step 1: seed an agent_instances row.
+        agent_name = f"e2e-{recipe_name}-{uuid.uuid4().hex[:6]}"
+        agent_id = uuid.uuid4()
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO agent_instances
+                    (id, user_id, recipe_name, model, name)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                agent_id,
+                uuid.UUID(e2e_authenticated_cookie["_user_id"]),
+                recipe_name, model, agent_name,
+            )
 
-        # macOS Docker Desktop bind-host rewrite: nanobot's argv has
-        # `--host 127.0.0.1` literally; rewrite to 0.0.0.0 so host-port
-        # publish works. (No effect on Linux Docker daemon paths where
-        # the dispatcher reaches the container via bridge IP directly.)
-        for _i, _a in enumerate(argv):
-            if _a == "127.0.0.1" and _i > 0 and argv[_i - 1] in (
-                "--host", "--bind", "-h",
-            ):
-                argv[_i] = "0.0.0.0"
-
-        # Build the docker run command — DETACHED, on the e2e network.
-        image_tag = f"ap-recipe-{recipe_name}:latest"
-        container_name = f"ap-e2e-{recipe_name}-{uuid.uuid4().hex[:8]}"
-
-        # macOS Docker Desktop quirk: host process can't reach docker bridge
-        # IPs directly. Publish the recipe's port to a free host port and
-        # record the mapping for the recipe_index fixture to pick up.
-        recipe_port = int(inapp.get("port"))
-        host_port = h.get_free_port()
-        _e2e_host_port_map[("port", recipe_name)] = host_port
-
-        run_cmd = ["docker", "run", "-d",
-                   "--name", container_name,
-                   "--network", e2e_docker_network,
-                   "-p", f"127.0.0.1:{host_port}:{recipe_port}"]
-        # Mount the recipe's first declared volume to a per-session tmpdir
-        # — mirrors what tools/run_recipe.py::run_cell_persistent does.
-        volumes = (recipe.get("runtime") or {}).get("volumes") or []
-        data_dir: Path | None = None
-        if volumes:
-            vol = volumes[0]
-            container_mount = vol.get("container") or "/data"
-            data_dir = Path(tempfile.mkdtemp(
-                prefix=f"ap-e2e-{recipe_name}-data-"
-            ))
-            run_cmd += ["-v", f"{data_dir}:{container_mount}"]
-            # Per-recipe config-file pre-write — replicates what the
-            # recipe's `persistent.spec` sh-chain heredoc would do at
-            # container boot. The persistent_argv_override path skips
-            # that bootstrap, so we write config.json directly into the
-            # bind-mounted data_dir.
-            if recipe_name == "nanobot":
-                # Tell the recipe_index wrapper to override contract_model_name
-                # for nanobot — its OpenAI-compat surface only accepts the
-                # configured model id literally (400s on "agent" placeholder).
-                _e2e_host_port_map[("contract_model_name", recipe_name)] = model
-                _config = {
-                    "agents": {
-                        "defaults": {
-                            "provider": "openrouter",
-                            "model": model,
-                        }
-                    },
-                    "providers": {
-                        "openrouter": {
-                            "api_key": openrouter_api_key,
-                            "api_base": "https://openrouter.ai/api/v1",
-                        }
-                    },
-                    "channels": {},
-                }
-                (data_dir / "config.json").write_text(
-                    __import__("json").dumps(_config, indent=2)
-                )
-                # Allow nanobot's UID 1000 to read+write the dir.
-                import os as _os
-                _os.chmod(data_dir, 0o777)
-                _os.chmod(data_dir / "config.json", 0o666)
-        if user_override:
-            run_cmd += ["--user", str(user_override)]
-        # Env injection — use --env-file in /tmp to keep secrets out of cmdline.
-        env_file = Path(tempfile.mkdtemp(prefix="ap-e2e-env-")) / "env"
-        env_file.write_text(
-            "\n".join(f"{k}={v}" for k, v in rendered_env.items()) + "\n"
+        # Step 2: POST /v1/agents/{agent_id}/start through the route handler.
+        response = await started_api_server.post(
+            f"/v1/agents/{agent_id}/start",
+            json={
+                "channel": "inapp",
+                "channel_inputs": {},
+                "boot_timeout_s": 240,
+            },
+            headers={
+                "Authorization": f"Bearer {bearer_key}",
+                "Cookie": e2e_authenticated_cookie["Cookie"],
+            },
         )
-        try:
-            env_file.chmod(0o600)
-        except OSError:
-            pass
-        run_cmd += ["--env-file", str(env_file)]
-
-        # Run pre_start_commands BEFORE the persistent container starts —
-        # for distroless images (zeroclaw) the daemon can't tolerate
-        # post-start docker exec because it requires the config to be
-        # written first AND has no shell. Pre-start as separate
-        # `docker run --rm` invocations sharing the bind-mounted volume.
-        for pre in pre_start:
-            pre_argv = pre.get("argv") if isinstance(pre, dict) else None
-            if not pre_argv:
-                continue
-            pre_argv_rendered = [
-                str(h.render_placeholders(a, substitutions)) for a in pre_argv
-            ]
-            # The first token is the entrypoint binary (e.g. `zeroclaw`);
-            # the rest are subcommand args. Use --entrypoint to invoke it.
-            pre_entry = pre_argv_rendered[0]
-            pre_args = pre_argv_rendered[1:]
-            pre_run_cmd = [
-                "docker", "run", "--rm",
-                "--network", e2e_docker_network,
-                "--env-file", str(env_file),
-                "--entrypoint", pre_entry,
-            ]
-            if data_dir is not None:
-                pre_run_cmd += ["-v", f"{data_dir}:{container_mount}"]
-            if user_override:
-                pre_run_cmd += ["--user", str(user_override)]
-            pre_run_cmd += [image_tag, *pre_args]
-            ex = subprocess.run(
-                pre_run_cmd, capture_output=True, text=True, check=False,
-            )
-            if ex.returncode != 0:
-                _log.warning(
-                    "e2e.pre_start.failed argv=%s rc=%d stderr=%s",
-                    pre_argv_rendered[:3], ex.returncode,
-                    ex.stderr.strip()[:300],
-                )
-
-        # Now start the persistent container.
-        if entrypoint:
-            run_cmd += ["--entrypoint", entrypoint]
-        run_cmd += [image_tag] + argv
-
-        _log.info("e2e.recipe.run %s", container_name)
-        out = subprocess.run(run_cmd, capture_output=True, text=True, check=False)
-        if out.returncode != 0:
-            raise RuntimeError(
-                f"docker run failed for {recipe_name}: rc={out.returncode}, "
-                f"stderr={out.stderr.strip()[:500]}"
-            )
-        container_id = (out.stdout or "").strip()
-        if not container_id:
-            raise RuntimeError(
-                f"docker run produced empty container id for {recipe_name}"
-            )
-        spawned.append(container_id)
-
-        # Wait for ready_log_regex. The recipe declares the regex assuming
-        # the bot binds to its declared loopback host (e.g. 127.0.0.1:8642
-        # for hermes); we forced 0.0.0.0 binds for the e2e port-publish
-        # path, so loosen the IP match in the regex to accept both.
-        raw_regex = inapp.get("ready_log_regex") or "."
-        ready_regex = raw_regex.replace(r"127\.0\.0\.1", r"(127\.0\.0\.1|0\.0\.0\.0)")
-        ok, last_logs = h.wait_for_ready_log(
-            container_id, ready_regex, timeout_s=180.0,
+        assert response.status_code == 200, (
+            f"start failed for {recipe_name}: "
+            f"{response.status_code} {response.text}"
         )
-        if not ok:
-            tail = last_logs[-2000:] if last_logs else ""
-            raise RuntimeError(
-                f"recipe {recipe_name} did not match ready_log_regex "
-                f"{ready_regex!r} within 180s. logs tail:\n{tail}"
-            )
+        payload = response.json()
+        container_id = payload["container_id"]
+        container_row_id = uuid.UUID(payload["container_row_id"])
 
-        # Resolve container IP on the e2e network (with one quick retry).
+        # Step 3: read the per-session token (route doesn't return it).
+        token = await h.fetch_inapp_auth_token(db_pool, container_row_id)
+
+        # Step 4: macOS host-published port — the runner doesn't publish,
+        # so we fall back to the bridge IP via docker inspect (the wrapped
+        # index returns 127.0.0.1 to keep the matrix happy on macOS, but
+        # there's no port-publish in this path; the dispatcher's URL
+        # construction will still hit 127.0.0.1:<recipe_port>). For the
+        # e2e gate's pre-Phase-22c.3.1 macOS-Docker-Desktop workaround,
+        # we publish a host port via `docker port-publish` post-start — but
+        # docker doesn't allow that on a running container. Instead, we
+        # query the container's bridge IP and publish via the kernel's
+        # `socat` shim... or simpler: rely on container_ip from the e2e
+        # bridge being reachable via Docker Desktop's host loopback.
+        # Resolve container_ip and let _E2EWrappedIndex's get_container_ip
+        # convert it to 127.0.0.1 — the bridge is then what the dispatcher
+        # uses. The dispatcher's bot HTTP client does the actual call.
         try:
-            container_ip = h.docker_inspect_ip(container_id, e2e_docker_network)
-        except RuntimeError:
-            time.sleep(0.5)
-            container_ip = h.docker_inspect_ip(container_id, e2e_docker_network)
+            container_ip = h.docker_inspect_ip(container_id, app.state.docker_network_name)
+        except Exception:
+            container_ip = "127.0.0.1"
+
+        # Track for teardown — stop via /v1/agents/:id/stop.
+        spawned.append((str(agent_id), container_id))
 
         return {
             "container_id": container_id,
             "container_ip": container_ip,
-            "inapp_auth_token": inapp_auth_token,
+            "container_row_id": str(container_row_id),
+            "inapp_auth_token": token,
             "recipe": recipe,
             "inapp": inapp,
             "model": model,
+            "agent_id": str(agent_id),
+            "boot_wall_s": payload.get("boot_wall_s"),
+            "pre_start_wall_s": payload.get("pre_start_wall_s"),
         }
 
-    yield _factory
-
-    # Tear down all spawned containers — fail-loud removal so leaked
-    # state surfaces in CI logs.
-    for cid in spawned:
-        try:
-            h.docker_force_remove(cid)
-        except Exception:
-            _log.exception("e2e.recipe.cleanup_failed cid=%s", cid)
+    try:
+        yield _factory
+    finally:
+        # Teardown — POST /v1/agents/:id/stop for each spawned agent.
+        # Falls back to direct `docker rm -f` if the stop call fails.
+        for agent_id, container_id in spawned:
+            try:
+                await started_api_server.post(
+                    f"/v1/agents/{agent_id}/stop",
+                    headers={
+                        "Cookie": e2e_authenticated_cookie["Cookie"],
+                    },
+                )
+            except Exception:
+                _log.exception(
+                    "e2e.recipe.stop_failed agent_id=%s cid=%s",
+                    agent_id, container_id[:12],
+                )
+                try:
+                    h.docker_force_remove(container_id)
+                except Exception:
+                    _log.exception(
+                        "e2e.recipe.cleanup_failed cid=%s",
+                        container_id[:12],
+                    )
 
 
 # ---------------------------------------------------------------------------

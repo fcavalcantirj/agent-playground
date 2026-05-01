@@ -244,6 +244,22 @@ async def fetch_message_status(
     return dict(row)
 
 
+async def fetch_inapp_auth_token(
+    pool: asyncpg.Pool, container_row_id: UUID,
+) -> str | None:
+    """Phase 22c.3.1 Plan 01 Task 3 — read the per-session inapp_auth_token.
+
+    The route handler does NOT return the token in the AgentStartResponse
+    body (server-side only); the matrix test needs it for the dispatcher
+    Bearer header. Direct PG read.
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT inapp_auth_token FROM agent_containers WHERE id=$1",
+            container_row_id,
+        )
+
+
 async def fetch_outbound_event(
     pool: asyncpg.Pool, container_row_id: UUID,
 ) -> dict[str, Any] | None:
@@ -409,6 +425,7 @@ __all__ = [
     "seed_inapp_message",
     "fetch_dispatcher_row",
     "fetch_message_status",
+    "fetch_inapp_auth_token",
     "fetch_outbound_event",
     "assert_status_transitions",
     "parse_reply_per_contract",
