@@ -1173,6 +1173,7 @@ def run_cell_persistent(
     # `test_run_recipe_telegram_invariant.py::test_telegram_unchanged*`).
     override_raw = channel.get("persistent_argv_override")
     activation_env_decl = channel.get("activation_env")
+    channel_ready_log = channel.get("ready_log_regex")
     has_override_argv = bool(
         override_raw
         and isinstance(override_raw, dict)
@@ -1472,7 +1473,16 @@ def run_cell_persistent(
         raise RuntimeError("docker run -d produced empty container id")
 
     # 6. Poll `docker logs <container_id>` for ready_log_regex.
-    ready_regex = re.compile(spec["ready_log_regex"])
+    # When the new path is active (gate_open) and the channel block declares
+    # its own ready_log_regex, use it — recipes layer it on the inapp channel
+    # so the runner waits for the inapp daemon's "listening" line, not the
+    # default (telegram-shaped) spec line. Telegram path keeps spec value:
+    # gate_open=False there, so byte-identical behavior preserved (D-27).
+    ready_log_pattern = (
+        channel_ready_log if (gate_open and channel_ready_log)
+        else spec["ready_log_regex"]
+    )
+    ready_regex = re.compile(ready_log_pattern)
     deadline = t0 + boot_timeout_s
     ready = False
     while time.time() < deadline:

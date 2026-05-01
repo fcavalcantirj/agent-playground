@@ -191,33 +191,9 @@ async def execute_persistent_start(
     ``activation_substitutions`` values are logged or persisted by this
     module. Plan 22-05's route layer is responsible for redacting
     exceptions before any persistence touch.
-
-    Phase 22c.3.1-01-AC01 (Rule-1 fix): when the channel block declares
-    its own ``ready_log_regex`` (recipes layer it on the inapp channel
-    so the runner waits for the inapp daemon's "listening" line, not
-    the telegram channel's "polling thread started"), shallow-copy the
-    recipe + override ``persistent.spec.ready_log_regex`` BEFORE calling
-    into ``run_cell_persistent``. The runner reads from
-    ``spec["ready_log_regex"]`` (line 1475 in tools/run_recipe.py); this
-    is the closest behavior-preserving way to make it channel-aware
-    without touching the runner. Telegram path is unaffected because
-    its ``channels.telegram`` block does not (need to) declare a
-    separate ready_log_regex — the spec one IS the telegram one.
     """
     mod = _import_run_recipe_module()
     image_tag = f"ap-recipe-{recipe['name']}"   # matches tools/run_recipe.py convention
-
-    # Channel-specific ready_log_regex override (see docstring above).
-    channel_block = (recipe.get("channels") or {}).get(channel_id) or {}
-    channel_ready_log = channel_block.get("ready_log_regex")
-    if channel_ready_log:
-        recipe = dict(recipe)
-        persistent = dict(recipe.get("persistent") or {})
-        spec = dict(persistent.get("spec") or {})
-        spec["ready_log_regex"] = channel_ready_log
-        persistent["spec"] = spec
-        recipe["persistent"] = persistent
-
     tag_lock = await _get_tag_lock(app_state, image_tag)
     async with tag_lock:                         # serialize SAME-tag builds
         async with app_state.run_semaphore:      # bound total concurrent boots
