@@ -156,6 +156,7 @@ async def execute_persistent_start(
     channel_creds: dict[str, str],
     run_id: str,
     boot_timeout_s: int = 180,
+    activation_substitutions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Spawn a persistent container using the same concurrency scaffold as ``execute_run``.
 
@@ -170,6 +171,13 @@ async def execute_persistent_start(
     / ``detail`` string fields attached so the route layer can branch without
     introspecting the runner's bespoke ``Verdict`` namedtuple.
 
+    Phase 22c.3.1 (D-12..D-15, AMD-37): ``activation_substitutions`` is
+    threaded through to ``run_cell_persistent`` so the runner's channel-
+    aware override path (when the recipe declares
+    ``channels.{channel_id}.persistent_argv_override``) renders activation-
+    time placeholders. When ``None``, the runner's AMD-37 gate closes and
+    the legacy code path runs — telegram path stays byte-identical (D-27).
+
     Concurrency notes:
     - ``tag_lock`` is held for the full boot duration (~10-120s depending on
       recipe). Intentional: concurrent ``/start`` requests for the SAME
@@ -179,9 +187,10 @@ async def execute_persistent_start(
       function that blocks on ``docker run -d`` + log polling; calling
       directly from an ``async def`` stalls the event loop.
 
-    BYOK invariant: neither ``api_key_val`` nor ``channel_creds`` are logged
-    or persisted by this module. Plan 22-05's route layer is responsible for
-    redacting exceptions before any persistence touch.
+    BYOK invariant: neither ``api_key_val`` nor ``channel_creds`` nor
+    ``activation_substitutions`` values are logged or persisted by this
+    module. Plan 22-05's route layer is responsible for redacting
+    exceptions before any persistence touch.
     """
     mod = _import_run_recipe_module()
     image_tag = f"ap-recipe-{recipe['name']}"   # matches tools/run_recipe.py convention
@@ -200,6 +209,7 @@ async def execute_persistent_start(
                 run_id=run_id,
                 quiet=True,
                 boot_timeout_s=boot_timeout_s,
+                activation_substitutions=activation_substitutions,
             )
     # Same tuple/dict shape handling as ``execute_run`` — tests may
     # short-circuit with just the details dict (no Verdict namedtuple).

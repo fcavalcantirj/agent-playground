@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -57,6 +58,7 @@ from ..models.agents import (
     AgentStopResponse,
 )
 from ..models.errors import ErrorCode, make_error_envelope
+from ..services.inapp_substitutions import build_activation_substitutions
 from ..services.run_store import (
     fetch_agent_instance,
     fetch_running_container_for_agent,
@@ -367,6 +369,23 @@ async def start_agent(
             "failed to persist pending container row",
         )
 
+    # --- Step 5b (Phase 22c.3.1): mint inapp token + build activation subs ---
+    # D-09 + D-11: only ``channel == "inapp"`` mints a token; telegram path
+    # leaves the column NULL. Token shape is ``uuid.uuid4().hex`` (32 hex
+    # chars). ``build_activation_substitutions`` builds the dict consumed
+    # by the runner's override path; for telegram channels we skip it
+    # (legacy path runs without substitutions per AMD-37).
+    inapp_auth_token: str | None = None
+    activation_substitutions: dict[str, str] | None = None
+    if body.channel == "inapp":
+        inapp_auth_token = uuid.uuid4().hex
+        activation_substitutions = build_activation_substitutions(
+            provider_key=provider_key,
+            agent_name=agent["name"],
+            agent_model=agent["model"],
+            inapp_auth_token=inapp_auth_token,
+        )
+
     # --- Step 6: execute_persistent_start (no DB held) ---
     run_id = new_run_id()
     boot_timeout_s = body.boot_timeout_s or 180
@@ -381,12 +400,16 @@ async def start_agent(
             channel_creds=dict(body.channel_inputs),
             run_id=run_id,
             boot_timeout_s=boot_timeout_s,
+            activation_substitutions=activation_substitutions,
         )
     except Exception as e:
         # Redact provider key FIRST (longer + more sensitive), then
-        # channel creds. Apply both to the string before it touches the
-        # DB or the response.
+        # the inapp_auth_token (RESEARCH §Risks §7), then channel creds.
+        # Apply all three to the string before it touches the DB or the
+        # response.
         redacted = str(e).replace(provider_key, "<REDACTED>")
+        if inapp_auth_token:
+            redacted = redacted.replace(inapp_auth_token, "<REDACTED>")
         redacted = _redact_creds(redacted, body.channel_inputs)
         async with pool.acquire() as conn:
             await mark_agent_container_stopped(
@@ -406,11 +429,12 @@ async def start_agent(
     # --- Step 7: verify PASS verdict (non-PASS = INVOKE_FAIL / TIMEOUT) ---
     if details.get("verdict") != "PASS":
         # Container failed to reach ready. ``detail`` is already redacted
-        # at the runner layer (``_redact_channel_creds``); apply our
-        # redaction too as a belt-and-braces defense since the cred set
-        # the runner saw may differ from the API-layer view.
+        # at the runner layer (``_redact_channel_creds`` w/ extra_secrets);
+        # apply our redaction too as a belt-and-braces defense.
         detail = details.get("detail") or f"verdict={details.get('verdict')}"
         redacted = str(detail).replace(provider_key, "<REDACTED>")
+        if inapp_auth_token:
+            redacted = redacted.replace(inapp_auth_token, "<REDACTED>")
         redacted = _redact_creds(redacted, body.channel_inputs)
         async with pool.acquire() as conn:
             await mark_agent_container_stopped(
@@ -424,6 +448,12 @@ async def start_agent(
         )
 
     # --- Step 8: mark row running (DB scope 2) ---
+    # D-33: inapp_auth_token is folded into the SAME UPDATE — closes the
+    # microsecond race window where a chat POST between the running-UPDATE
+    # and a separate token-UPDATE could dispatch unauthenticated.
+    # AC-13 grep gate enforces no separate UPDATE statement here.
+    # Note: watcher idles for inapp channel — no event_log_regex declared
+    # (graceful degradation in watcher_service.py:519-523).
     ready_at = datetime.now(timezone.utc)
     container_id = details["container_id"]
     boot_wall_s = float(details.get("boot_wall_s") or 0.0)
@@ -435,6 +465,7 @@ async def start_agent(
                 container_id=container_id,
                 boot_wall_s=boot_wall_s,
                 ready_at=ready_at,
+                inapp_auth_token=inapp_auth_token,
             )
         except asyncpg.UniqueViolationError:
             # Race: two /start requests both passed pending-insert
@@ -513,6 +544,7 @@ async def start_agent(
         )
 
     # --- Step 9: return response ---
+    pre_start_wall = details.get("pre_start_wall_s")
     return AgentStartResponse(
         agent_id=agent_id,
         container_row_id=container_row_id,
@@ -524,6 +556,9 @@ async def start_agent(
         health_check_ok=bool(details.get("health_check_ok")),
         health_check_kind=str(
             details.get("health_check_kind") or "unknown"
+        ),
+        pre_start_wall_s=(
+            float(pre_start_wall) if pre_start_wall is not None else None
         ),
     ).model_dump(mode="json")
 

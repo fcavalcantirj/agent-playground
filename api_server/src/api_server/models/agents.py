@@ -105,6 +105,10 @@ class AgentStartResponse(BaseModel):
     boot_wall_s: float
     health_check_ok: bool
     health_check_kind: str
+    # Phase 22c.3.1 (D-31, AC-11): pre_start telemetry. Populated when
+    # ``run_cell_persistent`` ran any pre_start_commands (zeroclaw inapp =
+    # the canonical case); ``None`` for the legacy / no-pre-start path.
+    pre_start_wall_s: float | None = None
 
 
 class AgentStatusResponse(BaseModel):

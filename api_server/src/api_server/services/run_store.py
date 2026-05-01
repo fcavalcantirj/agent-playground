@@ -284,6 +284,7 @@ async def write_agent_container_running(
     container_id: str,
     boot_wall_s: float,
     ready_at: datetime,
+    inapp_auth_token: str | None = None,
 ) -> None:
     """Flip a pending container row 'starting' -> 'running'.
 
@@ -297,6 +298,12 @@ async def write_agent_container_running(
     already running — asyncpg raises ``UniqueViolationError`` which the
     route maps to 409 AGENT_ALREADY_RUNNING. The caller is expected to
     rollback via ``mark_agent_container_stopped(..., last_error=...)``.
+
+    Phase 22c.3.1 (D-33, AC-13): ``inapp_auth_token`` is folded into the
+    SAME UPDATE — closes the microsecond race window where a chat POST
+    arriving between the running-UPDATE and a separate token-UPDATE
+    would dispatch unauthenticated. Backwards-compat: telegram callers
+    omit the kwarg (or pass None) — the column default is NULL.
     """
     await conn.execute(
         """
@@ -304,7 +311,8 @@ async def write_agent_container_running(
            SET container_id = $2,
                container_status = 'running',
                boot_wall_s = $3,
-               ready_at = $4
+               ready_at = $4,
+               inapp_auth_token = $5
          WHERE id = $1
            AND container_status = 'starting'
         """,
@@ -312,6 +320,7 @@ async def write_agent_container_running(
         container_id,
         boot_wall_s,
         ready_at,
+        inapp_auth_token,
     )
 
 
@@ -332,6 +341,11 @@ async def mark_agent_container_stopped(
     BEFORE calling (the runner's ``_redact_api_key`` helper handles
     the two places — VAR= form and bare value). This function does
     NOT redact; it only persists.
+
+    Phase 22c.3.1 (D-29): also clears ``inapp_auth_token`` to NULL on
+    every stop — the token has no audit value beyond the running window
+    and the dispatcher gates on container_status='running' anyway.
+    Honors D-09's "cleared by mark_stopped" semantics.
     """
     new_status = "start_failed" if last_error else "stopped"
     await conn.execute(
@@ -339,7 +353,8 @@ async def mark_agent_container_stopped(
         UPDATE agent_containers
            SET container_status = $2,
                stopped_at = NOW(),
-               last_error = $3
+               last_error = $3,
+               inapp_auth_token = NULL
          WHERE id = $1
         """,
         container_row_id,
