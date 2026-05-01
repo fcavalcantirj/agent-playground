@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: "Phase 22c.3 SHIPPED — SC-03 phase exit gate PASSED 2026-04-30. Plan 22c.3-15 (5-cell e2e matrix gate) SHIPPED (commits f938a3a + 9600e76 + 6f523d6). e2e-report.json shows passed=true with 5/5 PASS entries: hermes (openai_compat 12058ms), nanobot (openai_compat 8144ms), openclaw (openai_compat 59761ms — contract round-trip valid; upstream Anthropic auth surfaced in bot_response per documented spike behavior), nullclaw (a2a_jsonrpc 17595ms), zeroclaw (zeroclaw_native 4165ms). Total wall 1m44s, all under D-40 600s/cell budget. `make e2e-inapp` exits 0 with 'GATE PASS — 5/5 cells'. Real Docker (testcontainers + ap-recipe-* images) + real Postgres + real OpenRouter HTTP — no mocks (golden rule #1). Route B (test-fixture-side runner replication) per Plan 15 key_links line 60: the 5-plan-flagged production runner-side wiring (agent_lifecycle.py::start_persistent + tools/run_recipe.py::run_cell_persistent + main.py lifespan recipe_index wiring) is filed as explicit follow-up in deferred-items.md. Rule 1 deviation: added auth_mode: bearer to recipes/hermes.yaml (parser was reading auth_mode but recipe only declared auth_header). 4 Rule-3 deviations all in test fixture per Route B: macOS Docker Desktop port-publish workaround, nanobot model placeholder rejection, openclaw dash-vs-dot model id, zeroclaw distroless pre_start ordering. Phase 22c.3 (15 plans, 5 waves) is COMPLETE."
-stopped_at: "2026-04-30 — Phase 22c.3 FULLY CLOSED. Verifier ran (commit 4d6b28c) → gaps_found (3 gaps). 3 fix commits shipped: 0b5bee3 (Dockerfile redis pin <7→<8 CR-01), 24e582b (app.state.recipe_index + docker_client wired in lifespan + Settings.docker_network_name; closes the recipe_index portion of gap #1), a5bf8cb (e2e harness no longer aliases ANTHROPIC_API_KEY := openrouter_api_key; closes gap #3). Re-verifier (commit 0377a4b) flipped status to passed (7/8 must-haves; 1 runner-side start_persistent extension deferred to follow-up phase 22c.3.1). Re-run of make e2e-inapp with both keys loaded confirmed 5/5 PASS — hermes/nanobot/nullclaw/zeroclaw produce persona-correct replies; openclaw produces honest 'Anthropic credit balance too low' string (the harness is no longer lying; account is unfunded — fund anthropic to get persona reply, or accept honest blocker). Phase 22c.3.1 (runner-side inapp wiring follow-up) filed in ROADMAP — ~130 LOC across 2 files, prerequisite for Phase 23 (Flutter). Next: /gsd-execute-phase 22c.3.1 to land the runner-side wiring, OR proceed to Phase 23 planning."
-last_updated: "2026-04-30T23:55:00.000Z"
+status: "Phase 22c.3.1-01 ARCHITECTURALLY COMPLETE 2026-05-01 — runner+route+harness wired per 36 D-decisions + AMD-37 + 15 ACs; AC-01 e2e gate BLOCKED on macOS Docker Desktop port reachability (Rule-4 architectural follow-up; <50 LOC; needs publish-ports flag or dockerized harness). 14 of 15 ACs GREEN or partial-GREEN; D-27 byte-identical invariant 3/3 snapshot tests PASS; 274 passed / 8 pre-existing failures unchanged. 7 commits: cfedafd (Wave 0) + ca9bb19/bdbb6f0 (T1 RED/GREEN) + 702558c/7ad381d (T2 RED/GREEN) + e61bd1d (T3) + dc69a36 (Rule-1 deviations: runner import path + AMD-37 gate widening for hermes activation_env-only + exc_info logging)."
+stopped_at: "Plan 22c.3.1-01 SHIPPED architecturally; e2e gate AC-01 deferred for macOS networking follow-up. See .planning/phases/22c.3.1-runner-inapp-wiring/22c.3.1-01-SUMMARY.md"
+last_updated: "2026-05-01T20:35:00.000Z"
 progress:
   total_phases: 19
   completed_phases: 5
@@ -20,10 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 22 (channels-v0.2) parent close-out + next milestone phase selection
+**Current focus:** Phase 22c.3.1 — runner-inapp-wiring
 
 ## Current Position
 
+Phase: 22c.3.1 (runner-inapp-wiring) — EXECUTING
+Plan: 1 of 1
 **Phase 22c (oauth-google) — PLANNED (9 plans, 6 waves), ready for /gsd-execute-phase** at current uncommitted state (see stack below).
 
 ### Stack of completed work this session (2026-04-19)

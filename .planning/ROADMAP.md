@@ -411,15 +411,13 @@ Plans:
 
 ### Phase 22c.3.1: Runner-side inapp wiring (follow-up to 22c.3)
 
-**Status:** Filed; not started. ~130 LOC across 2 files. Single plan.
+**Status:** Architecturally complete (1 of 1 plan SHIPPED 2026-05-01); AC-01 e2e gate BLOCKED on macOS Docker Desktop networking — single follow-up estimated <50 LOC.
 **Prerequisite for:** Phase 23 (Flutter native app) — needs production deploy of inapp-channel containers with placeholder substitution + `INAPP_AUTH_TOKEN` minting.
-**Why deferred from 22c.3:** No frontend ships an "inapp deploy" button today; the substitution discipline is fully encoded in the e2e harness as Route B; the dispatcher contract layer + Redis fan-out + SSE replay all proven via 5/5 e2e PASS. Holding 22c.3 open for this would block Phase 23 planning for what is structurally a Phase 23 prerequisite.
 
 **Scope:**
 
-- [ ] 22c.3.1-01-PLAN.md — `tools/run_recipe.py::run_cell_persistent` extends with `channel_id` parameter; reads `recipe.channels.inapp.persistent_argv_override` when `channel_id == "inapp"`; merges `channels.inapp.activation_env` into env-file; renders `${INAPP_AUTH_TOKEN}` / `${INAPP_PROVIDER_KEY}` / `{agent_name}` / `{agent_url}` / `${MODEL}` placeholders before docker-run. (~80 LOC)
-- [ ] 22c.3.1-02-PLAN.md — `api_server/src/api_server/routes/agent_lifecycle.py::start_persistent` mints per-session opaque `INAPP_AUTH_TOKEN` (UUID hex); passes to `execute_persistent_start`; persists via `UPDATE agent_containers SET inapp_auth_token = $1 WHERE id = $2` after `write_agent_container_running`. (~50 LOC)
+- [x] 22c.3.1-01-PLAN.md — single plan, 3 tasks, 7 commits SHIPPED 2026-05-01: `tools/run_recipe.py::run_cell_persistent` extended with `activation_substitutions` kwarg + AMD-37 gate (extended to `(override OR activation_env) AND substitutions`) + activation_env overlay (D-24) + pre_start_commands loop with cidfile cleanup (D-25/D-32) + boot_timeout reset (D-31); `routes/agent_lifecycle.py::start_agent` mints `INAPP_AUTH_TOKEN = uuid.uuid4().hex` for `body.channel == "inapp"` + threads `build_activation_substitutions` to `execute_persistent_start` + folds token into `write_agent_container_running` atomic UPDATE (D-33); `mark_agent_container_stopped` clears token (D-29); telegram path D-27 byte-identical invariant verified by 3/3 snapshot tests; 274 passed / 8 pre-existing failures unchanged. Commits: `cfedafd` (Wave 0) + `ca9bb19` (T1 RED) + `bdbb6f0` (T1 GREEN) + `702558c` (T2 RED) + `7ad381d` (T2 GREEN) + `e61bd1d` (T3 GREEN) + `dc69a36` (3 Rule-1 deviations: import path + AMD-37 gate widening for hermes activation_env-only + exc_info logging). Deferred AC-01 follow-up: macOS Docker Desktop port reachability — needs runner opt-in `--p` flag OR dockerized harness (Rule-4 architectural).
 
-**Reference impl already on main:** `api_server/tests/e2e/conftest.py::_factory` (substitution dict + `render_placeholders` + `INAPP_AUTH_TOKEN` minting). Direct copy + a `dev_only_via_e2e_harness=False` argument flip is most of the work.
+**Reference impl already on main:** `api_server/tests/e2e/conftest.py::_factory` was rewritten to POST `/v1/agents/:id/start` (zero `docker_client.containers.run` / `subprocess.run docker run -d` invocations remaining); the runner+route+harness are wired exactly as specified by 36 D-decisions + AMD-37 + 15 acceptance criteria.
 
-**Verification:** Deploy a recipe with `channel: "inapp"` against the live api_server, POST `/v1/agents/:id/messages`, assert non-error reply. The current e2e gate substitutes the inline harness for these two production codepaths; this phase re-runs `make e2e-inapp` against the production handler path and confirms 5/5 PASS without Route B substitution.
+**Verification:** AC-01 5/5 PASS via route handler still pending the macOS networking follow-up; AC-02..AC-15 all GREEN or partial-GREEN (15/15 architecturally, 1 BLOCKED by deferred). See `.planning/phases/22c.3.1-runner-inapp-wiring/22c.3.1-01-SUMMARY.md`.
