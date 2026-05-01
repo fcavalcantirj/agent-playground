@@ -163,7 +163,38 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 - [ ] **OSS-09**: `unattended-upgrades` is configured on the host for kernel and Docker patches (CRIT-4 ongoing mitigation)
 - [ ] **OSS-10**: Published Falco/Tetragon rules and a reconciliation/restore runbook ship in `docs/ops/`
 
-## v2 Requirements
+## Milestone v0.3 Requirements (Mobile MVP — Solvr Labs)
+
+Active milestone. Goal: Flutter native mobile app driving the agent-spawn substrate end-to-end on localhost. Deploy → Dashboard → Chat with persisted history. No deploy, no auth, no streaming. "Code we'll reuse" — every shortcut must be additive (replaceable later without rewriting call sites).
+
+Source-of-truth for locked decisions: `.planning/notes/mobile-mvp-decisions.md`. Streaming captured as deferred seed: `.planning/seeds/streaming-chat.md`.
+
+### Backend Mobile API (API)
+
+- [ ] **API-01**: Backend exposes `POST /v1/agents/:id/chat` accepting `{message: string}`. The handler looks up the agent's running container via `agent_containers`, POSTs to its bridge-IP `/v1/chat/completions` with the OpenAI shape (`stream: false`), persists both the user row and the assistant row in the new `messages` table inside one transaction, and returns `{message: string}`. Block-and-wait — streaming is a future additive endpoint variant, NOT a rewrite of this handler.
+- [ ] **API-02**: Backend exposes `GET /v1/agents/:id/messages?limit=N` returning the agent's chat history for the current authenticated user, ordered by `created_at` ascending (oldest first for chat display), default limit=200, max limit=1000.
+- [ ] **API-03**: Backend exposes `GET /v1/agents` returning the current user's `agent_containers` rows shaped for the Dashboard (id, recipe_name, model, status, created_at, last activity timestamp). Empty array when no agents exist.
+- [ ] **API-04**: Backend exposes `GET /v1/models` proxying OpenRouter's `/api/v1/models` catalog with a TTL cache (≥5 min, ≤1 h), so the Flutter app does NOT ship a hardcoded model list (Golden Rule #2 — dumb client). Auth resolution (platform key vs per-user) settled inside the phase spec.
+- [ ] **API-05**: Backend has a dev-mode auth shim. A FastAPI dependency `Depends(current_user_id)` returns a hardcoded UUID when `AP_ENV=dev` AND no real auth header is present. Every API-01..04 route consumes this dependency. The same dependency is the integration point for OAuth (Phase 22c-oauth-google) — swapping the impl must NOT require touching call sites.
+- [ ] **API-06**: Alembic migration creates a `messages (id UUID PK, agent_id UUID FK→agent_containers.id, user_id UUID, role text CHECK IN ('user','assistant'), content text, created_at timestamptz)` table with a btree index on `(agent_id, created_at)` to support history pagination.
+- [ ] **API-07**: Integration tests for API-01..06 hit real Postgres via testcontainers and real Docker (same harness as Phase 22c.3.1). No mocks for chat-proxy round-trips; bot HTTP responses may be `respx`-stubbed at the upstream HTTP layer ONLY (the proxy's own DB writes + container lookup must be real).
+
+### Flutter App Foundation (APP)
+
+- [ ] **APP-01**: A Flutter native project lives at `mobile/` (or chosen project root) with `flutter create` baseline + Riverpod (state management default), go_router (navigation), dio (HTTP client). State management override allowed only with documented rationale during the spec phase.
+- [ ] **APP-02**: The Flutter theme implements Solvr Labs design language: monochrome palette (near-black `#1F1F1F` foreground / near-white `#FAFAF7` background mirroring the OKLCH values from `/Users/fcavalcanti/dev/solvr/frontend/app/globals.css`), corner radius `0` (flat), `Inter` for sans-serif (Google Fonts), `JetBrains Mono` for monospace (the `>_ SOLVR_LABS` logo + status text). Light mode is canonical; dark mode optional later.
+- [ ] **APP-03**: A typed API client (hand-written or codegen — settled in spec) covers every endpoint the screens consume: `POST /v1/agents/:id/start`, `POST /v1/agents/:id/chat`, `GET /v1/agents/:id/messages`, `GET /v1/agents`, `GET /v1/recipes` (existing), `GET /v1/models`. Errors and timeouts surface as typed Result/Either values, not opaque exceptions.
+- [ ] **APP-04**: An env-config switch lets the app target `http://localhost:8000` (default), a LAN IP (e.g. `http://192.168.1.x:8000`) for same-wifi device testing, or an ngrok URL — runtime-configurable without recompile (e.g. an in-app debug menu or compile-time flavor).
+- [ ] **APP-05**: A spike artifact at `spikes/flutter-api-roundtrip.md` proves end-to-end against a real local API server: deploy round-trip + chat round-trip + auth-shim header injection — captured BEFORE the screens phase plan is sealed (Golden Rule #5).
+
+### Mobile Screens (UI)
+
+- [ ] **UI-01**: Dashboard screen renders the current user's agents from `GET /v1/agents`. Each row shows: agent name, model, online status indicator (green dot for running). Empty state shows a "+" call to action. Tapping a row opens Chat for that agent. Tapping "+" opens New Agent. Bottom navigation per the mockup is rendered cosmetically; only Home tab functions in MVP.
+- [ ] **UI-02**: New Agent screen lets the user pick a clone from `GET /v1/recipes` (rendered as cards: hermes, openclaw, nullclaw, picoclaw, nanobot — clones the existing API exposes), pick a model from `GET /v1/models`, and enter a name. Tapping Deploy POSTs to `/v1/agents/:id/start` and on success navigates to Chat for the new agent. Telegram-integration toggle is rendered but disabled in MVP.
+- [ ] **UI-03**: Chat screen loads the last N messages on open via `GET /v1/agents/:id/messages`, displays them as themed bubbles (user vs assistant differentiated by alignment + background), and sends new messages via `POST /v1/agents/:id/chat`. The send button shows a loading state during the block-and-wait round-trip; the new message appears in the list when the response lands. Messages persist across app restarts (proven via integration test or manual smoke).
+- [ ] **UI-04**: The end-to-end demo flow completes against the local backend on a real device or simulator: open app → Dashboard → tap "+" → pick clone + model + name → Deploy → Chat opens → type message → assistant replies → kill app → relaunch → previous messages still visible.
+
+
 
 Deferred to future release. Tracked but not in the current roadmap.
 
@@ -225,6 +256,13 @@ Explicitly excluded. Documented to prevent scope creep.
 | Running agent as PID 1 | `tini` is always PID 1; agent is a supervised child. |
 | Real-time collaboration | v2 feature — deferred to prove the single-user experience first. |
 | IPFS checkpoint pattern from MSV | Defer to v2 per MSV's own docs; v1 uses heartbeat + DB state only. |
+| (v0.3) Hetzner deploy + remote-API switch | Out of Mobile MVP. Local-first: ship the demo against `localhost`/LAN/ngrok, deploy comes after. |
+| (v0.3) Streaming chat | Captured as additive seed (`seeds/streaming-chat.md`). Block-and-wait first; streaming is a later additive endpoint variant, NOT a rewrite. |
+| (v0.3) Login screen + OAuth flow | Auth-shim only for MVP. Login screen + Phase 22c-oauth-google plug into the same `current_user_id` dependency later. |
+| (v0.3) Agent Settings, Browse tab, Profile tab, standalone Select Model screen | Out of MVP. Model picker is embedded inside New Agent. Settings/Browse/Profile are post-MVP screens. |
+| (v0.3) Telegram-integration toggle in New Agent (functional) | Rendered but disabled. Telegram channel works via the existing path; MVP focuses on in-app chat. |
+| (v0.3) Push notifications, deep links, app-store identity | None of these in MVP. Mobile scaffold targets developer demo, not store distribution. |
+| (v0.3) Conversation pagination, search, export, regenerate, edit, delete messages | None in MVP. Send → reply → see history. |
 
 ## Traceability
 
