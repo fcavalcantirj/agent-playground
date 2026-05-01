@@ -289,11 +289,40 @@ def recipe_container_factory(
         agent_name = f"e2e-{recipe_name}-{uuid.uuid4().hex[:6]}"
         agent_url = f"http://{agent_name}.local"
 
+        # openclaw's recipe documents `provider_compat.deferred=[openrouter]`
+        # because openclaw's openrouter plugin (v2026.4.15-beta.1) silently
+        # aborts LLM calls upstream — see recipes/openclaw.yaml::known_quirks
+        # .openrouter_provider_plugin_silent_fail. Per the recipe's
+        # supported=[anthropic] declaration, openclaw needs a real
+        # ANTHROPIC_API_KEY (or OPENAI_API_KEY etc.) — NOT the OpenRouter
+        # key under a different env-var name. Aliasing them produces a 401
+        # from api.anthropic.com that the bot relays back as bot_response,
+        # so the gate would PASS on form (status=done, length>0) while
+        # FAILing on substance (the reply is the auth error string). Pull
+        # a real ANTHROPIC_API_KEY from env if available; fall back to the
+        # OpenRouter alias only with a loud warning so the dishonesty is
+        # visible.
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not anthropic_api_key:
+            import warnings
+            warnings.warn(
+                "ANTHROPIC_API_KEY is not set; openclaw cell will receive "
+                "the OpenRouter key under ANTHROPIC_API_KEY and produce a "
+                "401 auth-error reply (envelope round-trip will pass, "
+                "semantic content is meaningless). Set ANTHROPIC_API_KEY "
+                "to a funded Anthropic key to get a real openclaw reply.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            anthropic_api_key = openrouter_api_key
+
         substitutions = {
             "INAPP_AUTH_TOKEN": inapp_auth_token,
             "INAPP_PROVIDER_KEY": openrouter_api_key,
             "OPENROUTER_API_KEY": openrouter_api_key,
-            "ANTHROPIC_API_KEY": openrouter_api_key,  # openclaw fallback
+            # openclaw consumes ANTHROPIC_API_KEY directly (its openrouter
+            # plugin is upstream-broken). Sourced from env, NOT aliased.
+            "ANTHROPIC_API_KEY": anthropic_api_key,
             "MODEL": model,
             "agent_name": agent_name,
             "agent_url": agent_url,
