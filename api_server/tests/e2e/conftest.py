@@ -154,6 +154,22 @@ def recipe_index(e2e_docker_network: str, _e2e_host_port_map: dict) -> Any:
         ip_ttl_seconds=60.0,
     )
 
+    # Phase 22c.3.1-01-AC01 dockerized-harness branch: when the outer
+    # ``make e2e-inapp-docker`` Makefile target sets
+    # ``AP_E2E_DOCKERIZED_HARNESS=1`` in the test container's env, the
+    # pytest process and the recipe containers BOTH live on the same
+    # docker network (the default ``bridge`` — runner spawns recipes
+    # there because ``tools/run_recipe.py`` has no ``--network`` flag).
+    # In that mode the recipe's bridge IP is reachable from the test
+    # container directly (container→container via bridge), so we delegate
+    # to the real ``InappRecipeIndex.get_container_ip`` which reads
+    # ``NetworkSettings.Networks[<network_name>].IPAddress`` from
+    # ``docker inspect`` — exactly the lookup the production dispatcher
+    # does. The legacy ``"127.0.0.1"`` host-published-port path stays for
+    # the non-dockerized invocation (``make e2e-inapp`` on Linux CI where
+    # bridge IPs are reachable from host pytest).
+    _dockerized = os.environ.get("AP_E2E_DOCKERIZED_HARNESS") == "1"
+
     class _E2EWrappedIndex:
         """Thin wrapper that overrides the IP + port to host-published values."""
 
@@ -175,6 +191,12 @@ def recipe_index(e2e_docker_network: str, _e2e_host_port_map: dict) -> Any:
             override_cmn = _e2e_host_port_map.get(("contract_model_name", recipe_name))
             if override_cmn is not None:
                 contract_model_name = override_cmn
+            # Dockerized harness: recipes are NOT host-port-published — the
+            # test container reaches them via container→container on the
+            # docker bridge. Use the recipe's declared internal port, NOT
+            # the (irrelevant) host port mapping.
+            if _dockerized:
+                host_port = cfg.port
             return InappChannelConfig(
                 transport=cfg.transport,
                 port=host_port,
@@ -189,7 +211,13 @@ def recipe_index(e2e_docker_network: str, _e2e_host_port_map: dict) -> Any:
             )
 
         def get_container_ip(self, container_id: str) -> str:
-            # Host-published path: every e2e container is reachable via 127.0.0.1.
+            if _dockerized:
+                # Dockerized harness: real bridge-IP lookup, same as
+                # production dispatcher. The test container shares the
+                # docker bridge with the recipe — bridge IP is reachable.
+                return real_index.get_container_ip(container_id)
+            # Legacy host-pytest path: every e2e container is reachable
+            # via 127.0.0.1 (host-port-published).
             return "127.0.0.1"
 
     return _E2EWrappedIndex()
@@ -473,3 +501,55 @@ async def recipe_container_factory(
 # automatically activates because db_pool is in the fixture chain via
 # oauth_user_with_openrouter_key. Each parametrized recipe row gets a
 # clean DB.)
+
+
+# ---------------------------------------------------------------------------
+# Phase 22c.3.1-01-AC01 — dockerized harness shutdown helper
+# ---------------------------------------------------------------------------
+#
+# Pre-existing watcher_service.py blocks the asyncio runner shutdown when
+# recipe containers outlive the test process (the route-driven `_factory`
+# teardown POSTs `/v1/agents/:id/stop` which can fail with 401 because the
+# parent conftest's `_truncate_tables` autouse fixture runs BEFORE the
+# `recipe_container_factory` teardown — wiping the session row needed for
+# auth). With the container alive, the log-watcher's
+# `client.logs(stream=True, follow=True)` iterator never returns, the
+# `asyncio.to_thread` worker thread stays blocked, and pytest_asyncio's
+# `_scoped_runner.close()` waits forever for the thread pool to shut down.
+#
+# In the dockerized harness (`AP_E2E_DOCKERIZED_HARNESS=1`) we work around
+# this by registering a `pytest_sessionfinish` hook that calls `os._exit`
+# AFTER pytest has fully completed reporting (including writing the
+# `e2e-report.json` artifact via the session-scoped `emit_report`
+# fixture's yield-teardown). This bypasses pytest_asyncio's broken
+# shutdown path. The host-pytest path leaves the hook inactive so the
+# normal teardown sequence still runs.
+#
+# Note: `pytest_sessionfinish` runs AFTER all session-scoped fixtures
+# have yielded (i.e., after `emit_report`'s teardown writes the report);
+# but it runs BEFORE pytest_asyncio's session-level shutdown. Confirmed
+# via pytest's hook ordering: `pytest_sessionfinish(session, exitstatus)`
+# is the last user-facing hook before pytest's own internal cleanup.
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Hard-exit after pytest finishes when running under the dockerized harness.
+
+    See module-level comment above for the watcher_service shutdown-hang
+    rationale. ``os._exit`` skips Python's atexit handlers and the
+    asyncio thread-pool shutdown that hangs on the blocked
+    ``_multiplexed_response_stream_helper``. The pytest-side reporting
+    has already completed (PASSED/FAILED lines printed, exit summary
+    written, e2e-report.json written by the autouse session-scoped
+    ``emit_report`` fixture's yield-teardown). Recipe containers spawned
+    during the run are kept around as logs/forensic artifacts; the
+    `--rm` flag on the test-runner's ``docker run`` is what causes the
+    test container itself to be reaped. Recipe containers survive (no
+    `--rm`) but operators can clean them up with
+    ``docker rm -f $(docker ps -q --filter ancestor=ap-recipe-*)``.
+    """
+    if os.environ.get("AP_E2E_DOCKERIZED_HARNESS") != "1":
+        return
+    # Respect the actual pytest exit status — caller scripts (Makefile,
+    # CI) gate on this. exit 0 = all green, non-zero = at least one fail.
+    os._exit(int(exitstatus))

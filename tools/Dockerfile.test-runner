@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.7
+# Test-runner image for the dockerized e2e harness (Phase 22c.3.1-01-AC01).
+#
+# Why this exists: tools/Dockerfile.api is the production image — it bakes
+# source via COPY and does NOT install pytest / testcontainers / respx /
+# pytest-asyncio (test-only deps). Running `make e2e-inapp-docker` needs a
+# pytest process running INSIDE a container that shares the docker daemon
+# bridge with the recipe containers spawned by the route handler — option (b)
+# of the AC-01 architectural choice (test/prod parity preserved; production
+# Linux container→container via bridge IP is the same shape as test
+# container→container via bridge IP).
+#
+# Design choices:
+#
+# * Base image is python:3.11-slim — same as Dockerfile.api so behavior
+#   matches in production-shape (Python version, libc, etc.).
+#
+# * Source is NOT baked. The Makefile target bind-mounts $(repo_root) at
+#   /workspace and runs `pytest` from /workspace/api_server. This avoids
+#   rebuilding the test image after every code change (the test deps
+#   are stable; the source under test is not).
+#
+# * Runtime + dev deps installed at build time so pytest collection works
+#   immediately on `docker run`. Mirrors api_server/pyproject.toml's `[project]
+#   dependencies` + `[project.optional-dependencies] dev`. Keep in sync
+#   when those lists change.
+#
+# * docker-cli installed so testcontainers (and runner_bridge → run_recipe)
+#   can shell to the host daemon via the bind-mounted /var/run/docker.sock.
+#
+# * Runs as root inside the container by default. This is a test-only image
+#   that lives on developer/CI machines — never in production. Running as
+#   root sidesteps the Docker Desktop GID-mismatch pain (the bind-mounted
+#   /var/run/docker.sock appears with root:root inside containers
+#   regardless of host ownership). For production behavior parity, the
+#   non-root path lives in tools/Dockerfile.api.
+#
+# * No COPY of source — the bind-mount provides everything at runtime.
+#   PYTHONPATH is set so pytest can import api_server.* and tools.* without
+#   running `pip install -e .` against the bind-mounted paths.
+
+FROM python:3.11-slim
+
+# System deps: docker-cli for shell-out (run_recipe.py + testcontainers + e2e
+# helpers), curl + ca-certificates for upstream HTTPS (OpenRouter).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends docker-cli curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Runtime deps — copy verbatim from api_server/pyproject.toml dependencies block.
+# Keep in sync if pyproject.toml runtime deps change.
+RUN pip install --no-cache-dir \
+      'fastapi==0.136.0' 'uvicorn[standard]>=0.44.0,<0.45' \
+      'asyncpg>=0.31.0,<0.32' 'sqlalchemy>=2.0.49,<2.1' \
+      'greenlet>=3.0' \
+      'alembic>=1.18.4,<1.19' 'pydantic>=2.11' 'pydantic-settings>=2.0' \
+      'python-ulid>=3.1.0,<4' 'structlog>=25.5.0,<26' \
+      'asgi-correlation-id>=4.3.4,<5' 'ruamel.yaml>=0.17.21' 'jsonschema>=4.23' \
+      'pyrage>=1.2' 'cryptography>=42' 'docker>=7.0,<8' \
+      'authlib>=1.6.11,<1.7' 'itsdangerous>=2.2.0,<3' 'httpx>=0.27' \
+      'sse-starlette>=3.4,<4' 'redis>=5.2,<8'
+
+# Dev deps — copy verbatim from api_server/pyproject.toml optional-dependencies.dev.
+RUN pip install --no-cache-dir \
+      'pytest>=8' 'pytest-asyncio>=0.23' \
+      'testcontainers[postgres,redis]>=4.14.2' \
+      'respx>=0.22,<0.24'
+
+# PYTHONPATH lets pytest import api_server.* and tools.* directly off the
+# bind-mounted /workspace, with no `pip install -e .` step. Matches the
+# layout the existing tests use under host pytest (api_server/.venv with
+# the package installed as a wheel) — this is functionally equivalent.
+ENV PYTHONPATH=/workspace/api_server/src:/workspace/tools
+
+# Default working directory for `pytest tests/...` invocation.
+WORKDIR /workspace/api_server
+
+# Runs as root by default — see header comment §Runs-as-root.
+
+# Default command is a no-op; the Makefile passes the actual `pytest ...`
+# argv. Setting CMD explicit so an ad-hoc `docker run` doesn't surprise.
+CMD ["pytest", "--version"]
