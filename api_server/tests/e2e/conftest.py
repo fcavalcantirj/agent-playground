@@ -121,30 +121,10 @@ async def oauth_user_with_openrouter_key(
 
 
 # ---------------------------------------------------------------------------
-# Docker network + recipe_index
+# Recipe index (e2e-only — `e2e_docker_network` lives in tests/conftest.py
+# per Phase 22c.3.1 Plan 01 B-7 fix; pytest's directory-scoping inherits it
+# automatically — no import statement needed).
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def e2e_docker_network() -> str:
-    """Create a dedicated bridge network for this e2e session. Tear down on exit.
-
-    Mirrors the production lifespan pattern where ``app.state.docker_network_name``
-    is set; the dispatcher's InappRecipeIndex uses that name to read the
-    container's IPv4 address from ``NetworkSettings.Networks[<name>].IPAddress``.
-    """
-    name = f"ap-e2e-{uuid.uuid4().hex[:10]}"
-    subprocess.run(
-        ["docker", "network", "create", "--driver", "bridge", name],
-        check=True, capture_output=True, text=True,
-    )
-    try:
-        yield name
-    finally:
-        subprocess.run(
-            ["docker", "network", "rm", name],
-            capture_output=True, text=True, check=False,
-        )
 
 
 @pytest.fixture

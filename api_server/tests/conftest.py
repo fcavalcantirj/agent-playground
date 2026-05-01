@@ -182,6 +182,114 @@ async def _truncate_tables(request):
         await cleanup_pool.close()
 
 
+# ---------------------------------------------------------------------------
+# Phase 22c.3.1 — promoted fixtures (B-7 fix)
+#
+# `started_api_server` and `e2e_docker_network` were previously local to
+# `tests/e2e/conftest.py`. Phase 22c.3.1 Plan 01 Task 2 needs both visible to
+# `tests/routes/test_agent_lifecycle_inapp.py` (a sibling of `tests/e2e/`,
+# NOT a child) so we promote them to the top-level `tests/conftest.py`.
+# pytest's directory-scoping rule then makes them visible to ALL test files
+# under `tests/`, including both `tests/routes/` and `tests/e2e/`.
+#
+# `recipe_index`, `_e2e_host_port_map`, and `recipe_container_factory` STAY
+# in `tests/e2e/conftest.py` — those are e2e-matrix-specific (macOS host-port
+# publish workaround); Task 2's route tests do not need them.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def e2e_docker_network() -> str:
+    """Create a dedicated bridge network for the test session. Tear down on exit.
+
+    Promoted from `tests/e2e/conftest.py` per Phase 22c.3.1 Plan 01 B-7 fix
+    so that route-handler tests in `tests/routes/` (which boot real recipe
+    containers via runner_bridge → run_cell_persistent → docker run on this
+    network) can inherit it. Body unchanged from the original — just a
+    `docker network create` + teardown via `docker network rm`.
+
+    Mirrors the production lifespan pattern where `app.state.docker_network_name`
+    is set; the dispatcher's InappRecipeIndex uses that name to read the
+    container's IPv4 address from `NetworkSettings.Networks[<name>].IPAddress`.
+    """
+    import uuid as _uuid
+    import subprocess as _sp
+
+    name = f"ap-e2e-{_uuid.uuid4().hex[:10]}"
+    _sp.run(
+        ["docker", "network", "create", "--driver", "bridge", name],
+        check=True, capture_output=True, text=True,
+    )
+    try:
+        yield name
+    finally:
+        _sp.run(
+            ["docker", "network", "rm", name],
+            capture_output=True, text=True, check=False,
+        )
+
+
+@pytest_asyncio.fixture
+async def started_api_server(
+    db_pool, migrated_pg, redis_container, e2e_docker_network, monkeypatch,
+):
+    """Function-scoped FastAPI app + httpx ASGI client + e2e docker network.
+
+    Phase 22c.3.1 Plan 01 Wave 0 fixture. Mirrors `async_client` (lines
+    207-263 above) verbatim with these B-7 extensions:
+
+    - Sets ``AP_DOCKER_NETWORK_NAME=<e2e_docker_network>`` BEFORE
+      ``create_app()`` so ``app.state.docker_network_name`` matches the
+      e2e bridge — runner_bridge spawns containers on this network.
+    - Wires ``app.state.recipe_index`` to a real ``InappRecipeIndex`` (NOT
+      the ``_E2EWrappedIndex`` shim from ``tests/e2e/conftest.py``).
+      Task 2's route tests don't need the macOS port-publish workaround;
+      only the 5-cell matrix in Task 3 does. The matrix overrides
+      ``app.state.recipe_index`` per-test inside ``_factory`` after
+      acquiring this client.
+    - Function-scoped (D-30): ~15s spawn overhead per test is acceptable;
+      session-scoping would couple test isolation across cells.
+
+    Yields an ``httpx.AsyncClient`` over ``ASGITransport``.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setenv("AP_ENV", "dev")
+    monkeypatch.setenv("AP_MAX_CONCURRENT_RUNS", "2")
+    monkeypatch.setenv(
+        "AP_RECIPES_DIR", str((API_SERVER_DIR.parent / "recipes").resolve())
+    )
+    dsn = _normalize_testcontainers_dsn(migrated_pg.get_connection_url())
+    monkeypatch.setenv("DATABASE_URL", dsn)
+    _redis_host = redis_container.get_container_host_ip()
+    _redis_port = redis_container.get_exposed_port(6379)
+    monkeypatch.setenv(
+        "AP_REDIS_URL", f"redis://{_redis_host}:{_redis_port}/0"
+    )
+    # B-7 extension: set the docker network name BEFORE create_app() so
+    # Settings.docker_network_name (env alias `AP_DOCKER_NETWORK`, see
+    # config.py:69-71) lines up with the bridge our recipe containers
+    # attach to.
+    monkeypatch.setenv("AP_DOCKER_NETWORK", e2e_docker_network)
+
+    from api_server.main import create_app
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        try:
+            await app.state.db.close()
+        except Exception:
+            pass
+        app.state.db = db_pool
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Expose the app on the client for tests that need to override
+            # app.state.recipe_index per-test (the 5-cell matrix does so).
+            client._app = app  # type: ignore[attr-defined]
+            yield client
+
+
 @pytest.fixture
 def inapp_redis_env(redis_container, monkeypatch):
     """Inject ``AP_REDIS_URL`` pointing at the session-scoped testcontainer.
