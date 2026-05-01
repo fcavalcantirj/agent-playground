@@ -205,15 +205,30 @@ def e2e_docker_network() -> str:
     Promoted from `tests/e2e/conftest.py` per Phase 22c.3.1 Plan 01 B-7 fix
     so that route-handler tests in `tests/routes/` (which boot real recipe
     containers via runner_bridge → run_cell_persistent → docker run on this
-    network) can inherit it. Body unchanged from the original — just a
-    `docker network create` + teardown via `docker network rm`.
+    network) can inherit it.
 
     Mirrors the production lifespan pattern where `app.state.docker_network_name`
     is set; the dispatcher's InappRecipeIndex uses that name to read the
     container's IPv4 address from `NetworkSettings.Networks[<name>].IPAddress`.
+
+    Phase 22c.3.1-01-AC01 dockerized-harness extension: when env var
+    ``AP_E2E_NETWORK_PRESET`` is set, REUSE that pre-existing network — the
+    outer dockerized harness (``make e2e-inapp-docker``) creates the network
+    once (so the pytest container can ``--network <name>`` join it BEFORE
+    pytest starts) and tears it down after pytest exits. In that mode the
+    fixture must NOT create or destroy the network — outer harness owns the
+    lifecycle. When the env var is unset, the legacy behavior runs (create +
+    teardown inline) so host-pytest invocation is byte-identical to before.
     """
+    import os as _os
     import uuid as _uuid
     import subprocess as _sp
+
+    preset = _os.environ.get("AP_E2E_NETWORK_PRESET")
+    if preset:
+        # Outer dockerized harness manages lifecycle — do NOT create/destroy.
+        yield preset
+        return
 
     name = f"ap-e2e-{_uuid.uuid4().hex[:10]}"
     _sp.run(
