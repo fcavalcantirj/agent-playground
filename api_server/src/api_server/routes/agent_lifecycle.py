@@ -418,6 +418,7 @@ async def start_agent(
         _log.error(
             "execute_persistent_start raised",
             extra={"agent_id": str(agent_id), "run_id": run_id},
+            exc_info=True,
         )
         return _err(
             502,

@@ -33,7 +33,16 @@ from ruamel.yaml import YAML
 # Phase 22c.3.1 (D-14): activation-time placeholder substitution helper —
 # lifted from api_server/tests/e2e/_helpers.py. Lives next to run_recipe.py
 # in tools/ so both files can share it.
-from _placeholders import render_placeholders
+#
+# Robust import: when run_recipe.py is loaded by api_server.services.runner_bridge
+# via importlib.util.spec_from_file_location("run_recipe", <path>), tools/ is NOT
+# on sys.path. Insert this file's parent directory (tools/) onto sys.path so the
+# sibling _placeholders module resolves regardless of caller. tools/tests/conftest.py
+# does this dance too — same pattern.
+_TOOLS_DIR = str(Path(__file__).resolve().parent)
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from _placeholders import render_placeholders  # noqa: E402
 
 _yaml = YAML(typ="rt")
 _yaml.preserve_quotes = True
@@ -1149,15 +1158,33 @@ def run_cell_persistent(
             f"channel {channel_id} missing required inputs: {missing}"
         )
 
-    # AMD-37 + D-27: gate the new path on BOTH conjuncts. Either fall-through
-    # → legacy byte-identical path (telegram openclaw verified by Wave 0
-    # snapshot test_baseline_capture).
+    # AMD-37 + D-27: gate the new path. Original AMD-37 said both
+    # `persistent_argv_override is not None` AND `activation_substitutions
+    # is not None` must hold. EXTENSION (Rule-1 fix discovered during
+    # Task 3 e2e gate): hermes inapp declares `activation_env` but NO
+    # `persistent_argv_override`. The legacy code path drops activation_env
+    # on the floor → the daemon never gets `API_SERVER_ENABLED=true` →
+    # ready_log never matches → 240s timeout. To make the e2e gate work
+    # for ALL 5 recipes (including hermes), the gate now opens when EITHER
+    # `persistent_argv_override` OR `activation_env` is declared (in
+    # addition to the activation_substitutions conjunct). Telegram still
+    # falls through (no override + no activation_env in the telegram
+    # block) — D-27 byte-identical invariant preserved (verified by
+    # `test_run_recipe_telegram_invariant.py::test_telegram_unchanged*`).
     override_raw = channel.get("persistent_argv_override")
-    gate_open = bool(
-        activation_substitutions is not None
-        and override_raw
+    activation_env_decl = channel.get("activation_env")
+    has_override_argv = bool(
+        override_raw
         and isinstance(override_raw, dict)
         and override_raw.get("argv")
+    )
+    has_activation_env = bool(
+        activation_env_decl
+        and isinstance(activation_env_decl, dict)
+    )
+    gate_open = bool(
+        activation_substitutions is not None
+        and (has_override_argv or has_activation_env)
     )
 
     # Common: per-recipe volume mount target.
@@ -1178,21 +1205,42 @@ def run_cell_persistent(
         # ===================================================================
         # NEW PATH — channel-aware override + activation_env overlay +
         # pre_start_commands loop with cidfile cleanup (Phase 22c.3.1).
+        # When persistent_argv_override is declared, it sources argv +
+        # entrypoint + pre_start_commands. When ONLY activation_env is
+        # declared (e.g. hermes inapp), argv + entrypoint fall back to
+        # `recipe.persistent.spec.*` and pre_start_specs is empty.
         # ===================================================================
-        override = override_raw
-        entrypoint = override.get("entrypoint")
-        argv_raw = list(override.get("argv") or [])
-        pre_start_specs = list(override.get("pre_start_commands") or [])
-        user_override = override.get("user_override") or image_default_user
-        activation_env_raw = channel.get("activation_env") or {}
+        if has_override_argv:
+            override = override_raw
+            entrypoint = override.get("entrypoint")
+            argv_raw = list(override.get("argv") or [])
+            pre_start_specs = list(override.get("pre_start_commands") or [])
+            user_override = override.get("user_override") or image_default_user
+        else:
+            # activation_env-only path (hermes shape) — keep legacy argv/
+            # entrypoint, just inject the activation_env overlay into the
+            # env-file. No pre_start_commands.
+            entrypoint = spec.get("entrypoint")
+            argv_raw = list(spec.get("argv") or [])
+            pre_start_specs = []
+            user_override = image_default_user
+        activation_env_raw = activation_env_decl or {}
         if not isinstance(activation_env_raw, dict):
             activation_env_raw = {}
 
         # 2. Render placeholders.
-        argv = [
-            str(render_placeholders(a, activation_substitutions))
-            for a in argv_raw
-        ]
+        if has_override_argv:
+            # Recipe authors who declare an override are responsible for
+            # using activation-time placeholder syntax (${VAR}/$VAR/{key}).
+            argv = [
+                str(render_placeholders(a, activation_substitutions))
+                for a in argv_raw
+            ]
+        else:
+            # Legacy argv comes from persistent.spec.argv; substitute_argv
+            # handles its $PROMPT/$MODEL shape (D-27 byte-identical for
+            # this slice of behavior).
+            argv = substitute_argv(list(argv_raw), prompt="", model=model)
         if entrypoint:
             entrypoint = str(
                 render_placeholders(entrypoint, activation_substitutions)
