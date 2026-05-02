@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('ApiError._parseCode — 18 backend codes (mirror of errors.py:39-58)', () {
+  group('ApiError._parseCode — 18 backend codes (errors.py:39-58)', () {
     const cases = <(String, ErrorCode)>{
       ('INVALID_REQUEST', ErrorCode.invalidRequest),
       ('RECIPE_NOT_FOUND', ErrorCode.recipeNotFound),
