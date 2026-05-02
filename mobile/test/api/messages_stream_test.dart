@@ -56,8 +56,9 @@ void main() {
         subscribe: ({required url, required headers}) => ctrl.stream,
       );
       await s.connect();
-      ctrl.add(SSEModel(id: '3', event: 'inapp_outbound', data: 'first'));
-      ctrl.add(SSEModel(event: 'inapp_outbound', data: 'no-id'));
+      ctrl
+        ..add(SSEModel(id: '3', event: 'inapp_outbound', data: 'first'))
+        ..add(SSEModel(event: 'inapp_outbound', data: 'no-id'));
       await Future<void>.delayed(const Duration(milliseconds: 5));
       expect(s.lastEventId, '3');
       await s.dispose();
@@ -73,8 +74,9 @@ void main() {
         subscribe: ({required url, required headers}) => ctrl.stream,
       );
       await s.connect();
-      ctrl.add(SSEModel(id: '5', event: 'inapp_outbound', data: '5'));
-      ctrl.add(SSEModel(id: '', event: 'inapp_outbound', data: 'empty'));
+      ctrl
+        ..add(SSEModel(id: '5', event: 'inapp_outbound', data: '5'))
+        ..add(SSEModel(id: '', event: 'inapp_outbound', data: 'empty'));
       await Future<void>.delayed(const Duration(milliseconds: 5));
       expect(s.lastEventId, '5');
       await s.dispose();
@@ -95,6 +97,10 @@ void main() {
           if (call == 2) secondHeaders.addAll(headers);
           final c = StreamController<SSEModel>();
           if (call == 1) {
+            // Fire-and-forget: the seam returns synchronously while a
+            // microtask delivers one event so the stream's `.listen()`
+            // callback runs before the test's `await Future.delayed`.
+            // ignore: discarded_futures
             Future<void>.microtask(() {
               c.add(SSEModel(id: '11', event: 'inapp_outbound', data: 'a'));
             });
@@ -153,8 +159,7 @@ void main() {
       await s.dispose();
     });
 
-    test(
-        'connect with no cookie + no cursor => only Accept + Cache-Control headers',
+    test('connect with no cookie + no cursor: minimal headers only',
         () async {
       Map<String, String>? captured;
       final s = MessagesStream(
