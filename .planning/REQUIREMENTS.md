@@ -171,12 +171,12 @@ Source-of-truth for locked decisions: `.planning/notes/mobile-mvp-decisions.md`.
 
 ### Backend Mobile API (API)
 
-- [ ] **API-01**: Backend exposes `POST /v1/agents/:id/chat` accepting `{message: string}`. The handler looks up the agent's running container via `agent_containers`, POSTs to its bridge-IP `/v1/chat/completions` with the OpenAI shape (`stream: false`), persists both the user row and the assistant row in the new `messages` table inside one transaction, and returns `{message: string}`. Block-and-wait — streaming is a future additive endpoint variant, NOT a rewrite of this handler.
+- [ ] **API-01**: Backend hardens the existing `POST /v1/agents/:id/messages` to require an `Idempotency-Key` header (400 if missing). Body unchanged: `{content: string}`. Response unchanged: 202 `{message_id, status, queued_at}`. Idempotent retry replays cached response via existing IdempotencyMiddleware. *(Amended Phase 23 per D-32 — original /v1/agents/:id/chat block-and-wait spec superseded by reuse of the existing /messages dispatcher path; client-side polling via SSE on /messages/stream covers the reply-delivery contract.)*
 - [ ] **API-02**: Backend exposes `GET /v1/agents/:id/messages?limit=N` returning the agent's chat history for the current authenticated user, ordered by `created_at` ascending (oldest first for chat display), default limit=200, max limit=1000.
 - [ ] **API-03**: Backend exposes `GET /v1/agents` returning the current user's `agent_containers` rows shaped for the Dashboard (id, recipe_name, model, status, created_at, last activity timestamp). Empty array when no agents exist.
 - [ ] **API-04**: Backend exposes `GET /v1/models` proxying OpenRouter's `/api/v1/models` catalog with a TTL cache (≥5 min, ≤1 h), so the Flutter app does NOT ship a hardcoded model list (Golden Rule #2 — dumb client). Auth resolution (platform key vs per-user) settled inside the phase spec.
-- [ ] **API-05**: Backend has a dev-mode auth shim. A FastAPI dependency `Depends(current_user_id)` returns a hardcoded UUID when `AP_ENV=dev` AND no real auth header is present. Every API-01..04 route consumes this dependency. The same dependency is the integration point for OAuth (Phase 22c-oauth-google) — swapping the impl must NOT require touching call sites.
-- [ ] **API-06**: Alembic migration creates a `messages (id UUID PK, agent_id UUID FK→agent_containers.id, user_id UUID, role text CHECK IN ('user','assistant'), content text, created_at timestamptz)` table with a btree index on `(agent_id, created_at)` to support history pagination.
+- [ ] **API-05**: Backend exposes `POST /v1/auth/google/mobile` and `POST /v1/auth/github/mobile` accepting native-SDK credentials (Google id_token JWT / GitHub access_token), verifying server-side, and minting `sessions` rows that mobile sends back as `Cookie: ap_session=<uuid>` header. ApSessionMiddleware unchanged. No dev-mode shim. *(Amended Phase 23 per D-32 — original dev-mode `Depends(current_user_id)` shim spec superseded by real OAuth via Flutter native SDKs; OAuth substrate from Phase 22c-oauth-google is reused 100%.)*
+- [ ] **API-06**: ~~Alembic migration creates a `messages` table.~~ **DROPPED in Phase 23.** Replaced by reuse of existing `inapp_messages` table per Phase 23 D-01 (single chat-history source; zero new migrations; single-seam at `services/inapp_messages_store.py`). *(Amended Phase 23 per D-32.)*
 - [ ] **API-07**: Integration tests for API-01..06 hit real Postgres via testcontainers and real Docker (same harness as Phase 22c.3.1). No mocks for chat-proxy round-trips; bot HTTP responses may be `respx`-stubbed at the upstream HTTP layer ONLY (the proxy's own DB writes + container lookup must be real).
 
 ### Flutter App Foundation (APP)
@@ -385,12 +385,12 @@ Explicitly excluded. Documented to prevent scope creep.
 | BST-07 | Phase 8 | Pending |
 | BST-08 | Phase 8 | Pending |
 | BST-09 | Phase 8 | Pending |
-| API-01 | Phase 23 | Pending |
+| API-01 | Phase 23 | Pending — amended D-32 (Idempotency-Key REQUIRED) |
 | API-02 | Phase 23 | Pending |
 | API-03 | Phase 23 | Pending |
 | API-04 | Phase 23 | Pending |
-| API-05 | Phase 23 | Pending |
-| API-06 | Phase 23 | Pending |
+| API-05 | Phase 23 | Pending — amended D-32 (mobile credential-exchange endpoints; no dev-mode shim) |
+| API-06 | Phase 23 | DROPPED — replaced by inapp_messages reuse per D-01 |
 | API-07 | Phase 23 | Pending |
 | APP-01 | Phase 24 | Pending |
 | APP-02 | Phase 24 | Pending |
