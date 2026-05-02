@@ -166,9 +166,7 @@ export function PlaygroundForm({
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("https://openrouter.ai/api/v1/models");
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const d = (await r.json()) as { data: OpenRouterModel[] };
+        const d = await apiGet<{ data: OpenRouterModel[] }>("/api/v1/models");
         if (cancelled) return;
         setOrModels(d.data ?? []);
       } catch (e) {
