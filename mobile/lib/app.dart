@@ -1,19 +1,28 @@
-// Phase 24 Wave 1 — minimum viable root widget. Plan 02 wires solvrTheme;
-// Plan 06 wires the go_router config + HealthzScreen route.
-// For now we render a single placeholder Scaffold so analyze + smoke_test pass.
+// Phase 24 Plan 06 — root MaterialApp.router.
 
+import 'package:agent_playground/core/router/app_router.dart';
+import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-class SolvrLabsApp extends StatelessWidget {
+class SolvrLabsApp extends ConsumerStatefulWidget {
   const SolvrLabsApp({super.key});
 
   @override
+  ConsumerState<SolvrLabsApp> createState() => _SolvrLabsAppState();
+}
+
+class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
+  late final GoRouter _router = buildRouter();
+
+  @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp.router(
       title: 'Solvr Labs',
-      home: Scaffold(
-        body: Center(child: Text('Solvr Labs — booting...')),
-      ),
+      theme: solvrTheme(),
+      routerConfig: _router,
+      debugShowCheckedModeBanner: false,
     );
   }
 }

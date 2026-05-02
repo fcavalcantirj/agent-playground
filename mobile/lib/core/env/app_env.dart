@@ -27,6 +27,7 @@ class AppEnv {
 
   /// Test seam: validate any string. Same StateError messages as the
   /// fromEnvironment path so tests cover the boot crashes.
+  // ignore: prefer_constructors_over_static_methods
   static AppEnv fromValue(String raw) {
     if (raw.isEmpty) {
       throw StateError(
