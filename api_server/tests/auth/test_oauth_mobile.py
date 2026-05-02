@@ -153,3 +153,41 @@ def test_helpers_exist_on_auth_oauth_module():
 
     assert inspect.iscoroutinefunction(verify_google_id_token)
     assert inspect.iscoroutinefunction(verify_github_access_token)
+
+
+# ---------------------------------------------------------------------------
+# Task 2 RED: route handlers exist + return 401 with Stripe envelope on
+# the easiest negative path (empty/missing token surface). Full 9-cell
+# matrix in the rest of this file (Task 4).
+# ---------------------------------------------------------------------------
+
+
+def test_google_mobile_and_github_mobile_route_handlers_importable():
+    """RED gate for Task 2 — both handlers must be coroutine functions
+    exported from api_server.routes.auth."""
+    import inspect
+
+    from api_server.routes.auth import github_mobile, google_mobile
+
+    assert inspect.iscoroutinefunction(google_mobile)
+    assert inspect.iscoroutinefunction(github_mobile)
+
+
+async def test_google_mobile_rejects_empty_id_token_with_422(async_client):
+    """Pydantic Field(min_length=1) on id_token rejects empty string at
+    the boundary (T-23-V5-EMPTY-TOKEN mitigation). FastAPI returns 422
+    for body validation failures — this is BEFORE our 401 handler."""
+    r = await async_client.post(
+        "/v1/auth/google/mobile",
+        json={"id_token": ""},
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_github_mobile_rejects_empty_access_token_with_422(async_client):
+    """Same boundary check for GitHub mobile."""
+    r = await async_client.post(
+        "/v1/auth/github/mobile",
+        json={"access_token": ""},
+    )
+    assert r.status_code == 422, r.text
