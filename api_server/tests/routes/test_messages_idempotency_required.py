@@ -114,3 +114,58 @@ async def test_post_message_with_valid_idempotency_key_returns_202(
     body = r.json()
     assert "message_id" in body
     assert body["status"] == "pending"
+
+
+async def test_post_message_replay_returns_cached_202(
+    async_client, db_pool, authenticated_cookie,
+):
+    """Plan 23-02 must_haves truth #3: same Idempotency-Key replays the
+    cached 202 response (existing IdempotencyMiddleware behavior intact).
+
+    Sends two POSTs with the SAME Idempotency-Key + identical body; the
+    second call must return the SAME message_id as the first (proves the
+    middleware cached the chat-path 202 verdict per Phase 22c.3-08
+    cache-write extension to status_code in {200, 202}).
+    """
+    agent_id = await _seed_agent_for_user(
+        db_pool, authenticated_cookie["_user_id"],
+    )
+    key = str(uuid4())
+    headers = {
+        "Cookie": authenticated_cookie["Cookie"],
+        "Idempotency-Key": key,
+    }
+    body_json = {"content": "replay-me"}
+
+    r1 = await async_client.post(
+        f"/v1/agents/{agent_id}/messages",
+        headers=headers,
+        json=body_json,
+    )
+    assert r1.status_code == 202, r1.text
+    msg_id_1 = r1.json()["message_id"]
+
+    r2 = await async_client.post(
+        f"/v1/agents/{agent_id}/messages",
+        headers=headers,
+        json=body_json,
+    )
+    # Idempotency replay returns the cached verdict — same message_id.
+    # Note: middleware replays cached body at status 200 (see _send_json
+    # in middleware/idempotency.py — replay always emits 200 regardless
+    # of original status; the cached body retains the original 202 shape).
+    assert r2.status_code in (200, 202), r2.text
+    assert r2.json()["message_id"] == msg_id_1, (
+        f"replay returned new message_id {r2.json()['message_id']} != "
+        f"original {msg_id_1} — cache miss (middleware regression)"
+    )
+
+    # Defense in depth: only ONE inapp_messages row was created.
+    async with db_pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM inapp_messages WHERE agent_id=$1",
+            agent_id,
+        )
+    assert count == 1, (
+        f"replay inserted a duplicate row; got {count} rows, expected 1"
+    )

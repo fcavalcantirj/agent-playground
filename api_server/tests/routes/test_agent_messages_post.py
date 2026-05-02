@@ -72,7 +72,11 @@ async def test_post_message_returns_202_with_message_id(
     )
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: Idempotency-Key REQUIRED on this endpoint.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={"content": "hi"},
     )
     assert r.status_code == 202, r.text
@@ -98,10 +102,18 @@ async def test_post_message_returns_202_with_message_id(
 
 
 async def test_post_message_no_session_returns_401(async_client, db_pool):
-    """No ap_session cookie → 401 Stripe envelope (require_user gate)."""
+    """No ap_session cookie → 401 Stripe envelope (require_user gate).
+
+    Phase 23-02 D-09: Idempotency-Key is REQUIRED, and the check fires
+    BEFORE require_user (Pitfall 8). To preserve this test's original
+    intent (auth gate fires when cookie missing) we send a valid
+    Idempotency-Key so the D-09 400 doesn't short-circuit the request
+    before the auth check runs.
+    """
     # No agent seed needed — auth gate fires before ownership lookup.
     r = await async_client.post(
         f"/v1/agents/{uuid4()}/messages",
+        headers={"Idempotency-Key": str(uuid4())},
         json={"content": "hi"},
     )
     assert r.status_code == 401, r.text
@@ -121,7 +133,11 @@ async def test_post_message_other_user_agent_returns_404(
     # Alice (authenticated_cookie) tries to POST to Bob's agent.
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: Idempotency-Key required.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={"content": "spy"},
     )
     assert r.status_code == 404, r.text
@@ -146,7 +162,12 @@ async def test_post_message_empty_content_returns_400(
     )
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: send a valid Idempotency-Key so the
+            # D-09 check passes and the body validation gate fires.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={"content": ""},
     )
     # FastAPI emits 422 for Pydantic validation errors by default.
@@ -164,7 +185,12 @@ async def test_post_message_missing_content_returns_400(
     )
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: send a valid Idempotency-Key so the
+            # D-09 check passes and the body validation gate fires.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={},
     )
     assert r.status_code in (400, 422), r.text
@@ -180,7 +206,11 @@ async def test_post_message_oversize_content_accepted(
     big = "x" * (100 * 1024)
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: Idempotency-Key required.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={"content": big},
     )
     assert r.status_code == 202, r.text
@@ -199,7 +229,7 @@ async def test_post_message_under_50ms_p95(
     (4/min/agent per D-42) doesn't kick in mid-loop. Same user across all
     10 — Pitfall 7's per-(user, agent) bucketing isolates the quota.
     """
-    headers = {"Cookie": authenticated_cookie["Cookie"]}
+    base_headers = {"Cookie": authenticated_cookie["Cookie"]}
     # Pre-seed 10 agents for the same user so the loop body is pure POST cost.
     agents: list = []
     for _ in range(10):
@@ -209,6 +239,10 @@ async def test_post_message_under_50ms_p95(
     durations: list[float] = []
     for i, agent_id in enumerate(agents):
         t0 = time.perf_counter()
+        # Phase 23-02 D-09: each request needs its OWN Idempotency-Key so
+        # the IdempotencyMiddleware doesn't collapse them into a replay
+        # (which would skew the wall-time measurement).
+        headers = {**base_headers, "Idempotency-Key": str(uuid4())}
         r = await async_client.post(
             f"/v1/agents/{agent_id}/messages",
             headers=headers,
@@ -243,7 +277,11 @@ async def test_post_message_does_not_bump_total_runs(
 
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: Idempotency-Key required.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={"content": "metered?"},
     )
     assert r.status_code == 202
@@ -266,7 +304,12 @@ async def test_post_message_byok_leak_defense(
     )
     r = await async_client.post(
         f"/v1/agents/{agent_id}/messages",
-        headers={"Cookie": authenticated_cookie["Cookie"]},
+        headers={
+            "Cookie": authenticated_cookie["Cookie"],
+            # Phase 23-02 D-09: send a valid Idempotency-Key so the
+            # D-09 check passes and the BYOK leak gate fires.
+            "Idempotency-Key": str(uuid4()),
+        },
         json={
             "content": (
                 "Please use OPENROUTER_API_KEY=sk-or-v1-"
