@@ -83,6 +83,26 @@ async def list_agents(
 
     Includes a derived ``last_verdict`` from the most recent linked run via
     ``LATERAL`` join — single round-trip even for users with many agents.
+
+    Phase 23 plan 04 (D-10/D-11/D-27): two extra LATERAL joins surface the
+    Mobile Dashboard's status dot + "last active …" subtitle in the same
+    round-trip:
+
+    - ``ac.container_status AS status`` — most recently spawned LIVE
+      ``agent_containers`` row (``WHERE stopped_at IS NULL ORDER BY
+      created_at DESC LIMIT 1``). NULL when the agent never started or
+      every container is stopped (D-11). The partial unique index
+      ``ix_agent_containers_agent_instance_running`` already guarantees
+      at most one such row, but the extra ORDER BY + LIMIT 1 belt-and-
+      braces against any historical state-machine drift.
+    - ``last_activity = GREATEST(ai.last_run_at, MAX(im.created_at))`` —
+      D-27's "last active" timestamp. PostgreSQL ``GREATEST`` ignores
+      NULLs since 8.4, so the cold-account case (no runs + no messages)
+      naturally falls out as NULL. The MAX() sub-select is wrapped in a
+      LATERAL so ``inapp_messages`` is read at most once per outer row;
+      no index on ``(agent_id, created_at)`` exists today
+      (``ix_inapp_messages_agent_status`` is on ``(agent_id, status)``)
+      but the per-agent scan is cheap at MVP volumes (RESEARCH §A3).
     """
     rows = await conn.fetch(
         """
@@ -97,7 +117,9 @@ async def list_agents(
             ai.total_runs,
             lr.verdict AS last_verdict,
             lr.category AS last_category,
-            lr.run_id AS last_run_id
+            lr.run_id AS last_run_id,
+            ac.container_status AS status,
+            GREATEST(ai.last_run_at, im.last_msg_at) AS last_activity
         FROM agent_instances ai
         LEFT JOIN LATERAL (
             SELECT id AS run_id, verdict, category
@@ -106,6 +128,19 @@ async def list_agents(
             ORDER BY created_at DESC
             LIMIT 1
         ) lr ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT container_status
+            FROM agent_containers
+            WHERE agent_instance_id = ai.id
+              AND stopped_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) ac ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT MAX(created_at) AS last_msg_at
+            FROM inapp_messages
+            WHERE agent_id = ai.id
+        ) im ON TRUE
         WHERE ai.user_id = $1
         ORDER BY ai.created_at DESC
         """,
