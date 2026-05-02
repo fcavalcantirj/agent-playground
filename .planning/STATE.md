@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Plan 22c.3-06 (inapp_reaper — 15s tick D-40 direct-to-failed) SHIPPED — 6 testcontainer-PG integration tests PASS
-last_updated: "2026-05-02T02:51:34.712Z"
-last_activity: 2026-05-02 -- Phase 23 planning complete
+last_updated: "2026-05-02T11:51:11.686Z"
+last_activity: 2026-05-02 -- Phase 23 execution started
 progress:
   total_phases: 19
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Milestone v0.3 (Mobile MVP / Solvr Labs) — defining requirements
+**Current focus:** Phase 23 — backend-mobile-api-chat-proxy-persistence-auth-shim
 
 ## Current Position
 
-Phase: 23 next, awaiting `/gsd-discuss-phase 23` or `/gsd-plan-phase 23`
-Plan: —
-Status: Ready to execute
-Last activity: 2026-05-02 -- Phase 23 planning complete
+Phase: 23 (backend-mobile-api-chat-proxy-persistence-auth-shim) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 23
+Last activity: 2026-05-02 -- Phase 23 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
