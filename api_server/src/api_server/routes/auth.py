@@ -43,15 +43,24 @@ without a verified email on file.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel, Field
 
 from ..auth.deps import require_user
-from ..auth.oauth import get_oauth, mint_session, upsert_user
+from ..auth.oauth import (
+    get_oauth,
+    mint_session,
+    upsert_user,
+    verify_github_access_token,
+    verify_google_id_token,
+)
 from ..models.errors import ErrorCode, make_error_envelope
+from ..models.users import SessionUserResponse
 
 router = APIRouter()
 _log = logging.getLogger("api_server.auth")
@@ -298,6 +307,198 @@ async def github_callback(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Phase 23-06 (D-15..D-17, D-23, D-24, D-30) — Mobile credential exchange
+# ---------------------------------------------------------------------------
+#
+# Two ADDITIVE endpoints for the Flutter app's native-SDK sign-in flow:
+#
+#   POST /v1/auth/google/mobile  — body: {id_token: <google JWT>}
+#   POST /v1/auth/github/mobile  — body: {access_token: <github token>}
+#
+# Each verifies the credential server-side, upserts the user via the
+# existing 22c ``upsert_user`` helper, mints a session via ``mint_session``,
+# and returns ``{session_id, expires_at, user}`` in the response BODY.
+#
+# CRITICAL CONTRACT DIFFERENCE vs the browser callbacks:
+#
+# Mobile responses do NOT call ``_set_session_cookie``. The Flutter app
+# has no cookie jar; it stores the returned ``session_id`` in
+# flutter_secure_storage and re-sends it as ``Cookie: ap_session=<uuid>``
+# on subsequent requests (D-17). ``ApSessionMiddleware`` reads either a
+# real cookie OR an explicit Cookie header transparently — no middleware
+# changes are needed for this flow.
+
+
+class MobileGoogleAuthRequest(BaseModel):
+    """Body of POST /v1/auth/google/mobile.
+
+    ``min_length=1`` rejects empty strings at the boundary so the
+    expensive verify path never runs against a zero-byte token
+    (T-23-V5-EMPTY-TOKEN mitigation).
+    """
+    id_token: str = Field(..., min_length=1)
+
+
+class MobileGitHubAuthRequest(BaseModel):
+    """Body of POST /v1/auth/github/mobile."""
+    access_token: str = Field(..., min_length=1)
+
+
+class MobileSessionResponse(BaseModel):
+    """Response body for both mobile sign-in endpoints.
+
+    The ``session_id`` field is the canonical session identifier that
+    ``ApSessionMiddleware`` resolves on subsequent requests (when the
+    Flutter app sends it back as ``Cookie: ap_session=<uuid>``). It is
+    ALSO the value the browser-flow ``ap_session`` HttpOnly cookie
+    carries — same Postgres ``sessions.id`` UUID, same 30-day TTL.
+    """
+    session_id: str
+    expires_at: datetime
+    user: SessionUserResponse
+
+
+@router.post("/auth/google/mobile", status_code=200)
+async def google_mobile(request: Request, body: MobileGoogleAuthRequest):
+    """Verify a native-SDK Google id_token, upsert user, mint session.
+
+    Mobile (D-15): no dev-mode shim. The Flutter app sends a JWT issued
+    by ``google_sign_in`` to one of the configured mobile client IDs
+    (``settings.oauth_google_mobile_client_ids`` — D-23). We verify the
+    JWT server-side via ``verify_google_id_token`` (which calls
+    ``google.oauth2.id_token.verify_oauth2_token`` inside
+    ``asyncio.to_thread``), upsert via the existing 22c helper, mint a
+    30-day session, and return the session_id in the response body for
+    the Flutter app to store and re-send as
+    ``Cookie: ap_session=<uuid>``.
+
+    Failure modes (all map to 401 with Stripe-shape envelope,
+    param=``id_token``):
+      * Mobile client IDs not configured (env not set)
+      * JWT signature mismatch
+      * Expired token
+      * Audience claim not in mobile_client_ids
+      * Missing ``sub`` or ``email`` claim
+      * Library-level GoogleAuthError (transport / cert fetch)
+    """
+    settings = request.app.state.settings
+    try:
+        claims = await verify_google_id_token(
+            body.id_token, settings.oauth_google_mobile_client_ids,
+        )
+    except ValueError as e:
+        return _err(401, ErrorCode.UNAUTHORIZED, str(e), param="id_token")
+
+    if not claims.get("sub") or not claims.get("email"):
+        return _err(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            "missing required claims (sub or email)",
+            param="id_token",
+        )
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        user_id = await upsert_user(
+            conn,
+            provider="google",
+            sub=str(claims["sub"]),
+            email=claims["email"],
+            display_name=claims.get("name") or claims["email"],
+            avatar_url=claims.get("picture"),
+        )
+        session_id = await mint_session(conn, user_id=user_id, request=request)
+        sess_row = await conn.fetchrow(
+            "SELECT expires_at FROM sessions WHERE id = $1", UUID(session_id),
+        )
+        user_row = await conn.fetchrow(
+            "SELECT id, email, display_name, avatar_url, provider, created_at "
+            "FROM users WHERE id = $1",
+            user_id,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session_id,
+            "expires_at": sess_row["expires_at"].isoformat(),
+            "user": SessionUserResponse(
+                **dict(user_row)
+            ).model_dump(mode="json"),
+        },
+    )
+
+
+@router.post("/auth/github/mobile", status_code=200)
+async def github_mobile(request: Request, body: MobileGitHubAuthRequest):
+    """Verify a flutter_appauth GitHub access_token, upsert user, mint session.
+
+    Mobile-side flow mirrors the browser GitHub callback's email-fallback
+    contract (D-22c-OAUTH-03): if ``/user`` returns a null primary email
+    (user set primary email to private), the helper follows up with
+    ``/user/emails`` and picks the first ``primary=True, verified=True``
+    entry. If still no verified email is recoverable, we refuse to
+    create the account.
+
+    HTTP transport: reuses ``app.state.bot_http_client`` — the shared
+    process-wide ``httpx.AsyncClient`` that already powers the inapp
+    dispatcher's outbound calls. The verify helper passes
+    ``timeout=10.0`` per-request so the GitHub /user fetch fails fast
+    (vs. the bot client's 600s overall timeout, which is for long-poll
+    Telegram channels). Plan 23-05 will likely introduce a dedicated
+    ``openrouter_http_client`` with a tighter pool — when it ships, this
+    handler can switch (one-line change). Until then the bot client is
+    already wired in lifespan and reusing it avoids adding a second
+    httpx client just for this one path.
+
+    Failure modes (all map to 401, param=``access_token``):
+      * /user returns non-200 (revoked / forged token)
+      * /user response missing the ``id`` field
+      * No verified primary email recoverable from /user/emails
+      * httpx HTTPError (network / TLS / DNS)
+    """
+    http_client = request.app.state.bot_http_client
+
+    try:
+        profile = await verify_github_access_token(
+            body.access_token, http_client,
+        )
+    except ValueError as e:
+        return _err(401, ErrorCode.UNAUTHORIZED, str(e), param="access_token")
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        user_id = await upsert_user(
+            conn,
+            provider="github",
+            sub=profile["sub"],
+            email=profile["email"],
+            display_name=profile["display_name"],
+            avatar_url=profile.get("avatar_url"),
+        )
+        session_id = await mint_session(conn, user_id=user_id, request=request)
+        sess_row = await conn.fetchrow(
+            "SELECT expires_at FROM sessions WHERE id = $1", UUID(session_id),
+        )
+        user_row = await conn.fetchrow(
+            "SELECT id, email, display_name, avatar_url, provider, created_at "
+            "FROM users WHERE id = $1",
+            user_id,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session_id,
+            "expires_at": sess_row["expires_at"].isoformat(),
+            "user": SessionUserResponse(
+                **dict(user_row)
+            ).model_dump(mode="json"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Logout
 # ---------------------------------------------------------------------------
 
@@ -361,5 +562,7 @@ __all__ = [
     "google_callback",
     "github_login",
     "github_callback",
+    "google_mobile",
+    "github_mobile",
     "logout",
 ]
