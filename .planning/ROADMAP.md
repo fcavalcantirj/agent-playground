@@ -212,6 +212,9 @@ Plans:
 | 7. Persistent Tier & OSS Hardening | 0/? | Not started | - |
 | 7.5. Sandbox Hardening Spine | 0/? | Not started | - |
 | 8. Generic Claude-Code Bootstrap | 0/? | Not started | - |
+| 23. Backend Mobile API | 0/? | Not started | - |
+| 24. Flutter Foundation | 0/? | Not started | - |
+| 25. Mobile Screens | 0/? | Not started | - |
 
 ## Coverage
 
@@ -219,6 +222,8 @@ Plans:
 - **Mapped**: 117 (100%)
 - **Unmapped**: 0
 - **Orphaned**: 0
+- **v0.3 milestone requirements**: 16 (API-01..07 + APP-01..05 + UI-01..04)
+- **v0.3 mapped**: 16 (100%) across Phases 23, 24, 25
 
 ### Pitfall -> Phase Mapping
 
@@ -421,3 +426,63 @@ Plans:
 **Reference impl already on main:** `api_server/tests/e2e/conftest.py::_factory` was rewritten to POST `/v1/agents/:id/start` (zero `docker_client.containers.run` / `subprocess.run docker run -d` invocations remaining); the runner+route+harness are wired exactly as specified by 36 D-decisions + AMD-37 + 15 acceptance criteria.
 
 **Verification:** AC-01 5/5 PASS via route handler still pending the macOS networking follow-up; AC-02..AC-15 all GREEN or partial-GREEN (15/15 architecturally, 1 BLOCKED by deferred). See `.planning/phases/22c.3.1-runner-inapp-wiring/22c.3.1-01-SUMMARY.md`.
+
+---
+
+## Milestone v0.3: Mobile MVP (Solvr Labs) — Phases 23, 24, 25
+
+**Opened:** 2026-05-01
+**Goal:** Ship a Flutter native mobile app that drives the agent-spawn substrate end-to-end on localhost — Deploy → Dashboard → Chat with persisted history. No deploy, no auth, no streaming. "Code we'll reuse."
+
+**Locked decisions of record:** `.planning/notes/mobile-mvp-decisions.md` (do not re-litigate during phase planning).
+**Deferred seed (out of milestone):** `.planning/seeds/streaming-chat.md` (block-and-wait first; streaming is later additive).
+**User-facing brand:** Solvr Labs (repo codename remains "Agent Playground").
+
+### v0.3 Phases
+
+- [ ] **Phase 23: Backend Mobile API** — chat-proxy + persistence + auth shim. All mobile-facing backend endpoints exist, hit real Postgres + real Docker via testcontainers, return correct shapes. No Flutter dependency.
+- [ ] **Phase 24: Flutter Foundation** — scaffold + theme + typed API client + env-config switch + spike artifact proving end-to-end round-trip against the running Phase 23 backend.
+- [ ] **Phase 25: Mobile Screens** — Dashboard + New Agent (Deploy) + Chat wired end-to-end against the local backend; demo flow works on a real device or simulator with persistence across app restarts.
+
+### Phase 23: Backend Mobile API (chat-proxy + persistence + auth shim)
+
+**Goal:** Every mobile-facing backend endpoint required by the Flutter app exists, returns correct shapes, hits real Postgres + real Docker (testcontainers), and consumes a `Depends(current_user_id)` auth shim that OAuth (future Phase 22c-oauth-google) can later swap implementation of without touching call sites. "Code we'll reuse" — auth shim is additive, persistence is real on day 1, streaming is a later additive variant of `POST /v1/agents/:id/chat`, not a rewrite.
+**Depends on:** Phase 22c.3.1 (runner-side inapp wiring + `agent_containers` rows are the lookup target for the chat-proxy).
+**Requirements:** API-01, API-02, API-03, API-04, API-05, API-06, API-07
+**Success Criteria** (what must be TRUE):
+  1. `curl -X POST http://localhost:8000/v1/agents/<id>/chat -d '{"message":"hi"}'` against a running test agent returns `{"message": "<bot reply>"}` within the bot timeout — the chat-proxy's container lookup, OpenAI-shape forward to the agent's bridge IP, and durable `messages` writes (user row + assistant row in one transaction) all execute against real infrastructure.
+  2. `curl http://localhost:8000/v1/agents/<id>/messages?limit=200` immediately after a chat round-trip returns BOTH the user message and the assistant reply ordered by `created_at` ascending (oldest first) — history persistence is end-to-end real, not in-memory.
+  3. `curl http://localhost:8000/v1/agents` lists every `agent_containers` row owned by the dev-mode user (id, recipe_name, model, status, created_at, last activity); empty array when the user has no agents.
+  4. `curl http://localhost:8000/v1/models` returns OpenRouter's model catalog on first call and the same payload from cache on the second call within the TTL window — proving the dumb-client substrate (Flutter never ships a hardcoded model list).
+  5. `pytest api_server/tests/` green for API-01..API-06 against testcontainers Postgres + real Docker (same harness as Phase 22c.3.1) — no mocks for chat-proxy DB writes or container lookups; bot HTTP responses may be `respx`-stubbed at the upstream boundary only. The dev-mode auth shim short-circuits the same `Depends(current_user_id)` dependency that OAuth will later implement.
+**Plans:** TBD (run `/gsd-plan-phase 23` to break down)
+**UI hint:** no (backend-only; Flutter consumes these endpoints in Phase 24/25)
+
+### Phase 24: Flutter Foundation (scaffold + theme + API client + spike)
+
+**Goal:** A Flutter project boots on iOS Simulator + Android Emulator, hits a health endpoint via the typed API client over the configured origin, renders the Solvr Labs theme (monochrome + 0 corner radius + Inter / JetBrains Mono), supports runtime origin switching (localhost / LAN / ngrok) without recompile, and a checked-in spike artifact proves the deploy + chat + auth-shim header round-trip end-to-end against the running Phase 23 backend BEFORE the Phase 25 screens plan is sealed (Golden Rule #5).
+**Depends on:** Phase 23 (the spike artifact proves the round-trip against a real running backend; the typed API client mirrors Phase 23's endpoint shapes plus the existing `/v1/agents/:id/start` and `/v1/recipes`).
+**Requirements:** APP-01, APP-02, APP-03, APP-04, APP-05
+**Success Criteria** (what must be TRUE):
+  1. `flutter run` from the chosen project root boots the app on a simulator/emulator and lands on a placeholder screen that calls `GET /healthz` via the typed API client and renders "OK" — the project scaffold (Riverpod default + go_router + dio) is correctly wired and reachable from a fresh device.
+  2. The running app visibly matches the Solvr Labs design language: monochrome palette (near-black foreground / near-white background mirroring `/Users/fcavalcanti/dev/solvr/frontend/app/globals.css`), corner radius `0` (flat surfaces), `Inter` for sans-serif body, `JetBrains Mono` for mono — verified in a theme inspector or a sample screen exercising both font families.
+  3. Toggling the origin in the in-app debug menu (or a compile-time flavor) from `http://localhost:8000` → LAN IP → ngrok URL causes the next API call to target the new origin without a recompile — the env-config switch unblocks same-wifi device testing and out-of-network tunnel testing.
+  4. The typed API client surfaces every endpoint the screens consume (`POST /v1/agents/:id/start`, `POST /v1/agents/:id/chat`, `GET /v1/agents/:id/messages`, `GET /v1/agents`, `GET /v1/recipes`, `GET /v1/models`); errors and timeouts surface as typed Result/Either values, not opaque exceptions; the auth-shim header is injected on every request via a single interceptor.
+  5. `spikes/flutter-api-roundtrip.md` is committed and documents (with reproducible commands) a green deploy + chat + history round-trip against a real running Phase 23 backend on localhost or LAN — captured BEFORE the Phase 25 screens plan is sealed (Golden Rule #5).
+**Plans:** TBD (run `/gsd-plan-phase 24` to break down)
+**UI hint:** yes
+
+### Phase 25: Mobile Screens (end-to-end demo)
+
+**Goal:** The full Mobile MVP demo flow works on a real device or simulator against the local Phase 23 backend: open app → Dashboard → tap "+" → New Agent (pick clone + model + name) → Deploy → Chat opens → type message → assistant replies → kill app → relaunch → history persists. Three screens (Dashboard, New Agent, Chat) wired end-to-end against the typed API client from Phase 24, consuming `GET /v1/recipes` and `GET /v1/models` for catalogs (no Flutter-side hardcoded lists — Golden Rule #2).
+**Depends on:** Phase 24 (typed API client + theme + env-config + spike artifact gate).
+**Requirements:** UI-01, UI-02, UI-03, UI-04
+**Success Criteria** (what must be TRUE):
+  1. A new agent deployed in-app via the New Agent screen (clone picked from `GET /v1/recipes`, model picked from `GET /v1/models`, name typed by the user) appears on the Dashboard with a green status dot when its container is healthy — the deploy flow completes end-to-end from user tap to a visible row backed by a real `agent_containers` record.
+  2. A chat message typed in the Chat screen produces a real LLM reply within the configured bot timeout (~30s typical), is visible in the message list after the block-and-wait round-trip, and renders as themed bubbles differentiated by alignment + background (user vs assistant).
+  3. Killing the app and relaunching it preserves the message history for any agent the user previously chatted with — the Chat screen's `GET /v1/agents/:id/messages?limit=N` load on open proves end-to-end persistence (no in-memory chat that has to be replaced later).
+  4. The full demo flow (open → Dashboard → "+" → New Agent → Deploy → Chat → message → reply → kill → relaunch → history visible) runs on iOS Simulator + Android Emulator (or one of the two + a real device on the same wifi) without code changes — only the env-config origin switches between targets.
+**Plans:** TBD (run `/gsd-plan-phase 25` to break down)
+**UI hint:** yes
+
+*Milestone v0.3 (Mobile MVP / Solvr Labs) opened: 2026-05-01 — 3 phases (23, 24, 25); coverage 16/16 v0.3 requirements; numbering continues from Phase 22c.3.1.*

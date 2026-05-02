@@ -385,12 +385,31 @@ Explicitly excluded. Documented to prevent scope creep.
 | BST-07 | Phase 8 | Pending |
 | BST-08 | Phase 8 | Pending |
 | BST-09 | Phase 8 | Pending |
+| API-01 | Phase 23 | Pending |
+| API-02 | Phase 23 | Pending |
+| API-03 | Phase 23 | Pending |
+| API-04 | Phase 23 | Pending |
+| API-05 | Phase 23 | Pending |
+| API-06 | Phase 23 | Pending |
+| API-07 | Phase 23 | Pending |
+| APP-01 | Phase 24 | Pending |
+| APP-02 | Phase 24 | Pending |
+| APP-03 | Phase 24 | Pending |
+| APP-04 | Phase 24 | Pending |
+| APP-05 | Phase 24 | Pending |
+| UI-01 | Phase 25 | Pending |
+| UI-02 | Phase 25 | Pending |
+| UI-03 | Phase 25 | Pending |
+| UI-04 | Phase 25 | Pending |
 
 **Coverage:**
 - v1 requirements: 117
 - Mapped to phases: 117
 - Unmapped: 0
+- v0.3 milestone requirements: 16 (API-01..07, APP-01..05, UI-01..04)
+- v0.3 mapped to phases: 16 (Phases 23, 24, 25)
+- v0.3 unmapped: 0
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-13 — added FND-10 (multi-agent schema), updated FND-04 (mobile-first), updated SES-02 (N-agent model)*
+*Last updated: 2026-05-01 — milestone v0.3 (Mobile MVP) opened: 16 v0.3 requirements (API/APP/UI) mapped to Phases 23, 24, 25*

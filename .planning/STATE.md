@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: "Mobile MVP (Solvr Labs) — Flutter native + backend chat-proxy + persistence; localhost end-to-end first; deploy + auth + streaming explicitly out of scope"
-status: "Milestone v0.3 OPENED 2026-05-01 — defining requirements + roadmap. Predecessor work Phase 22c.3.1 SHIPPED (runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS). Locked decisions in .planning/notes/mobile-mvp-decisions.md."
-stopped_at: "Defining requirements for v0.3."
-last_updated: "2026-05-01T22:00:00.000Z"
+status: "Milestone v0.3 OPENED 2026-05-01 — ROADMAP CREATED with 3 phases (23 Backend Mobile API, 24 Flutter Foundation, 25 Mobile Screens); 16/16 v0.3 requirements mapped. Predecessor work Phase 22c.3.1 SHIPPED. Locked decisions in .planning/notes/mobile-mvp-decisions.md."
+stopped_at: "Roadmap created. Phase 23 next, awaiting /gsd-discuss-phase 23 or /gsd-plan-phase 23."
+last_updated: "2026-05-01T23:30:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -24,11 +24,11 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 23 next, awaiting `/gsd-discuss-phase 23` or `/gsd-plan-phase 23`
 Plan: —
-Status: Defining requirements for milestone v0.3
-Last activity: 2026-05-01 — Milestone v0.3 (Mobile MVP) opened
-**Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`.
+Status: Roadmap created for milestone v0.3 (3 phases: 23, 24, 25); 16/16 v0.3 requirements mapped; ready for phase-level planning
+Last activity: 2026-05-01 — Milestone v0.3 (Mobile MVP) roadmap created with phases 23/24/25
+**Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
 
