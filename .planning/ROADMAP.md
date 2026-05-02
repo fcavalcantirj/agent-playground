@@ -479,7 +479,19 @@ Plans:
   3. Toggling the origin in the in-app debug menu (or a compile-time flavor) from `http://localhost:8000` → LAN IP → ngrok URL causes the next API call to target the new origin without a recompile — the env-config switch unblocks same-wifi device testing and out-of-network tunnel testing.
   4. The typed API client surfaces every endpoint the screens consume (`POST /v1/agents/:id/start`, `POST /v1/agents/:id/chat`, `GET /v1/agents/:id/messages`, `GET /v1/agents`, `GET /v1/recipes`, `GET /v1/models`); errors and timeouts surface as typed Result/Either values, not opaque exceptions; the auth-shim header is injected on every request via a single interceptor.
   5. `spikes/flutter-api-roundtrip.md` is committed and documents (with reproducible commands) a green deploy + chat + history round-trip against a real running Phase 23 backend on localhost or LAN — captured BEFORE the Phase 25 screens plan is sealed (Golden Rule #5).
-**Plans:** TBD (run `/gsd-plan-phase 24` to break down)
+**Plans:** 10 plans
+
+Plans:
+- [ ] 24-01-PLAN.md — FVM pin + flutter create scaffold + pubspec deps + analysis_options + .gitignore + .env.example (Wave 1)
+- [ ] 24-02-PLAN.md — Solvr Labs ThemeData + theme widget tests covering APP-02 (Wave 2)
+- [ ] 24-03-PLAN.md — sealed Result + ApiError + 18-code ErrorCode mirror + endpoint constants + hand-written DTOs (Wave 2)
+- [ ] 24-04-PLAN.md — typed dio ApiClient + AuthInterceptor + SecureStorage + AuthEventBus + RedactingLogInterceptor (Wave 3)
+- [ ] 24-05-PLAN.md — MessagesStream wrapper with manual Last-Event-Id tracking (Wave 3)
+- [ ] 24-06-PLAN.md — AppEnv boot validation + Riverpod providers + go_router + main.dart + HealthzScreen (Wave 3)
+- [ ] 24-07-PLAN.md — iOS Info.plist + Android manifest + cleartext debug config + bundle id + portrait orientation (Wave 1)
+- [ ] 24-08-PLAN.md — mobile/Makefile + README per-target docs + .github/workflows/mobile.yml CI (Wave 4)
+- [ ] 24-09-PLAN.md — 9-step integration_test spike against live api_server (Wave 5; autonomous=false; worktree_safe=false)
+- [ ] 24-10-PLAN.md — spikes/flutter-api-roundtrip.md exit-gate artifact (Wave 5; autonomous=false)
 **UI hint:** yes
 
 ### Phase 25: Mobile Screens (end-to-end demo)
