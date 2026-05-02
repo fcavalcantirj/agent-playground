@@ -325,6 +325,54 @@ async def fetch_history_for_agent(
     ))
 
 
+async def list_history_for_agent(
+    conn: asyncpg.Connection,
+    *,
+    agent_id: UUID,
+    limit: int,
+) -> list[dict]:
+    """Phase 23-03 (D-03 + D-04) — terminal-state chat history, oldest first.
+
+    Returns rows with ``status IN ('done', 'failed')`` for the given agent
+    ordered by ``created_at`` ASC, capped at ``limit``. In-flight rows
+    (``pending``/``forwarded``) are EXCLUDED at the SQL layer per D-03 —
+    in-flight chat is observed via the SSE stream, not the history snapshot.
+
+    The caller (the GET /v1/agents/:id/messages handler) is responsible for:
+      * clamping ``limit`` to ``[1, 1000]`` per D-04 (handler-level
+        validation produces a 400 INVALID_REQUEST envelope when the
+        client supplies < 1; values > 1000 are silently clamped);
+      * filtering ownership via :func:`run_store.fetch_agent_instance`
+        BEFORE calling here — defense-in-depth ownership lives at the
+        agent_instances row level, not on inapp_messages.user_id (the
+        handler proves the caller owns the agent_id, then trusts that
+        every inapp_messages row pinned to that agent_id is fair game
+        to surface; the inapp_messages.user_id column is preserved as
+        a multi-tenant defense-in-depth tag for the WRITE path but is
+        intentionally NOT filtered on here so future shared-agent
+        designs need not refactor this seam).
+
+    Returns rows shaped::
+
+        [{id, content, status, bot_response, last_error, created_at}, ...]
+
+    Returned as ``list[dict]`` (not asyncpg.Record) so the handler can
+    iterate without coupling to driver-record semantics.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id, content, status, bot_response, last_error, created_at
+        FROM inapp_messages
+        WHERE agent_id = $1
+          AND status IN ('done', 'failed')
+        ORDER BY created_at ASC
+        LIMIT $2
+        """,
+        agent_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
 async def delete_history_for_agent_user(
     conn: asyncpg.Connection,
     *,

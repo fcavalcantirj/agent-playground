@@ -194,6 +194,135 @@ async def post_message(
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/agents/:id/messages — Phase 23-03 chat-history snapshot (D-03 + D-04)
+# ---------------------------------------------------------------------------
+#
+# Default + max LIMIT come straight from REQUIREMENTS.md API-02 / D-04. The
+# default of 200 covers ~50 user/assistant turns (each turn = 2 events) which
+# matches mobile's typical chat-screen viewport without paginating; the cap of
+# 1000 keeps an absent-minded `?limit=1000000` from scanning a multi-month
+# conversation in one shot. Pagination is OUT of MVP per CONTEXT.md decisions.
+_HISTORY_DEFAULT_LIMIT = 200
+_HISTORY_MAX_LIMIT = 1000
+
+
+@router.get("/agents/{agent_id}/messages", status_code=200)
+async def get_messages(
+    request: Request,
+    agent_id: UUID,
+    limit: int = _HISTORY_DEFAULT_LIMIT,
+):
+    """D-03 + D-04 + REQ API-02 — chat-history snapshot for the Chat screen.
+
+    Mobile loads this on Chat-screen open. Returns terminal-state rows from
+    ``inapp_messages`` (D-01 reuse — NO new tables) ordered by ``created_at``
+    ASC, default limit=200, max=1000. ``done`` rows emit (user, assistant)
+    pair; ``failed`` rows emit (user, error-shaped assistant) so the UI can
+    render delivery-failed messages distinctly. ``pending``/``forwarded``
+    rows are EXCLUDED (in-flight messages observed via SSE, not history).
+
+    Step-by-step flow:
+
+      1. Validate ``limit`` (D-04): values < 1 → 400 INVALID_REQUEST envelope
+         with param="limit"; values > 1000 are silently clamped server-side.
+         The clamp runs BEFORE the auth check so a client probing the
+         endpoint with a malformed limit doesn't need a valid session to
+         learn the contract.
+      2. ``require_user`` (D-18) — same pattern as POST/SSE/DELETE on
+         this router; 401 with ap_session envelope on missing/invalid
+         session cookie.
+      3. Ownership at SQL — ``fetch_agent_instance`` filters by user_id;
+         404 AGENT_NOT_FOUND if the agent doesn't exist OR doesn't belong
+         to the caller (T-23-V4-XUSER mitigation: NOT 403, avoid existence
+         leak).
+      4. ``list_history_for_agent`` — single SQL seam in
+         ``services/inapp_messages_store.py``; never inline SQL outside
+         that module.
+      5. Map rows to events (D-03):
+            - ``done``    → (role=user, content=im.content)
+                            + (role=assistant, kind=message,
+                               content=im.bot_response)
+            - ``failed``  → (role=user, content=im.content)
+                            + (role=assistant, kind=error,
+                               content="⚠️ delivery failed: <last_error>")
+                            (verbatim prefix — mobile UI may match on it)
+         Each event carries ``inapp_message_id`` so the client can dedup
+         against SSE replays of the same row.
+    """
+    # --- Step 1: limit validation (D-04) ---
+    if limit < 1:
+        return _err(
+            400, ErrorCode.INVALID_REQUEST,
+            "limit must be >= 1", param="limit",
+        )
+    effective_limit = min(limit, _HISTORY_MAX_LIMIT)
+
+    # --- Step 2: require_user (D-18) ---
+    sess = require_user(request)
+    if isinstance(sess, JSONResponse):
+        return sess
+    user_id: UUID = sess
+
+    # --- Step 3: ownership (D-19) ---
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
+    if agent is None:
+        return _err(
+            404, ErrorCode.AGENT_NOT_FOUND,
+            f"agent {agent_id} not found", param="agent_id",
+        )
+
+    # --- Step 4: read terminal-state history (single SQL seam) ---
+    async with pool.acquire() as conn:
+        rows = await ims.list_history_for_agent(
+            conn, agent_id=agent_id, limit=effective_limit,
+        )
+
+    # --- Step 5: row → event mapping (D-03) ---
+    events: list[dict] = []
+    for r in rows:
+        created_iso = (
+            r["created_at"].isoformat()
+            if hasattr(r["created_at"], "isoformat")
+            else str(r["created_at"])
+        )
+        message_id = str(r["id"])
+        # Every terminal row has a user message — emit it first.
+        events.append({
+            "role": "user",
+            "kind": "message",
+            "content": r["content"],
+            "created_at": created_iso,
+            "inapp_message_id": message_id,
+        })
+        # Assistant-side event keyed on status (D-03).
+        if r["status"] == "done":
+            events.append({
+                "role": "assistant",
+                "kind": "message",
+                "content": r["bot_response"] or "",
+                "created_at": created_iso,
+                "inapp_message_id": message_id,
+            })
+        elif r["status"] == "failed":
+            err_text = r.get("last_error") or "unknown error"
+            events.append({
+                "role": "assistant",
+                "kind": "error",
+                # Verbatim prefix per D-03 — mobile UI may match on this.
+                "content": f"⚠️ delivery failed: {err_text}",
+                "created_at": created_iso,
+                "inapp_message_id": message_id,
+            })
+        # 'pending'/'forwarded' rows already filtered at SQL level.
+
+    return JSONResponse(
+        status_code=200, content={"messages": events},
+    )
+
+
+# ---------------------------------------------------------------------------
 # DELETE /v1/agents/:id/messages — D-43, D-44 transactional 2-table delete
 # ---------------------------------------------------------------------------
 
@@ -503,6 +632,7 @@ async def messages_stream(
 __all__ = [
     "router",
     "post_message",
+    "get_messages",
     "delete_history",
     "messages_stream",
     "PostMessageRequest",
