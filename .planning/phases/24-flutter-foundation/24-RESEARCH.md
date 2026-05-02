@@ -1329,29 +1329,29 @@ ThemeData solvrTheme() {
 
 **Net assessment:** No blocking assumption. A5 and A6 are medium-priority maintenance / polish concerns the planner can absorb; the rest are routine.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Do the OKLCH non-explicit tokens convert to the right sRGB values?**
+1. **Do the OKLCH non-explicit tokens convert to the right sRGB values?** **RESOLVED: best-effort sRGB approximations are documented in Plan 02; values from `solvr/frontend/app/globals.css` (read directly during execution) override the table if discrepancies are detected.**
    - What we know: `#1F1F1F` and `#FAFAF7` are explicitly mirrored from CSS (CONTEXT line 139).
    - What's unclear: `--muted`, `--muted-foreground`, `--border`, `--destructive` rely on a programmatic OKLCH→sRGB conversion that this research approximated.
    - Recommendation: planner runs a proper OKLCH→sRGB conversion (using `culori` JS, the Tailwind v4 build output, or a Python `colormath` script) and replaces the approximations in `solvr_theme.dart`. Treat any disagreement with this RESEARCH's calculated values as authoritative.
 
-2. **Is the Phase 23 `/v1/models` endpoint shape locked enough to manually-fromJson against?**
+2. **Is the Phase 23 `/v1/models` endpoint shape locked enough to manually-fromJson against?** **RESOLVED: Plan 04's `models()` returns field-permissive DTOs (`Map<String, dynamic> raw` carries unknown keys; typed projections extract the 3-4 fields the UI consumes).**
    - What we know: Phase 23 D-19/D-20 says passthrough byte-for-byte from OpenRouter.
    - What's unclear: OpenRouter's `/api/v1/models` schema can drift; does the Dart DTO need to be defensively `Map<String, dynamic>`-fielded (passing through unknown keys), or strongly-typed?
    - Recommendation: keep the Dart DTO field-permissive (use `Map<String, dynamic> raw` for unknown fields) — the typed projections only extract the 3-4 fields the UI consumes (id, name, context_length, pricing). This makes the client robust to OpenRouter additions.
 
-3. **Should the spike use OpenRouter or Anthropic-direct via BYOK?**
+3. **Should the spike use OpenRouter or Anthropic-direct via BYOK?** **RESOLVED: D-47 lock stands — OpenRouter routes Anthropic Haiku 4.5; fallback model `anthropic/claude-3-5-sonnet-latest` is documented in `mobile/README.md` per Plan 08 as a manual override.**
    - What we know: D-47 picks `anthropic/claude-haiku-4-5` via OpenRouter (BYOK = `OPENROUTER_KEY`).
    - What's unclear: if Anthropic's billing endpoint flakes (Plan 22c.3-12 had a precedent — anthropic-direct credit-zero false-PASS), does the spike need a fallback model?
    - Recommendation: D-47 already picks via OpenRouter, which routes through OpenRouter's billing — different failure surface from Anthropic-direct. Stick with the lock. Document fallback model `anthropic/claude-3-5-sonnet-latest` as a manual override in `mobile/README.md`.
 
-4. **Does `make spike` need a "warm-up" or "ensure backend running" check?**
+4. **Does `make spike` need a "warm-up" or "ensure backend running" check?** **RESOLVED: Plan 08 `make spike` target adds a `curl --fail` preflight against `${BASE_URL}/healthz` before invoking `flutter test`; Plan 09 Task 0 also has a human-checkpoint preflight as defense-in-depth.**
    - What we know: D-50 wraps `flutter test ... --dart-define ...` and "fails loud with a usage banner if any env var missing."
    - What's unclear: should it also ping `${BASE_URL}/healthz` before invoking `flutter test`, to fail fast if the api_server isn't running?
    - Recommendation: yes, add a curl preflight to `make spike` (planner's discretion). Saves the spike a 60s timeout to discover the api_server is down.
 
-5. **Is portrait-only orientation honored on iOS via Info.plist or programmatically?**
+5. **Is portrait-only orientation honored on iOS via Info.plist or programmatically?** **RESOLVED: defense-in-depth — Plan 07 sets Info.plist `UISupportedInterfaceOrientations` + AndroidManifest `screenOrientation="portrait"`; Plan 06 `main.dart` calls `SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp])` before `runApp`.**
    - What we know: D-14 says "orientation locked to portrait."
    - What's unclear: the canonical iOS approach is Info.plist `UISupportedInterfaceOrientations` = `[Portrait]`; the Flutter approach is `SystemChrome.setPreferredOrientations(...)` in `main.dart`. Which is preferred?
    - Recommendation: BOTH (defense-in-depth). Set Info.plist + AndroidManifest.xml `screenOrientation="portrait"` AND call `SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp])` in `main.dart` before `runApp`.
