@@ -121,6 +121,7 @@ async def post_message(
     request: Request,
     agent_id: UUID,
     body: PostMessageRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """D-07 + D-29: fast-ack 202 with ``{message_id}``. Dispatcher picks the row.
 
@@ -139,6 +140,18 @@ async def post_message(
     ``agent_instances.total_runs`` — that counter is reserved for
     ``/v1/runs`` (one-shot) and ``/v1/agents/:id/start`` (persistent).
     """
+    # --- D-09: Idempotency-Key REQUIRED enforcement ---
+    # Runs BEFORE require_user so a missing header is a request-shape
+    # failure independent of auth state (Pitfall 8 — gating on auth
+    # would risk a cross-user idempotency leak).
+    if not idempotency_key or not idempotency_key.strip():
+        return _err(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "Idempotency-Key header is required",
+            param="Idempotency-Key",
+        )
+
     # --- Step 1: require_user (D-18) ---
     sess = require_user(request)
     if isinstance(sess, JSONResponse):
