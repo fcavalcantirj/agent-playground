@@ -29,6 +29,7 @@ from typing import AsyncIterator
 import httpx
 import redis.asyncio as redis_async
 from fastapi import FastAPI
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware as StarletteSessionMiddleware
 
 from .auth.oauth import get_oauth
@@ -46,6 +47,7 @@ from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
 from .routes import health
+from .routes import models as models_route
 from .routes import recipes as recipes_route
 from .routes import runs as runs_route
 from .routes import schemas as schemas_route
@@ -138,6 +140,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=httpx.Timeout(600.0, connect=5.0),
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
     )
+
+    # Phase 23 (D-18/D-19/D-20) — OpenRouter /v1/models passthrough proxy:
+    # SEPARATE httpx.AsyncClient with a 10s read timeout (catalog must fail
+    # fast — DO NOT reuse bot_http_client's 600s budget meant for chat).
+    # ``models_cache`` holds ``{fetched_at: datetime, payload: bytes}``;
+    # ``models_cache_lock`` deduplicates concurrent first-fetches under a
+    # thundering herd so the 15-min TTL produces ~1 upstream call/replica.
+    app.state.openrouter_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+    )
+    app.state.models_cache = {}
+    app.state.models_cache_lock = asyncio.Lock()
 
     # 3. Restart sweep (D-31) — re-queue rows stuck in 'forwarded' past
     #    15 minutes. Runs BEFORE the dispatcher loop is created so the
@@ -315,6 +330,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await app.state.bot_http_client.aclose()
         except Exception:
             _log.exception("phase22c3.lifespan.http_client_close_failed")
+        # Phase 23 — close the OpenRouter passthrough client. Mirrors the
+        # bot_http_client teardown above; ordered before redis + DB close
+        # so an in-flight catalog fetch doesn't fault on a half-torn pool.
+        try:
+            if getattr(app.state, "openrouter_http_client", None) is not None:
+                await app.state.openrouter_http_client.aclose()
+        except Exception:
+            _log.exception("phase23.lifespan.openrouter_http_client_close_failed")
         try:
             if getattr(app.state, "redis", None) is not None:
                 await app.state.redis.aclose()
@@ -406,11 +429,17 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
+    # Phase 23 (D-25) — GZip outermost; Starlette >=0.46.0 default-excludes
+    # text/event-stream (verified by Wave 0 spike test_gzip_sse_compat).
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     app.include_router(health.router)
     # Plan 19-03: read-only recipe + schema + lint routes under /v1.
     app.include_router(schemas_route.router, prefix="/v1", tags=["schemas"])
     app.include_router(recipes_route.router, prefix="/v1", tags=["recipes"])
+    # Phase 23 (REQ API-04 + D-18/D-19/D-20): GET /v1/models — OpenRouter
+    # catalog passthrough; in-process cache + SWR + GZip-compressed.
+    app.include_router(models_route.router, prefix="/v1", tags=["models"])
     # Plan 19-04: POST /v1/runs + GET /v1/runs/{id} — the load-bearing
     # endpoint that wraps tools/run_recipe.py::run_cell via the
     # per-image-tag Lock + global Semaphore in app.state.
