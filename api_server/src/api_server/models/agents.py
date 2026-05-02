@@ -41,6 +41,18 @@ class AgentSummary(BaseModel):
     last_verdict: str | None = None
     last_category: str | None = None
     last_run_id: str | None = None
+    # Phase 23 plan 04 (D-10/D-11): live ``agent_containers.container_status``
+    # via the LATERAL JOIN in ``services/run_store.py::list_agents``. NULL
+    # when the agent has no live container (never started OR every container
+    # row has ``stopped_at IS NOT NULL``). Mobile Dashboard maps this to a
+    # green/grey status dot.
+    status: str | None = None
+    # Phase 23 plan 04 (D-27): GREATEST(``ai.last_run_at``,
+    # ``MAX(inapp_messages.created_at) WHERE agent_id = ai.id``). NULL when
+    # the agent has neither runs nor in-app messages. ``last_run_at`` is
+    # preserved above for backward compat with Phase 22c-09 callers; this
+    # field is the new mobile-friendly "last active …" subtitle source.
+    last_activity: datetime | None = None
 
 
 class AgentListResponse(BaseModel):
