@@ -1,0 +1,53 @@
+name: Mobile lint + tests
+
+# Per Phase 24 D-27: runs `fvm flutter analyze` + unit tests on every push to
+# mobile/**.  Per D-53: integration_test (the 9-step spike) is LOCAL-ONLY —
+# not run in CI (requires macOS runner + booted Simulator + Docker + real
+# OpenRouter network).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read Flutter version from .fvmrc
+        id: fvmrc
+        working-directory: mobile
+        run: |
+          ver=$(jq -r '.flutter' .fvmrc)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.fvmrc.outputs.version }}
+          channel: stable
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Generate Riverpod providers
+        working-directory: mobile
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Test
+        working-directory: mobile
+        run: flutter test
