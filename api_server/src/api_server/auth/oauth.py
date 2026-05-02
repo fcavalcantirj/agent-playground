@@ -28,12 +28,17 @@ credentials.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
 from authlib.integrations.starlette_client import OAuth
+from google.auth import exceptions as _google_exceptions
+from google.auth.transport import requests as _google_ga_requests
+from google.oauth2 import id_token as _google_id_token
 
 if TYPE_CHECKING:
     import asyncpg
@@ -54,6 +59,19 @@ _DEV_PLACEHOLDER = "dev-placeholder-not-for-prod"
 _DEV_REDIRECT_GOOGLE = "http://localhost:8000/v1/auth/google/callback"
 _DEV_REDIRECT_GITHUB = "http://localhost:8000/v1/auth/github/callback"
 _DEV_STATE_SECRET = "dev-oauth-state-key-not-for-prod-0000000000000000"
+
+# Phase 23-06 (D-15..D-17, D-23): process-wide google-auth Request transport.
+# Reused by every call to ``verify_google_id_token`` so the underlying
+# ``requests.Session`` keeps HTTP keep-alive open against googleapis.com,
+# amortizing the TLS handshake across consecutive sign-ins. google-auth's
+# ``Request`` is thread-safe; ``asyncio.to_thread`` wraps the blocking call
+# at the helper boundary.
+#
+# Per RESEARCH §"Pattern 5" we deliberately SKIP a custom 6h JWKS cache —
+# the google-auth library's own caching is sufficient for MVP, and a hand-
+# rolled cache risks masking key-rotation incidents (the most likely
+# failure mode for a JWKS-validated path).
+_GOOGLE_REQUEST = _google_ga_requests.Request()
 
 
 def _resolve_or_fail(
@@ -236,3 +254,149 @@ async def mint_session(
     if row is None:
         raise RuntimeError("mint_session returned no row")
     return str(row["id"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 23-06 mobile-OAuth credential verification helpers
+# ---------------------------------------------------------------------------
+#
+# These helpers cover REQ API-05 (D-15..D-17, D-23, D-24, D-30): the mobile
+# Flutter app obtains a credential from a NATIVE SDK (google_sign_in or
+# flutter_appauth) and POSTs it to the API. The API verifies the credential
+# server-side and only THEN trusts the claimed identity to upsert the user
+# + mint a session.
+#
+# Both helpers raise ``ValueError`` on every failure mode; the routes layer
+# maps that to a 401 ``UNAUTHORIZED`` envelope. We do NOT log the raw
+# credential bytes — log_redact middleware redacts request bodies, and the
+# helpers' error messages reference the failure category (signature /
+# audience / expiry / status code) without echoing the token itself
+# (T-23-V7-TOKEN-LOG-LEAK mitigation).
+
+
+async def verify_google_id_token(
+    id_token: str, mobile_client_ids: list[str]
+) -> dict:
+    """Verify a Google-issued ID token against the mobile client IDs.
+
+    Calls ``google.oauth2.id_token.verify_oauth2_token`` inside
+    ``asyncio.to_thread`` (the library is synchronous and contacts the
+    Google JWKS endpoint via blocking ``requests``). The ``audience``
+    argument accepts ``list[str]`` and matches ANY entry — Wave 0
+    spike A1 verified this empirically (D-23: Android + iOS client IDs
+    coexist in one process).
+
+    Raises ``ValueError`` on every failure mode (signature mismatch,
+    expiry, audience mismatch, missing claims, malformed token, library
+    error). The route handler maps that to a 401 envelope.
+
+    If ``mobile_client_ids`` is empty (env not configured), we refuse
+    immediately rather than letting google-auth attempt verify against
+    an empty list — the empty-list semantic is library-version-dependent
+    and we'd rather emit a clear "not configured" error.
+    """
+    if not mobile_client_ids:
+        raise ValueError("no mobile client IDs configured")
+
+    def _verify_sync():
+        return _google_id_token.verify_oauth2_token(
+            id_token, _GOOGLE_REQUEST, audience=mobile_client_ids
+        )
+
+    try:
+        return await asyncio.to_thread(_verify_sync)
+    except _google_exceptions.GoogleAuthError as e:
+        # google-auth raises GoogleAuthError subclasses for transport /
+        # crypto failures. Re-raise as ValueError with a redacted
+        # message — we never echo the raw token in the error string.
+        raise ValueError(f"google id_token rejected: {e}") from e
+    except ValueError:
+        # google-auth raises ValueError directly for audience mismatch,
+        # expiry, missing claims, malformed JWT structure. Pass through
+        # so the route handler's existing ValueError handler catches it.
+        raise
+
+
+async def verify_github_access_token(
+    access_token: str, http_client: "httpx.AsyncClient"
+) -> dict:
+    """Validate a GitHub access token; return a normalized profile dict.
+
+    Mirrors the browser GitHub callback flow at routes/auth.py:246-278:
+
+      1. ``GET /user`` with ``Authorization: Bearer <token>``
+      2. If ``email`` is null (user set primary email private), follow up
+         with ``GET /user/emails`` and pick the first ``primary=True,
+         verified=True`` entry.
+      3. Refuse account creation if no verified email is recoverable
+         (D-22c-OAUTH-03 second half).
+
+    The browser callback uses ``authlib.oauth.github.get(...)`` which is
+    a different transport path (authlib's httpx_client) than the raw
+    ``http_client`` we pass here. Because the path is different we keep
+    the duplication rather than refactoring the browser callback —
+    consolidating the two would force authlib's token-aware client into
+    the mobile path or our raw httpx client into the browser path, both
+    of which are larger surface changes than this MVP justifies. Logged
+    as a deferred-ideas item.
+
+    Raises ``ValueError`` on every failure (HTTP error, non-200, no
+    profile id, no verified email).
+
+    Returns ``{sub: str, email: str, display_name: str,
+                avatar_url: str | None}``.
+    """
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        r = await http_client.get(
+            "https://api.github.com/user", headers=headers, timeout=10.0,
+        )
+    except httpx.HTTPError as e:
+        raise ValueError(f"github /user fetch failed: {e}") from e
+
+    if r.status_code != 200:
+        raise ValueError(
+            f"github access_token rejected (status {r.status_code})"
+        )
+
+    profile = r.json()
+    if not profile.get("id"):
+        raise ValueError("github profile missing id")
+
+    email = profile.get("email")
+    if not email:
+        try:
+            er = await http_client.get(
+                "https://api.github.com/user/emails",
+                headers=headers,
+                timeout=10.0,
+            )
+            er.raise_for_status()
+            emails = er.json()
+            email = next(
+                (
+                    e["email"]
+                    for e in emails
+                    if e.get("primary")
+                    and e.get("verified")
+                    and e.get("email")
+                ),
+                None,
+            )
+        except httpx.HTTPError:
+            email = None
+
+    if not email:
+        raise ValueError("no verified primary email")
+
+    return {
+        "sub": str(profile["id"]),
+        "email": email,
+        "display_name": (
+            profile.get("name") or profile.get("login") or "user"
+        ),
+        "avatar_url": profile.get("avatar_url"),
+    }
