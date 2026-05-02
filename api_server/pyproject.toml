@@ -9,6 +9,11 @@ description = "Agent Playground API — FastAPI wrapper around tools/run_recipe.
 requires-python = ">=3.11"
 dependencies = [
   "fastapi==0.136.0",
+  # Phase 23-01 Task 4: google-auth promoted from transitive to direct
+  # dependency. Powers the mobile-OAuth Google ID-token JWT verify path
+  # (D-16, D-23, RESEARCH §A1). Defense-in-depth: future cleanup of
+  # transitive deps cannot silently break Google JWT verification.
+  "google-auth>=2.40,<3",
   "uvicorn[standard]>=0.44.0,<0.45",
   "asyncpg>=0.31.0,<0.32",
   "sqlalchemy>=2.0.49,<2.1",
@@ -58,6 +63,12 @@ dependencies = [
   # (Redis testcontainer) can install cleanly alongside the runtime dep.
   "sse-starlette>=3.4,<4",
   "redis>=5.2,<8",
+  # Phase 23-01 Task 4: starlette pinned as a DIRECT dependency so the
+  # SSE-non-buffer behavior D-31 + Plan 23-05 depend on cannot drift if
+  # FastAPI's transitive floor relaxes. The default-exclude of
+  # text/event-stream from GZipMiddleware landed in starlette 0.46.0
+  # (PR #2871, 2025-02-22). RESEARCH §Q4 RESOLVED.
+  "starlette>=0.46",
 ]
 
 [project.optional-dependencies]
