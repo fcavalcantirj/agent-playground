@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
-stopped_at: Phase 23 (backend-mobile-api-chat-proxy-persistence-auth-shim) SHIPPED — verifier 49/49 must-haves PASSED; 51/51 new tests + 5/5 dockerized e2e cells PASS
-last_updated: "2026-05-02T15:00:00.000Z"
+status: verifying
+stopped_at: Phase 24 context gathered
+last_updated: "2026-05-02T19:53:25.813Z"
 last_activity: 2026-05-02 -- Phase 23 SHIPPED (verifier passed 49/49)
 progress:
   total_phases: 19
-  completed_phases: 6
-  total_plans: 41
-  completed_plans: 41
+  completed_phases: 5
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -582,9 +582,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-04-30T21:44:00.097Z
+Last session: 2026-05-02T19:53:25.800Z
 
-Stopped at: Plan 22c.3-06 (inapp_reaper — 15s tick D-40 direct-to-failed) SHIPPED — 6 testcontainer-PG integration tests PASS
+Stopped at: Phase 24 context gathered
 
 **Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
 
@@ -608,4 +608,4 @@ Stopped at: Plan 22c.3-06 (inapp_reaper — 15s tick D-40 direct-to-failed) SHIP
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: None
+Resume file: .planning/phases/24-flutter-foundation/24-CONTEXT.md
