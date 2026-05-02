@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.3
-milestone_name: "Mobile MVP (Solvr Labs) — Flutter native + backend chat-proxy + persistence; localhost end-to-end first; deploy + auth + streaming explicitly out of scope"
-status: "Milestone v0.3 OPENED 2026-05-01 — ROADMAP CREATED with 3 phases (23 Backend Mobile API, 24 Flutter Foundation, 25 Mobile Screens); 16/16 v0.3 requirements mapped. Predecessor work Phase 22c.3.1 SHIPPED. Locked decisions in .planning/notes/mobile-mvp-decisions.md."
-stopped_at: "Roadmap created. Phase 23 next, awaiting /gsd-discuss-phase 23 or /gsd-plan-phase 23."
-last_updated: "2026-05-01T23:30:00.000Z"
+milestone: v0.2
+milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
+status: planning
+stopped_at: Phase 23 context gathered — 34 decisions across 4 areas + 8 extras. Resume with /gsd-plan-phase 23
+last_updated: "2026-05-01T23:00:00.000Z"
+last_activity: 2026-05-01 — Phase 23 (Backend Mobile API) discuss-phase complete; 34 D-decisions in 23-CONTEXT.md
 progress:
-  total_phases: 3
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 29
+  completed_phases: 11
+  total_plans: 72
+  completed_plans: 72
+  percent: 100
 ---
 
 # Project State
