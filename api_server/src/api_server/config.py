@@ -19,10 +19,10 @@ of env truth.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -98,6 +98,26 @@ class Settings(BaseSettings):
         None, validation_alias="AP_OAUTH_GITHUB_REDIRECT_URI"
     )
 
+    # Phase 23 (D-23): Mobile native-SDK Google sign-in client IDs.
+    # Google Cloud Console issues SEPARATE client IDs per platform
+    # (Android, iOS) — both are different from oauth_google_client_id
+    # (the web client). The mobile JWT verifier accepts tokens whose
+    # ``aud`` claim matches ANY entry in this list (verified by spike A1
+    # — google.oauth2.id_token.verify_oauth2_token's ``audience``
+    # parameter accepts list[str] and matches any element).
+    # NOT a credential — these IDs ship in the mobile app binary and
+    # are not secret. Default [] so dev boots without ops setup.
+    # Env shape: AP_OAUTH_GOOGLE_MOBILE_CLIENT_IDS=android-id.apps...,ios-id.apps...
+    # ``NoDecode`` annotation tells pydantic-settings NOT to JSON-decode
+    # the env value as a complex type — our field_validator below does
+    # the CSV split instead (pydantic-settings v2's default complex
+    # decoding would JSON-parse the raw string and reject "a.com,b.com"
+    # as invalid JSON).
+    oauth_google_mobile_client_ids: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias="AP_OAUTH_GOOGLE_MOBILE_CLIENT_IDS",
+    )
+
     # Starlette SessionMiddleware signing secret (AMD-07).
     # Required in prod; dev uses a fixed fallback so local tests boot
     # without ops setup.
@@ -112,6 +132,20 @@ class Settings(BaseSettings):
     frontend_base_url: str = Field(
         "http://localhost:3000", validation_alias="AP_FRONTEND_BASE_URL"
     )
+
+    # Phase 23 (D-23): CSV → list[str] pre-validator for mobile client IDs.
+    # pydantic-settings v2's CSV detection is library-version-dependent;
+    # this validator guarantees correct parsing regardless. Idempotent for
+    # programmatic list inputs (Settings(oauth_google_mobile_client_ids=[...])
+    # in tests).
+    @field_validator("oauth_google_mobile_client_ids", mode="before")
+    @classmethod
+    def _split_mobile_client_ids_csv(cls, v):
+        """Parse comma-separated string into list[str]; idempotent for
+        list inputs; trims whitespace and drops empty entries."""
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
 
 def get_settings() -> Settings:
