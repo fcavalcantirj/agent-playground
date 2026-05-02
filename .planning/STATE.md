@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: verifying
+status: executing
 stopped_at: Phase 24 context gathered
-last_updated: "2026-05-02T19:53:25.813Z"
-last_activity: 2026-05-02 -- Phase 23 SHIPPED (verifier passed 49/49)
+last_updated: "2026-05-02T21:21:40.356Z"
+last_activity: 2026-05-02 -- Phase 24 execution started
 progress:
   total_phases: 19
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 24 — Flutter Foundation (next; CONTEXT not yet drafted)
+**Current focus:** Phase 24 — flutter-foundation
 
 ## Current Position
 
-Phase: 23 (backend-mobile-api-chat-proxy-persistence-auth-shim) — SHIPPED
-Plan: 9 of 9
-Status: Phase 23 complete; verifier 49/49; ready for Phase 24
-Last activity: 2026-05-02 -- Phase 23 SHIPPED (verifier passed 49/49)
+Phase: 24 (flutter-foundation) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 24
+Last activity: 2026-05-02 -- Phase 24 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
