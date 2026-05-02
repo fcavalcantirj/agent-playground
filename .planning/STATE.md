@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: planning
-stopped_at: Phase 23 context gathered — 34 decisions across 4 areas + 8 extras. Resume with /gsd-plan-phase 23
-last_updated: "2026-05-01T23:00:00.000Z"
-last_activity: 2026-05-01 — Phase 23 (Backend Mobile API) discuss-phase complete; 34 D-decisions in 23-CONTEXT.md
+status: executing
+stopped_at: Plan 22c.3-06 (inapp_reaper — 15s tick D-40 direct-to-failed) SHIPPED — 6 testcontainer-PG integration tests PASS
+last_updated: "2026-05-02T02:51:34.712Z"
+last_activity: 2026-05-02 -- Phase 23 planning complete
 progress:
-  total_phases: 29
-  completed_phases: 11
-  total_plans: 72
-  completed_plans: 72
+  total_phases: 19
+  completed_phases: 5
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Phase: 23 next, awaiting `/gsd-discuss-phase 23` or `/gsd-plan-phase 23`
 Plan: —
-Status: Roadmap created for milestone v0.3 (3 phases: 23, 24, 25); 16/16 v0.3 requirements mapped; ready for phase-level planning
-Last activity: 2026-05-01 — Milestone v0.3 (Mobile MVP) roadmap created with phases 23/24/25
+Status: Ready to execute
+Last activity: 2026-05-02 -- Phase 23 planning complete
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
