@@ -440,7 +440,7 @@ Plans:
 
 ### v0.3 Phases
 
-- [ ] **Phase 23: Backend Mobile API** — chat-proxy + persistence + auth shim. All mobile-facing backend endpoints exist, hit real Postgres + real Docker via testcontainers, return correct shapes. No Flutter dependency.
+- [x] **Phase 23: Backend Mobile API** — chat-proxy + persistence + auth shim. All mobile-facing backend endpoints exist, hit real Postgres + real Docker via testcontainers, return correct shapes. No Flutter dependency. **SHIPPED 2026-05-02 — see `.planning/phases/23-backend-mobile-api-chat-proxy-persistence-auth-shim/23-PHASE-SUMMARY.md`.**
 - [ ] **Phase 24: Flutter Foundation** — scaffold + theme + typed API client + env-config switch + spike artifact proving end-to-end round-trip against the running Phase 23 backend.
 - [ ] **Phase 25: Mobile Screens** — Dashboard + New Agent (Deploy) + Chat wired end-to-end against the local backend; demo flow works on a real device or simulator with persistence across app restarts.
 
@@ -457,15 +457,15 @@ Plans:
   5. `pytest api_server/tests/` green for API-01..API-06 against testcontainers Postgres + real Docker (same harness as Phase 22c.3.1) — no mocks for chat-proxy DB writes or container lookups; bot HTTP responses may be `respx`-stubbed at the upstream boundary only. The dev-mode auth shim short-circuits the same `Depends(current_user_id)` dependency that OAuth will later implement.
 **Plans:** 9 plans across 4 waves
 Plans:
-- [ ] 23-01-PLAN.md — Wave 0 spikes (D-31 GZip×SSE + A1 multi-audience + A2 respx-PyJWK) + google-auth direct dep + oauth_google_mobile_client_ids setting + .env stanza
-- [ ] 23-02-PLAN.md — Idempotency-Key REQUIRED enforcement on POST /v1/agents/:id/messages (D-09)
-- [ ] 23-03-PLAN.md — GET /v1/agents/:id/messages chat history endpoint (D-03/D-04 — terminal-state filter, ASC ordering, default+max limits)
-- [ ] 23-04-PLAN.md — GET /v1/agents status + last_activity LATERAL JOIN extension (D-10/D-11/D-27)
-- [ ] 23-05-PLAN.md — GET /v1/models OpenRouter passthrough proxy (15min TTL + asyncio.Lock + SWR + GZipMiddleware D-18..D-20/D-25)
-- [ ] 23-06-PLAN.md — POST /v1/auth/{google,github}/mobile credential-exchange endpoints (D-15..D-17/D-23/D-24/D-30)
-- [ ] 23-07-PLAN.md — Frontend playground-form.tsx migration to apiGet(/api/v1/models) (D-21)
-- [ ] 23-08-PLAN.md — REQUIREMENTS.md amendments per D-32 (API-01 + API-05 rewritten; API-06 dropped)
-- [ ] 23-09-PLAN.md — E2E gate (pytest tests/ + make e2e-inapp-docker green; commit-to-main per worktree-live-infra rule)
+- [x] 23-01-PLAN.md — Wave 0 spikes (D-31 GZip×SSE + A1 multi-audience + A2 respx-PyJWK) + google-auth direct dep + oauth_google_mobile_client_ids setting + .env stanza
+- [x] 23-02-PLAN.md — Idempotency-Key REQUIRED enforcement on POST /v1/agents/:id/messages (D-09)
+- [x] 23-03-PLAN.md — GET /v1/agents/:id/messages chat history endpoint (D-03/D-04 — terminal-state filter, ASC ordering, default+max limits)
+- [x] 23-04-PLAN.md — GET /v1/agents status + last_activity LATERAL JOIN extension (D-10/D-11/D-27)
+- [x] 23-05-PLAN.md — GET /v1/models OpenRouter passthrough proxy (15min TTL + asyncio.Lock + SWR + GZipMiddleware D-18..D-20/D-25)
+- [x] 23-06-PLAN.md — POST /v1/auth/{google,github}/mobile credential-exchange endpoints (D-15..D-17/D-23/D-24/D-30)
+- [x] 23-07-PLAN.md — Frontend playground-form.tsx migration to apiGet(/api/v1/models) (D-21)
+- [x] 23-08-PLAN.md — REQUIREMENTS.md amendments per D-32 (API-01 + API-05 rewritten; API-06 dropped)
+- [x] 23-09-PLAN.md — E2E gate (pytest tests/ + make e2e-inapp-docker green; commit-to-main per worktree-live-infra rule)
 **UI hint:** no (backend-only; Flutter consumes these endpoints in Phase 24/25)
 
 ### Phase 24: Flutter Foundation (scaffold + theme + API client + spike)
