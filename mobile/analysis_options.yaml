@@ -1,0 +1,12 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "build/**"
+
+linter:
+  rules:
+    # very_good_analysis defaults are kept; project-level overrides go here.
+    public_member_api_docs: false   # Phase 24 is greenfield; docs land per-feature in 25.
