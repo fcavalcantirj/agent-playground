@@ -53,4 +53,3 @@ class _RejectingAdapter implements HttpClientAdapter {
   @override
   void close({bool force = false}) {}
 }
-
