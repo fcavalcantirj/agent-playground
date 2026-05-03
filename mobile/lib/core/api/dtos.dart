@@ -442,3 +442,26 @@ class SessionUser {
   final String provider;
   final String createdAt;
 }
+
+/// `POST /v1/auth/{google,github}/mobile` response envelope —
+/// `{session_id, expires_at, user: {...}}`. Mobile has no cookie jar
+/// (Phase 23 D-23) so the session_id arrives in the body and must be
+/// persisted to SecureStorage by the caller before the next API call.
+class MobileAuthResponse {
+  const MobileAuthResponse({
+    required this.sessionId,
+    required this.user,
+    this.expiresAt,
+  });
+
+  factory MobileAuthResponse.fromJson(Map<String, dynamic> json) =>
+      MobileAuthResponse(
+        sessionId: json['session_id'] as String,
+        expiresAt: json['expires_at'] as String?,
+        user: SessionUser.fromJson(json['user'] as Map<String, dynamic>),
+      );
+
+  final String sessionId;
+  final String? expiresAt;
+  final SessionUser user;
+}

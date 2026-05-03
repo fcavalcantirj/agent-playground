@@ -301,7 +301,7 @@ class ApiClient {
   // ---------------------------------------------------------------------------
   // POST /v1/auth/google/mobile
   // ---------------------------------------------------------------------------
-  Future<Result<SessionUser>> authGoogleMobile({
+  Future<Result<MobileAuthResponse>> authGoogleMobile({
     required String idToken,
     CancelToken? cancelToken,
   }) async {
@@ -311,7 +311,10 @@ class ApiClient {
         data: {'id_token': idToken},
         cancelToken: cancelToken,
       );
-      return Result.ok(SessionUser.fromJson(res.data!));
+      // Server returns {session_id, expires_at, user:{...}} per Phase 23
+      // D-23 — mobile has no cookie jar, so the body carries session_id
+      // and the caller must persist it before the next call.
+      return Result.ok(MobileAuthResponse.fromJson(res.data!));
     } on DioException catch (e) {
       return Result.err(ApiError.fromDioException(e));
     }
@@ -320,7 +323,7 @@ class ApiClient {
   // ---------------------------------------------------------------------------
   // POST /v1/auth/github/mobile
   // ---------------------------------------------------------------------------
-  Future<Result<SessionUser>> authGithubMobile({
+  Future<Result<MobileAuthResponse>> authGithubMobile({
     required String accessToken,
     CancelToken? cancelToken,
   }) async {
@@ -330,7 +333,7 @@ class ApiClient {
         data: {'access_token': accessToken},
         cancelToken: cancelToken,
       );
-      return Result.ok(SessionUser.fromJson(res.data!));
+      return Result.ok(MobileAuthResponse.fromJson(res.data!));
     } on DioException catch (e) {
       return Result.err(ApiError.fromDioException(e));
     }

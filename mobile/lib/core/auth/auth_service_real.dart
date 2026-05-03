@@ -73,10 +73,17 @@ class AuthServiceReal implements AuthService {
           ),
         );
       }
-      // Backend Set-Cookie ap_session is captured by AuthInterceptor; the
-      // session_id persistence path is owned by the ApiClient/cookie chain
-      // (carry-forward from Phase 24).
-      return apiClient.authGoogleMobile(idToken: idToken);
+      // Mobile auth has no cookie jar — backend returns
+      // {session_id, user} in the body (Phase 23 D-23). Persist
+      // session_id so AuthInterceptor can attach it as Cookie on
+      // subsequent calls.
+      final res = await apiClient.authGoogleMobile(idToken: idToken);
+      if (res case Err(:final error)) {
+        return Result<SessionUser>.err(error);
+      }
+      final ok = (res as Ok<MobileAuthResponse>).value;
+      await storage.writeSessionId(ok.sessionId);
+      return Result<SessionUser>.ok(ok.user);
     } on GoogleSignInException catch (e) {
       return Result.err(
         ApiError(
@@ -117,7 +124,13 @@ class AuthServiceReal implements AuthService {
           ),
         );
       }
-      return apiClient.authGithubMobile(accessToken: accessToken);
+      final res = await apiClient.authGithubMobile(accessToken: accessToken);
+      if (res case Err(:final error)) {
+        return Result<SessionUser>.err(error);
+      }
+      final ok = (res as Ok<MobileAuthResponse>).value;
+      await storage.writeSessionId(ok.sessionId);
+      return Result<SessionUser>.ok(ok.user);
     } on Exception catch (e) {
       return Result.err(
         ApiError(
