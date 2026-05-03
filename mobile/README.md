@@ -46,12 +46,43 @@ cd mobile && make spike \       # full 9-step round-trip against live api_server
   BASE_URL=http://localhost:8000 \
   SESSION_ID=<paste from browser DevTools> \
   OPENROUTER_KEY=$(grep OPENROUTER_KEY ../.env | cut -d= -f2)
+cd mobile && make screens-e2e \ # full screens round-trip against live api_server (~3-5 min)
+  BASE_URL=http://localhost:8000 \
+  SESSION_ID=<paste from browser DevTools> \
+  OPENROUTER_KEY=$(grep OPENROUTER_KEY ../.env | cut -d= -f2)
 ```
 
-The spike (`make spike`) runs on a real iOS Simulator OR Android Emulator
-OR physical device.  It does **not** run in CI (D-53 — requires real
-api_server + real Docker + OpenRouter network).  CI only runs `flutter
-analyze` + unit tests via `.github/workflows/mobile.yml`.
+The spike (`make spike`) and the screens round-trip (`make screens-e2e`)
+both run on a real iOS Simulator OR Android Emulator OR physical device.
+They do **not** run in CI (D-53 / D-65 — both require real api_server +
+real Docker + OpenRouter network). CI only runs `flutter analyze` +
+unit tests via `.github/workflows/mobile.yml`.
+
+### make screens-e2e (Phase 25 D-65)
+
+This is the **Phase 25 exit gate**. It drives the Flutter screens
+end-to-end against a live local backend:
+
+```
+Login → Dashboard → tap FAB → Wizard (clone + model + name + Telegram OFF)
+  → Deploy → Chat opens → send "hi" → assistant reply
+  → simulated kill+relaunch → Dashboard → tap agent → history visible
+```
+
+`make screens-e2e` shares the `make spike` preflight: it requires
+`BASE_URL`, `SESSION_ID`, and `OPENROUTER_KEY`, and refuses to run if
+`$BASE_URL/healthz` doesn't return 200.
+
+The kill+relaunch step (Step 9 in the test narrative) uses
+`WidgetTester.binding.handleAppLifecycleStateChanged` (`paused` →
+`detached` → `resumed`) plus a widget-tree teardown and re-pumpWidget
+with the SAME `flutter_secure_storage` instance — the canonical
+integration_test pattern for "the app went to background, came back,
+and re-fetched its state from the server" per RESEARCH ## Common
+Pitfalls #7. Full process kill must be verified manually by force-quitting
+the simulator/emulator app and relaunching with `make ios` / `make
+android` (the spike artifact at `spikes/flutter-screens-roundtrip.md`
+documents the manual verification step alongside the automated one).
 
 ### Spike Prerequisites
 
