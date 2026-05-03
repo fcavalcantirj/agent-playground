@@ -214,7 +214,7 @@ Plans:
 | 8. Generic Claude-Code Bootstrap | 0/? | Not started | - |
 | 23. Backend Mobile API | 0/? | Not started | - |
 | 24. Flutter Foundation | 0/? | Not started | - |
-| 25. Mobile Screens | 0/? | Not started | - |
+| 25. Mobile Screens | 3/8 | In Progress|  |
 
 ## Coverage
 
@@ -504,11 +504,11 @@ Plans:
   2. A chat message typed in the Chat screen produces a real LLM reply within the configured bot timeout (~30s typical), is visible in the message list after the block-and-wait round-trip, and renders as themed bubbles differentiated by alignment + background (user vs assistant).
   3. Killing the app and relaunching it preserves the message history for any agent the user previously chatted with — the Chat screen's `GET /v1/agents/:id/messages?limit=N` load on open proves end-to-end persistence (no in-memory chat that has to be replaced later).
   4. The full demo flow (open → Dashboard → "+" → New Agent → Deploy → Chat → message → reply → kill → relaunch → history visible) runs on iOS Simulator + Android Emulator (or one of the two + a real device on the same wifi) without code changes — only the env-config origin switches between targets.
-**Plans:** 8 plans across 6 waves
+**Plans:** 3/8 plans executed
 Plans:
-- [ ] 25-01-PLAN.md — Wave 0 diligence spikes: real-OAuth (google_sign_in 7.x + flutter_appauth) + SSE envelope inspection (dedup key)
-- [ ] 25-02-PLAN.md — Wave 1 foundation: pubspec deps + version bump (D-67) + iOS LSApplicationQueriesSchemes + AppLifecycleNotifier + SecureStorage BYOK extensions + AuthService (real + test seam, D-66) + Login screen + cold-start probe + router fill
-- [ ] 25-03-PLAN.md — Wave 1 shared widgets: 9 primitives in lib/shared/ (StatusDot, EmptyStateScaffold, AsciiAgentBanner, RetryBanner, SkeletonRow, TypingDots, FailedBubble, RestartBanner, ConfirmDialog) + flutter_test_config.dart golden_toolkit boot
+- [x] 25-01-PLAN.md — Wave 0 diligence spikes: real-OAuth (google_sign_in 7.x + flutter_appauth) + SSE envelope inspection (dedup key)
+- [x] 25-02-PLAN.md — Wave 1 foundation: pubspec deps + version bump (D-67) + iOS LSApplicationQueriesSchemes + AppLifecycleNotifier + SecureStorage BYOK extensions + AuthService (real + test seam, D-66) + Login screen + cold-start probe + router fill
+- [x] 25-03-PLAN.md — Wave 1 shared widgets: 9 primitives in lib/shared/ (StatusDot, EmptyStateScaffold, AsciiAgentBanner, RetryBanner, SkeletonRow, TypingDots, FailedBubble, RestartBanner, ConfirmDialog) + flutter_test_config.dart golden_toolkit boot
 - [ ] 25-04-PLAN.md — Wave 2 Dashboard: AgentRow + dashboard_providers (lifecycle re-fetch + CancelToken concurrency guard) + DashboardScreen (4 states: loading/empty/populated/error) + Sign-out flow + 2 golden snapshots
 - [ ] 25-05-PLAN.md — Wave 3 wizard scaffolding: RecipeDetail/ChannelUserInput/RecipeChannelMeta/ChannelProviderCompat DTOs + ApiClient.recipeDetail + WizardShell (X close + stepper) + wizardScopeProvider (Pattern A) + CloneStep + ModelStep (BYOK label-swap from server metadata, D-32) + ModelPickerScreen (searchable virtualized)
 - [ ] 25-06-PLAN.md — Wave 3 deploy step: DeployOrchestrator (pure-Dart 1×/runs + N×/start with 6 outcome variants) + ChannelInputs (dynamic Telegram fields from recipe metadata, D-54) + telegramFailedBannerProvider + DeployStep (collision dialog D-28 + smoke loading D-29 + smoke/inapp/telegram-only fail UX + nav on success D-60)
