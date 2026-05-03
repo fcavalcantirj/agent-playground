@@ -9,6 +9,7 @@
 // per-step state is preserved across the wizard session per D-24.
 
 import 'package:agent_playground/core/theme/solvr_theme.dart';
+import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/new_agent/wizard_providers.dart';
 import 'package:agent_playground/shared/confirm_dialog.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +75,10 @@ class WizardShell extends ConsumerWidget {
     final isDirty = ref.read(wizardScopeProvider).isDirty;
     if (!isDirty) {
       ref.read(wizardScopeProvider.notifier).clear();
+      // A long-running deploy may have completed in the background even
+      // though the wizard surfaced a smoke-fail (mobile timeout) — refresh
+      // the dashboard so the new agent shows up without pull-to-refresh.
+      ref.invalidate(agentsListProvider);
       if (context.mounted) {
         context.go('/dashboard');
       }
@@ -86,6 +91,7 @@ class WizardShell extends ConsumerWidget {
     );
     if (result != ConfirmDialogResult.confirm) return;
     ref.read(wizardScopeProvider.notifier).clear();
+    ref.invalidate(agentsListProvider);
     if (context.mounted) {
       context.go('/dashboard');
     }
