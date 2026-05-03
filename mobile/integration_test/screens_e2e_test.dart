@@ -192,17 +192,19 @@ void main() {
       // (POST /v1/runs) actually completes. Tapping any other card hits
       // INVOKE_FAIL exit 125 ("Unable to find image locally"), and the
       // wizard rightly stays on the fail card instead of routing to chat.
-      // The test name search uses the JetBrains-Mono recipe name Text
-      // child of the InkWell (`_RecipeCard` line 132 in clone_step.dart).
+      //
+      // ListView is lazy + horizontal; zeroclaw is alphabetically last,
+      // off-screen on first paint. Use scrollUntilVisible to build &
+      // surface the card before tapping. _RecipeCard renders Text(recipe.name).
+      await tester.scrollUntilVisible(
+        find.text('zeroclaw'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await pumpUntilSettled(tester, timeout: const Duration(seconds: 1));
       final zeroclawCard = find.ancestor(
         of: find.text('zeroclaw'),
         matching: find.byType(InkWell),
-      );
-      await waitForFinder(
-        tester,
-        zeroclawCard,
-        timeout: const Duration(seconds: 5),
-        reason: 'zeroclaw recipe card (only built image)',
       );
       await tester.tap(zeroclawCard.first);
       await pumpUntilSettled(tester, timeout: const Duration(seconds: 10));
