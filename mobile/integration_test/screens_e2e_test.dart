@@ -347,6 +347,19 @@ void main() {
       // handleAppLifecycleStateChanged returns void (it dispatches the
       // notification synchronously); pump after each transition so the
       // observers run.
+      // AppLifecycleListener asserts state transitions follow the framework
+      // contract: resumed → inactive → hidden → paused → detached, with
+      // each step gated on the previous (`previousState == hidden` for
+      // paused). Skip a step and the assertion fires. Mirror real iOS
+      // background → suspended → terminated transitions.
+      tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.inactive,
+      );
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.hidden,
+      );
+      await tester.pump();
       tester.binding.handleAppLifecycleStateChanged(
         AppLifecycleState.paused,
       );
@@ -359,7 +372,8 @@ void main() {
       await pumpUntilSettled(tester, timeout: const Duration(seconds: 2));
       // Resume + re-pumpWidget — same overrides (so the same storage
       // instance is reused; session_id persisted from step 2 is read by
-      // the AuthInterceptor on cold-start).
+      // the AuthInterceptor on cold-start). Re-entry after `detached`
+      // goes through resumed via the binding's state machine.
       tester.binding.handleAppLifecycleStateChanged(
         AppLifecycleState.resumed,
       );
