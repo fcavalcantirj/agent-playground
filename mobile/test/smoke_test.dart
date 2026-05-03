@@ -1,11 +1,10 @@
-// Phase 24 Plan 01 — smoke test. Proves the scaffold compiles and the root
-// widget renders.
+// Phase 24 Plan 01 / Phase 25 Wave 1 — smoke test. Proves the scaffold
+// compiles and the root widget renders without throwing.
 //
-// Plan 24-06 update: HealthzScreen.initState fires a real /healthz call on
-// boot. The smoke test overrides `dioProvider` with a Dio whose adapter
-// rejects every outbound request immediately, so the widget tree settles
-// without leaving a 10s timer pending. The real /healthz call is exercised
-// on real infra by the Plan 24-09 spike (D-46).
+// Phase 25 Wave 1 update: HealthzScreen was deleted; the default initial
+// route is /login. LoginScreen does not auto-fire any HTTP (taps drive
+// AuthService), so a rejecting Dio adapter is preserved as belt-and-braces
+// — any unexpected dio call leaves no pending timer.
 
 import 'package:agent_playground/app.dart';
 import 'package:agent_playground/core/api/providers.dart';

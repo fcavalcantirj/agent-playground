@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Phase 25 context gathered
-last_updated: "2026-05-03T13:36:50.302Z"
-last_activity: 2026-05-03 -- Phase 25 planning complete
+last_updated: "2026-05-03T13:44:17.490Z"
+last_activity: 2026-05-03 -- Phase 25 execution started
 progress:
   total_phases: 19
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 24 — flutter-foundation
+**Current focus:** Phase 25 — mobile-screens
 
 ## Current Position
 
-Phase: 24 (flutter-foundation) — EXECUTING
-Plan: 1 of 10
-Status: Ready to execute
-Last activity: 2026-05-03 -- Phase 25 planning complete
+Phase: 25 (mobile-screens) — EXECUTING
+Plan: 1 of 8
+Status: Executing Phase 25
+Last activity: 2026-05-03 -- Phase 25 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
