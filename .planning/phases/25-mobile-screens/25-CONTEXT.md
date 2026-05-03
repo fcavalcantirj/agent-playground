@@ -570,6 +570,20 @@ gate.
   > sequential calls when Telegram is toggled. No backend code changes;
   > UI-02 amended in same commit chain (AMD-01).
 
+- **AMD-03: Substitute `flutter_markdown_plus` for `flutter_markdown`
+  (post-research correction).** Google discontinued the official
+  `flutter_markdown` package in February 2025 (flutter/flutter#162966).
+  The community-maintained `flutter_markdown_plus` (Foresight Mobile,
+  ~140k weekly downloads) is a drop-in replacement — same `Markdown` /
+  `MarkdownBody` widgets, same `onTapLink` API, same theme extension
+  shape. **Wherever D-43 / Wave 1 deps / canonical_refs name
+  `flutter_markdown`, read it as `flutter_markdown_plus`.** Pubspec
+  Wave-1 task: add `flutter_markdown_plus: ^1.0.x`, NOT
+  `flutter_markdown`. Markdown link tap handling per D-46 still applies
+  (https/http allow-list, all other schemes stripped at the renderer).
+  *(Surfaced by 25-RESEARCH.md; no API changes vs CONTEXT — only the
+  package name swaps.)*
+
 </amendments>
 
 <canonical_refs>
