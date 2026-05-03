@@ -43,10 +43,36 @@ class AuthInterceptor extends Interceptor {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
-    if (err.response?.statusCode == 401) {
+    if (err.response?.statusCode == 401 && _isSessionAuthFailure(err)) {
       await _storage.clearSessionId();
       _authEvents.emit();
     }
     handler.next(err);
+  }
+
+  /// A 401 response means "auth failed", but auth on this API has TWO
+  /// independent gates per Phase 23 D-22 / Phase 25 Wave 5:
+  ///
+  ///   * Session cookie (`ap_session`) — the user's identity. A 401 here
+  ///     means the session is invalid / expired → log out.
+  ///   * Bearer token (`Authorization: Bearer <byok>`) — the per-request
+  ///     LLM provider key on `/v1/runs` and `/start`. A 401 here means
+  ///     the BYOK key is empty / malformed — the user is still signed
+  ///     in; clearing the session would force a needless re-login.
+  ///
+  /// Backend returns the failing field in `error.param`. Distinguish:
+  ///
+  ///   - `param == "ap_session"` → session failure → log out.
+  ///   - `param == "Authorization"` → BYOK failure → keep session.
+  ///   - other / missing → conservative; treat as session failure
+  ///     (matches the prior unconditional behavior on routes that
+  ///     don't carry a BYOK Bearer at all).
+  bool _isSessionAuthFailure(DioException err) {
+    final data = err.response?.data;
+    if (data is! Map<String, dynamic>) return true;
+    final error = data['error'];
+    if (error is! Map<String, dynamic>) return true;
+    final param = error['param'] as String?;
+    return param != 'Authorization';
   }
 }
