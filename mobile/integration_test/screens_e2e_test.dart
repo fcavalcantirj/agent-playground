@@ -168,6 +168,17 @@ void main() {
       // Simpler: tap the first widget that lives inside the horizontal
       // ListView via a key-less ordinal match — there is exactly one
       // horizontal ListView in step 1.
+      //
+      // CRITICAL: pumpAndSettle does not wait for network futures. The
+      // wizard title appears synchronously but recipesProvider is still
+      // fetching — wait for the ListView itself (data state) before
+      // tapping, or we race against `_LoadingCards`.
+      await waitForFinder(
+        tester,
+        find.byType(ListView),
+        timeout: const Duration(seconds: 30),
+        reason: 'recipesProvider data state — horizontal recipe ListView',
+      );
       final firstCard = find
           .descendant(
             of: find.byType(ListView),
