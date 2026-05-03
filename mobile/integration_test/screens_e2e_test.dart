@@ -171,20 +171,25 @@ void main() {
       //
       // CRITICAL: pumpAndSettle does not wait for network futures. The
       // wizard title appears synchronously but recipesProvider is still
-      // fetching — wait for the ListView itself (data state) before
-      // tapping, or we race against `_LoadingCards`.
+      // fetching — wait for an actual tappable recipe card (InkWell
+      // descendant of the ListView) before tapping. Both loading-state
+      // (`_LoadingCards`) and data-state render a horizontal ListView,
+      // but only the data state has InkWell children, so InkWell is the
+      // unambiguous data-state signal.
+      // Wait on the BASE finder (matches 0..N candidates) — `.first.evaluate()`
+      // throws StateError on empty, so we'd crash inside waitForFinder.
+      // Once the base is non-empty, .first is safe to materialize.
+      final cards = find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(InkWell),
+      );
       await waitForFinder(
         tester,
-        find.byType(ListView),
+        cards,
         timeout: const Duration(seconds: 30),
-        reason: 'recipesProvider data state — horizontal recipe ListView',
+        reason: 'recipesProvider data state — recipe card InkWells',
       );
-      final firstCard = find
-          .descendant(
-            of: find.byType(ListView),
-            matching: find.byType(InkWell),
-          )
-          .first;
+      final firstCard = cards.first;
       await tester.tap(firstCard);
       await pumpUntilSettled(tester, timeout: const Duration(seconds: 10));
       // The Next button is enabled once selectedRecipe lands.
