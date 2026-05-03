@@ -1,3 +1,5 @@
+**Wave 0 Spike B verdict (2026-05-03):** SSE envelope dedup key confirmed as `seq`; Wave 4 plan must key the chat dedup Map on `seq` and cross-correlate to history rows by content+timestamp. Pitfall #9 below realized empirically — `inapp_outbound` envelope on the wire is `{seq, kind, payload:{source, content, captured_at}, correlation_id, ts}` with NO `inapp_message_id` field. Evidence: `spikes/flutter-sse-envelope-inspect.md`.
+
 # Phase 25: Mobile Screens (end-to-end demo) — Research
 
 **Researched:** 2026-05-03
