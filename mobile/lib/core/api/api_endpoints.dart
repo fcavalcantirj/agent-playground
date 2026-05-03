@@ -22,6 +22,14 @@ abstract final class ApiEndpoints {
 
   static const String agentsList = '/v1/agents';
   static const String recipes = '/v1/recipes';
+
+  /// `GET /v1/recipes/{name}` (Phase 25 Wave 3 — D-54 RecipeDetail source).
+  ///
+  /// `name` is enforced server-side by recipes_loader regex
+  /// `^[a-z0-9][a-z0-9_-]*$` (T-25-05-03 mitigation — the regex precludes
+  /// path-traversal characters; client does not URL-escape).
+  static String recipeDetail(String name) => '/v1/recipes/$name';
+
   static const String models = '/v1/models';
   static const String usersMe = '/v1/users/me';
   static const String authGoogleMobile = '/v1/auth/google/mobile';
