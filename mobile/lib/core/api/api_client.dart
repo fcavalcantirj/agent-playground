@@ -220,6 +220,27 @@ class ApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // GET /v1/recipes/{name}   (Wave 3 — D-54 RecipeDetail source)
+  // ---------------------------------------------------------------------------
+  Future<Result<RecipeDetail>> recipeDetail({
+    required String name,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.recipeDetail(name),
+        cancelToken: cancelToken,
+      );
+      // RecipeDetail.fromJson unwraps the `{"recipe": ...}` envelope
+      // (RecipeDetailResponse.model_dump() shape) — no client-side
+      // unwrap needed here.
+      return Result.ok(RecipeDetail.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /v1/models   (OpenRouter passthrough — accepts both wire shapes)
   // ---------------------------------------------------------------------------
   Future<Result<List<OpenRouterModel>>> models({

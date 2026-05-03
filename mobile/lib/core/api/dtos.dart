@@ -206,6 +206,176 @@ class Recipe {
   final String? description;
 }
 
+/// Per-channel user-input descriptor from `GET /v1/recipes/{name}` —
+/// `recipe.channels.<id>.required_user_input[i]` /
+/// `recipe.channels.<id>.optional_user_input[i]`.
+///
+/// Mirrors the pydantic `ChannelUserInput` model from api_server (D-54).
+/// Permissive parser per 25-RESEARCH Open Question #3 — every optional
+/// field defaults defensively so additive recipe schema changes don't
+/// crash the wizard.
+class ChannelUserInput {
+  const ChannelUserInput({
+    required this.env,
+    required this.secret,
+    this.hint,
+    this.hintUrl,
+    this.kind,
+  });
+
+  factory ChannelUserInput.fromJson(Map<String, dynamic> json) =>
+      ChannelUserInput(
+        env: json['env'] as String,
+        secret: (json['secret'] as bool?) ?? false,
+        hint: json['hint'] as String?,
+        hintUrl: json['hint_url'] as String?,
+        kind: json['kind'] as String?,
+      );
+
+  /// Env-var name (e.g. `TELEGRAM_BOT_TOKEN`). Doubles as the form-field
+  /// label per UI-SPEC line 589 — Golden Rule #2 (no Dart-side label
+  /// catalogs).
+  final String env;
+
+  /// Whether the value is sensitive — drives `obscureText: true` per D-34.
+  final bool secret;
+
+  /// Per-recipe caption rendered below the field (UI-SPEC line 591).
+  final String? hint;
+
+  /// Optional `hint_url` — when present, mobile renders a "get one here"
+  /// link via `url_launcher` (D-46 https/http allow-list applies).
+  final String? hintUrl;
+
+  /// Optional `kind` discriminator (e.g. `telegram_numeric_id`). Reserved
+  /// for future client-side input-type hints; not used in MVP.
+  final String? kind;
+}
+
+/// Channel metadata from `recipe.channels.<id>` map. Drives the wizard's
+/// dynamic-field render loop per D-54 + UI-SPEC §Step 3.
+class RecipeChannelMeta {
+  const RecipeChannelMeta({
+    required this.requiredUserInput,
+    required this.optionalUserInput,
+  });
+
+  factory RecipeChannelMeta.fromJson(Map<String, dynamic> json) =>
+      RecipeChannelMeta(
+        requiredUserInput:
+            ((json['required_user_input'] as List<dynamic>?) ?? <dynamic>[])
+                .cast<Map<String, dynamic>>()
+                .map(ChannelUserInput.fromJson)
+                .toList(growable: false),
+        optionalUserInput:
+            ((json['optional_user_input'] as List<dynamic>?) ?? <dynamic>[])
+                .cast<Map<String, dynamic>>()
+                .map(ChannelUserInput.fromJson)
+                .toList(growable: false),
+      );
+
+  final List<ChannelUserInput> requiredUserInput;
+  final List<ChannelUserInput> optionalUserInput;
+
+  /// Render order = required first, then optional (UI-SPEC line 588).
+  List<ChannelUserInput> get allInputs => [
+        ...requiredUserInput,
+        ...optionalUserInput,
+      ];
+}
+
+/// Per-channel provider compatibility synthesized from
+/// `recipe.channels.<id>.provider_compat` (api_server.services.recipes_loader
+/// lines 128-143). Drives BYOK label-swap (D-32) — mobile checks
+/// `deferred.contains('openrouter')` to flip the field label from
+/// "OpenRouter API Key" to "Anthropic API Key".
+class ChannelProviderCompat {
+  const ChannelProviderCompat({
+    required this.supported,
+    required this.deferred,
+  });
+
+  factory ChannelProviderCompat.fromJson(Map<String, dynamic> json) =>
+      ChannelProviderCompat(
+        supported: ((json['supported'] as List<dynamic>?) ?? <dynamic>[])
+            .map((e) => e as String)
+            .toList(growable: false),
+        deferred: ((json['deferred'] as List<dynamic>?) ?? <dynamic>[])
+            .map((e) => e as String)
+            .toList(growable: false),
+      );
+
+  final List<String> supported;
+  final List<String> deferred;
+}
+
+/// `GET /v1/recipes/{name}` response body — full recipe YAML dict
+/// (api_server.routes.recipes.RecipeDetailResponse passthrough).
+///
+/// Wire shape: `{"recipe": {...full yaml dict...}}`. The wrapper is
+/// unwrapped here so callers receive a flat DTO. Tests may also pass the
+/// already-unwrapped recipe dict directly.
+///
+/// `channelsSupported` is derived from `channels.keys()` for parity with
+/// the list-endpoint summary (recipes_loader.py:124).
+/// `channelProviderCompat` is synthesized by walking
+/// `channels.<id>.provider_compat` (recipes_loader.py:128-143) so the
+/// wizard's BYOK label-swap (D-32) and Telegram dynamic-fields (D-54) can
+/// share the same DTO. Subclassing `Recipe` makes RecipeDetail a drop-in
+/// replacement anywhere a `Recipe` is expected (e.g. wizard scope after
+/// upgrading from list-summary).
+class RecipeDetail extends Recipe {
+  const RecipeDetail({
+    required super.name,
+    required super.channelsSupported,
+    required this.channels,
+    required this.channelProviderCompat,
+    super.description,
+  });
+
+  factory RecipeDetail.fromJson(Map<String, dynamic> json) {
+    // Unwrap `{"recipe": {...}}` envelope per
+    // RecipeDetailResponse.model_dump(); fall back to the bare dict when
+    // tests pass the inner shape directly.
+    final r = (json['recipe'] is Map<String, dynamic>)
+        ? json['recipe'] as Map<String, dynamic>
+        : json;
+
+    final channelsRaw =
+        (r['channels'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    final channels = <String, RecipeChannelMeta>{};
+    final compat = <String, ChannelProviderCompat>{};
+    channelsRaw.forEach((cid, cinfoRaw) {
+      final cinfo = cinfoRaw is Map<String, dynamic>
+          ? cinfoRaw
+          : const <String, dynamic>{};
+      channels[cid] = RecipeChannelMeta.fromJson(cinfo);
+      final pc = cinfo['provider_compat'];
+      if (pc is Map<String, dynamic>) {
+        compat[cid] = ChannelProviderCompat.fromJson(pc);
+      }
+    });
+
+    return RecipeDetail(
+      name: r['name'] as String,
+      // Mirror recipes_loader.py:124 — channels_supported == channels.keys.
+      channelsSupported: channels.keys.toList(growable: false),
+      description: r['description'] as String?,
+      channels: channels,
+      channelProviderCompat: compat,
+    );
+  }
+
+  /// `recipe.channels.<id>` map — drives the wizard's dynamic Telegram
+  /// fields (D-54).
+  final Map<String, RecipeChannelMeta> channels;
+
+  /// Synthesized from `channels.<id>.provider_compat` (recipes_loader.py
+  /// lines 128-143). Drives the BYOK label-swap (D-32). Channels with no
+  /// `provider_compat` block are absent from this map.
+  final Map<String, ChannelProviderCompat> channelProviderCompat;
+}
+
 /// `GET /v1/models` row (OpenRouter passthrough).
 class OpenRouterModel {
   const OpenRouterModel({required this.id, required this.name});
