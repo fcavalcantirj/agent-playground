@@ -164,25 +164,24 @@ class _RecipeCard extends StatelessWidget {
 }
 
 /// 3 placeholder cards while `recipesProvider` is loading. Mirrors the
-/// dashboard's SkeletonRow vocabulary in horizontal layout.
+/// dashboard's SkeletonRow vocabulary in horizontal layout. Uses a
+/// horizontal ListView so the loading state is scrollable just like the
+/// data state — three 200px cards exceed the typical 342px usable width
+/// on phone-class screens.
 class _LoadingCards extends StatelessWidget {
   const _LoadingCards();
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(
-        children: [
-          for (var i = 0; i < 3; i++) ...[
-            const SizedBox(
-              width: 200,
-              height: 160,
-              child: SkeletonRow(),
-            ),
-            if (i < 2) const SizedBox(width: 8),
-          ],
-        ],
+      itemCount: 3,
+      separatorBuilder: (_, _) => const SizedBox(width: 8),
+      itemBuilder: (_, _) => const SizedBox(
+        width: 200,
+        height: 160,
+        child: SkeletonRow(),
       ),
     );
   }
