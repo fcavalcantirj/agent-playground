@@ -178,19 +178,33 @@ void main() {
       // unambiguous data-state signal.
       // Wait on the BASE finder (matches 0..N candidates) — `.first.evaluate()`
       // throws StateError on empty, so we'd crash inside waitForFinder.
-      // Once the base is non-empty, .first is safe to materialize.
-      final cards = find.descendant(
-        of: find.byType(ListView),
+      await waitForFinder(
+        tester,
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(InkWell),
+        ),
+        timeout: const Duration(seconds: 30),
+        reason: 'recipesProvider data state — recipe card InkWells',
+      );
+      // Pick zeroclaw deterministically — it's the only recipe with a
+      // pre-built `ap-recipe-*:latest` image on this dev box, so smoke
+      // (POST /v1/runs) actually completes. Tapping any other card hits
+      // INVOKE_FAIL exit 125 ("Unable to find image locally"), and the
+      // wizard rightly stays on the fail card instead of routing to chat.
+      // The test name search uses the JetBrains-Mono recipe name Text
+      // child of the InkWell (`_RecipeCard` line 132 in clone_step.dart).
+      final zeroclawCard = find.ancestor(
+        of: find.text('zeroclaw'),
         matching: find.byType(InkWell),
       );
       await waitForFinder(
         tester,
-        cards,
-        timeout: const Duration(seconds: 30),
-        reason: 'recipesProvider data state — recipe card InkWells',
+        zeroclawCard,
+        timeout: const Duration(seconds: 5),
+        reason: 'zeroclaw recipe card (only built image)',
       );
-      final firstCard = cards.first;
-      await tester.tap(firstCard);
+      await tester.tap(zeroclawCard.first);
       await pumpUntilSettled(tester, timeout: const Duration(seconds: 10));
       // The Next button is enabled once selectedRecipe lands.
       await waitForFinder(
