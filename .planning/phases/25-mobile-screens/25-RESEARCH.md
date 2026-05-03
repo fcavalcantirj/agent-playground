@@ -1178,7 +1178,7 @@ void main() {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the SSE `inapp_outbound` envelope contain `inapp_message_id`?**
    - What we know: Phase 22c.3-04's `InappOutboundPayload` declares
@@ -1191,6 +1191,7 @@ void main() {
      observed shape in the plan's `<read_first>` block. If
      `inapp_message_id` is absent, key dedup on `seq` and document the
      decision; do NOT amend the backend in Phase 25 (out of scope).
+   - **Resolution:** RESOLVED via Plan 25-01 Task 2 (Wave 0 Spike B). Plan 07 Task 1 reads the resulting `spikes/flutter-sse-envelope-inspect.md` to choose the dedup key (`inapp_message_id` if present in payload, otherwise `seq`).
 
 2. **Does the existing `GET /v1/agents` response include enough info for D-49's multi-channel Restart?**
    - What we know: 23-CONTEXT D-10 says `list_agents()` was extended with
@@ -1202,6 +1203,7 @@ void main() {
      to capture actual response shape. If channel set is absent, D-49
      Restart defaults to `inapp` only; flag a Phase 25-or-later TODO for
      extending the endpoint.
+   - **Resolution:** DEFERRED to Phase 26+. Per CONTEXT D-49, Plan 25-07 Restart banner defaults to `channel='inapp'` only with a planner-deferred TODO comment when the extended `GET /v1/agents` response lacks per-agent channel metadata.
 
 3. **Does `recipe.channels.<id>.required_user_input` shape vary across the 5 recipes?**
    - What we know: openclaw + hermes both expose `required_user_input` as
@@ -1212,6 +1214,7 @@ void main() {
    - Recommendation: Wave 3 plan task uses a permissive parser (treat
      missing keys as null) and renders only what it has. Don't validate
      the shape strictly; surface unknowns as plain-text hints.
+   - **Resolution:** RESOLVED via Plan 25-05 Task 1 — the `RecipeDetail` parser is permissive (drops unknown fields, defaults missing `optional_user_input` to empty list). Plan 25-06 ChannelInputs renders fields verbatim from `recipe.channels.<id>.required_user_input + optional_user_input`.
 
 4. **Does `golden_toolkit`'s `loadAppFonts` correctly load `google_fonts` runtime-fetched fonts?**
    - What we know: `loadAppFonts` loads pubspec-declared fonts; `google_fonts` runtime-fetches.
@@ -1222,6 +1225,7 @@ void main() {
      output of "S" is non-trivial). If snapshots show square boxes,
      bundle `Inter-Regular.ttf` + `JetBrainsMono-Regular.ttf` as
      `assets/fonts/` instead.
+   - **Resolution:** RESOLVED via Plan 25-03 Task 1 — `mobile/test/flutter_test_config.dart` calls `golden_toolkit.loadAppFonts()` and `mobile/test/golden/font_smoke_test.dart` asserts Inter renders without the Ahem fallback.
 
 5. **Does CONTEXT's "REPLACE wizard" route for Deploy success (D-60) play nicely with go_router 17.x?**
    - What we know: D-60 says use `go_router.go('/chat/<id>')`. go_router's
@@ -1232,6 +1236,7 @@ void main() {
    - Recommendation: Wave 3 plan task includes a Wave-3 widget test
      asserting "after Deploy success, `Navigator.canPop` is false" — i.e.,
      back from Chat goes to Dashboard, not back into the wizard.
+   - **Resolution:** RESOLVED via Plan 25-06 grep-acceptance (`context.go.*chat` + `! context.push.*chat`) AND a runtime widget test `mobile/test/features/new_agent/deploy_nav_test.dart` that asserts `Navigator.of(context).canPop() == false` after Deploy success.
 
 ---
 

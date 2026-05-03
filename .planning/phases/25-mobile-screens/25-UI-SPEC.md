@@ -299,9 +299,12 @@ class EmptyStateScaffold extends StatelessWidget {
 **Purpose:** D-17 — Matrix-aesthetic cycling JetBrains Mono banner.
 
 ```dart
-class AsciiAgentBanner extends ConsumerWidget {
+class AsciiAgentBanner extends StatefulWidget {
+  // Stateless from a Riverpod perspective — the consumer (DashboardScreen)
+  // wires the stream from `recipeNamesStreamProvider`. Internal state holds
+  // the cross-fade AnimationController + current name index.
   const AsciiAgentBanner({
-    required this.namesStream,  // Stream<List<String>> (Riverpod-supplied; default sourced from GET /v1/recipes)
+    required this.namesStream,  // Stream<List<String>> injected by the consumer (default sourced from GET /v1/recipes)
     this.intervalMs = 2000,
     super.key,
   });
