@@ -79,7 +79,10 @@ final class DeployCancelled extends DeployOutcome {
 /// Multi-channel deploy orchestrator (D-56). Owns NO widget state; the
 /// caller (DeployStep) owns the CancelToken + UI side effects.
 class DeployOrchestrator {
-  const DeployOrchestrator(this._api);
+  // Constructor uses a public positional name so test subclasses can
+  // forward via `super.api`; the underlying field is private to keep
+  // the runtime API surface narrow.
+  const DeployOrchestrator(ApiClient api) : _api = api;
 
   final ApiClient _api;
 
