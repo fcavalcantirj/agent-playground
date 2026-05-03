@@ -1,6 +1,7 @@
 // Phase 24 Plan 09 — spike helper functions (kept separate so the test
 // file stays focused on the 9-step narrative).
 
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:agent_playground/core/api/messages_stream.dart';
@@ -54,19 +55,27 @@ String shortRandHex() {
 }
 
 /// Extract the assistant text from a delivered inapp_outbound event's
-/// `data` field. The dispatcher persists the bot reply as the entire
-/// `bot_response` column verbatim and emits it on the SSE event's data.
+/// `data` field. Phase 22c.3 wraps it as a JSON envelope:
+///   {"seq": 1, "kind": "inapp_outbound",
+///    "payload": {"source":"agent", "content":"...", "captured_at":"..."},
+///    "correlation_id": null, "ts": "..."}
+/// The history `GET /v1/agents/:id/messages` returns the inner content
+/// string directly, so we unwrap the envelope here for byte-equal parity.
 String extractAssistantContent(String rawData) {
   final trimmed = rawData.trim();
   if (trimmed.isEmpty) return trimmed;
-  // The data field can be raw text or a JSON envelope depending on
-  // backend revision; both shapes are accepted as long as the test's
-  // history-parity assertion uses the same extraction.
   if (trimmed.startsWith('{')) {
-    // Best-effort attempt — if the backend wraps in JSON, dig out
-    // a likely content field. The history GET returns ChatMessage
-    // with `content` string, so the bare-text path is the common one.
-    return trimmed;
+    final decoded = jsonDecode(trimmed);
+    if (decoded is Map<String, dynamic>) {
+      final payload = decoded['payload'];
+      if (payload is Map<String, dynamic>) {
+        final content = payload['content'];
+        if (content is String) return content;
+      }
+      // Some envelope variants might place content at the top level.
+      final flat = decoded['content'];
+      if (flat is String) return flat;
+    }
   }
   return trimmed;
 }

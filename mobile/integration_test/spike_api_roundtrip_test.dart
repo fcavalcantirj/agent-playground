@@ -99,7 +99,7 @@ void main() {
       final agentName = 'spike-roundtrip-$ts-${shortRandHex()}';
       final runResult = await api.runs(
         body: RunRequest(
-          recipeName: 'nullclaw',
+          recipeName: 'zeroclaw',
           model: 'anthropic/claude-haiku-4-5',
           agentName: agentName,
         ),
@@ -245,7 +245,10 @@ void main() {
       // -------------------------------------------------------------
       // Step 9: POST /v1/agents/:id/stop (D-48 cleanup)
       // -------------------------------------------------------------
-      final stopRes = await api.stop(agentId: agentId);
+      final stopRes = await api.stop(
+        agentId: agentId,
+        byokOpenRouterKey: _byokKey,
+      );
       expectOk(stopRes, step: 9);
 
       // ----- Cleanup -----

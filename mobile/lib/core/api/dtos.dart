@@ -105,25 +105,32 @@ class MessagePostAck {
 }
 
 /// One row of `GET /v1/agents/:id/messages` history (Phase 23 D-03/D-04).
+///
+/// Phase 22c.3 returns `inapp_message_id` (one inapp_messages row produces
+/// both the user + assistant ChatMessage rows; both share the same id).
+/// `kind` is currently always `"message"` and is forwarded for forward-compat.
 class ChatMessage {
   const ChatMessage({
-    required this.id,
+    required this.inappMessageId,
     required this.role,
     required this.content,
     required this.createdAt,
+    this.kind,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-        id: json['id'] as String,
+        inappMessageId: json['inapp_message_id'] as String,
         role: json['role'] as String,
         content: json['content'] as String,
         createdAt: json['created_at'] as String,
+        kind: json['kind'] as String?,
       );
 
-  final String id;
+  final String inappMessageId;
   final String role; // 'user' | 'assistant'
   final String content;
   final String createdAt;
+  final String? kind;
 }
 
 /// `GET /v1/agents/:id/messages?limit=N` response body.

@@ -210,13 +210,26 @@ void main() {
     }
   });
 
-  test('stop POSTs and returns Ok(null)', () async {
+  test('stop POSTs with Bearer + returns Ok(null)', () async {
+    var sawBearer = false;
     adapter.onPost(
       '/v1/agents/agent-1/stop',
       (server) => server.reply(200, {'ok': true}),
     );
-    final r = await api.stop(agentId: 'agent-1');
+    // Verify Bearer header is present on the outbound request.
+    api.dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (opts, h) {
+          if (opts.headers['Authorization'] == 'Bearer test-key') {
+            sawBearer = true;
+          }
+          return h.next(opts);
+        },
+      ),
+    );
+    final r = await api.stop(agentId: 'agent-1', byokOpenRouterKey: 'test-key');
     expect(r, isA<Ok<void>>());
+    expect(sawBearer, isTrue, reason: 'stop must send Authorization: Bearer');
   });
 
   test('400 with envelope surfaces ApiError with correct code', () async {

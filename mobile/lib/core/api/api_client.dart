@@ -104,14 +104,25 @@ class ApiClient {
   // ---------------------------------------------------------------------------
   // POST /v1/agents/:id/stop
   // ---------------------------------------------------------------------------
+  /// Gracefully stop a persistent container.
+  ///
+  /// `byokOpenRouterKey` is REQUIRED by the API for consistency across the
+  /// /v1/agents/:id/* family (Phase 21 will reuse it as the session-ownership
+  /// gate). The api_server parses the Bearer header but does NOT forward the
+  /// value to the runner — `/stop` is purely docker-lifecycle. Pass the same
+  /// key the user supplied to `runs()` / `start()`.
   Future<Result<void>> stop({
     required String agentId,
+    required String byokOpenRouterKey,
     CancelToken? cancelToken,
   }) async {
     try {
       await _dio.post<dynamic>(
         ApiEndpoints.agentStop(agentId),
         cancelToken: cancelToken,
+        options: Options(
+          headers: {'Authorization': 'Bearer $byokOpenRouterKey'},
+        ),
       );
       return const Result.ok(null);
     } on DioException catch (e) {
