@@ -170,8 +170,60 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // D-49 — multi-channel restart needs the channel set; the extended
     // /v1/agents response is not yet wired here, so mobile defaults to
     // inapp. Surfaced as a planner-deferred TODO in CONTEXT.
+    //
+    // Phase 25 Wave 5: /v1/agents/:id/start REQUIRES a Bearer BYOK key
+    // (api_server/src/api_server/routes/agent_lifecycle.py:236-242).
+    // Look up the recipe's provider from the agent's recipe name + read
+    // the stored byok_key_<provider>. If we don't have one cached, the
+    // restart silently 401s. Surface a SnackBar so the user knows why.
     final api = ref.read(apiClientProvider);
-    await api.start(agentId: widget.agentInstanceId);
+    final storage = ref.read(secureStorageProvider);
+    final agent = ref.read(agentsListProvider).asData?.value
+        .where((a) => a.id == widget.agentInstanceId)
+        .firstOrNull;
+    String? byokKey;
+    if (agent != null) {
+      final detailRes = await api.recipeDetail(name: agent.recipeName);
+      if (detailRes case Ok<RecipeDetail>(value: final detail)) {
+        // The recipe's inapp channel declares which providers are
+        // supported; we stored the BYOK under byok_key_<provider> when
+        // the user typed it during the wizard. Use the first supported
+        // provider that has a key — covers the common single-provider
+        // recipes (zeroclaw → openrouter, openclaw → anthropic, ...).
+        final compat = detail.channelProviderCompat['inapp'];
+        if (compat != null) {
+          for (final provider in compat.supported) {
+            final k = await storage.readByokKey(provider);
+            if (k != null && k.isNotEmpty) {
+              byokKey = k;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (byokKey == null || byokKey.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No BYOK key stored for this agent — re-deploy via the wizard '
+              'to enter your API key.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final res = await api.start(
+      agentId: widget.agentInstanceId,
+      byokOpenRouterKey: byokKey,
+    );
+    if (res is Err<StartResponse> && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Restart failed: ${res.error.message}')),
+      );
+    }
     ref.invalidate(agentsListProvider);
   }
 }
