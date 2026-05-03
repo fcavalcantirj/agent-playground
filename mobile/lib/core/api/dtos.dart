@@ -180,10 +180,16 @@ class AgentSummary {
 }
 
 /// `GET /v1/recipes` row.
+///
+/// Phase 25 Wave 2 (D-25 / UI-SPEC) — extended with `description` so the
+/// Wave-3 wizard's recipe-card UX can render a 1-line caption without
+/// re-touching this DTO. Dashboard (Wave 2) only needs `name`, but the
+/// extension lands here to keep dtos.dart additive across waves.
 class Recipe {
   const Recipe({
     required this.name,
     required this.channelsSupported,
+    this.description,
   });
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -192,10 +198,12 @@ class Recipe {
             ((json['channels_supported'] as List<dynamic>?) ?? <dynamic>[])
                 .map((e) => e as String)
                 .toList(growable: false),
+        description: json['description'] as String?,
       );
 
   final String name;
   final List<String> channelsSupported;
+  final String? description;
 }
 
 /// `GET /v1/models` row (OpenRouter passthrough).
