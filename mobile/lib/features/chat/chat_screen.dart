@@ -242,7 +242,11 @@ class _ChatAppBarTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = agent?.name ?? fallbackId;
+    // If the agentsListProvider hasn't surfaced this agent yet (cold-mount
+    // race after a fresh deploy), show 'Loading…' rather than the raw
+    // agent_instance UUID. The provider invalidates on chat dispose +
+    // wizard close so this branch is short-lived.
+    final title = agent?.name ?? 'Loading…';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -263,7 +267,9 @@ class _ChatAppBarTitle extends StatelessWidget {
             children: [
               Flexible(
                 child: Text(
-                  agent!.model,
+                  // recipe · model — gives the user immediate context
+                  // about what kind of agent they're chatting with.
+                  '${agent!.recipeName} · ${agent!.model}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: SolvrTextStyles.mono(fontSize: 12).copyWith(
