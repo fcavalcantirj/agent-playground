@@ -48,7 +48,11 @@ class RunResponse {
 
   factory RunResponse.fromJson(Map<String, dynamic> json) => RunResponse(
         agentInstanceId: json['agent_instance_id'] as String,
-        smokeOk: (json['smoke_ok'] as bool?) ?? false,
+        // Server returns RunResponse.verdict ("PASS"/"FAIL") — no smoke_ok
+        // boolean. Wave 5 spike caught the mocks-vs-prod divergence;
+        // unit fixtures fed `smoke_ok: true` directly. Map verdict→bool here.
+        smokeOk: (json['verdict'] as String?) == 'PASS' ||
+            ((json['smoke_ok'] as bool?) ?? false),
       );
 
   final String agentInstanceId;
