@@ -70,7 +70,7 @@ class _Harness {
   }
 
   void stubRecipes(List<Map<String, dynamic>> rows) {
-    adapter.onGet('/v1/recipes', (s) => s.reply(200, rows));
+    adapter.onGet('/v1/recipes', (s) => s.reply(200, {'recipes': rows}));
   }
 }
 

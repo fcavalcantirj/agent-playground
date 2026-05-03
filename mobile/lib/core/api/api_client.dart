@@ -205,11 +205,17 @@ class ApiClient {
   // ---------------------------------------------------------------------------
   Future<Result<List<Recipe>>> recipes({CancelToken? cancelToken}) async {
     try {
-      final res = await _dio.get<List<dynamic>>(
+      // Server returns RecipeListResponse → `{"recipes":[...]}`. Unit
+      // tests previously passed because http_mock_adapter fixtures
+      // returned a top-level array — Wave 5 spike caught the divergence
+      // (Golden Rule #1). Match the recipeDetail() envelope-aware shape.
+      final res = await _dio.get<Map<String, dynamic>>(
         ApiEndpoints.recipes,
         cancelToken: cancelToken,
       );
-      final rows = (res.data ?? const <dynamic>[])
+      final raw = (res.data?['recipes'] as List<dynamic>?) ??
+          const <dynamic>[];
+      final rows = raw
           .cast<Map<String, dynamic>>()
           .map(Recipe.fromJson)
           .toList(growable: false);

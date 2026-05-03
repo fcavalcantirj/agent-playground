@@ -93,7 +93,7 @@ void main() {
         },
       ]),
     );
-    adapter.onGet('/v1/recipes', (s) => s.reply(200, <dynamic>[]));
+    adapter.onGet('/v1/recipes', (s) => s.reply(200, {'recipes': <dynamic>[]}));
     final api = ApiClient(dio);
 
     final router = GoRouter(

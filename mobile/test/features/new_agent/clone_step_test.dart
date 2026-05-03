@@ -26,7 +26,7 @@ class _Harness {
   late final ApiClient api;
 
   void stubRecipes(List<Map<String, dynamic>> rows) {
-    adapter.onGet('/v1/recipes', (s) => s.reply(200, rows));
+    adapter.onGet('/v1/recipes', (s) => s.reply(200, {'recipes': rows}));
   }
 
   void stubRecipeDetail(String name, Map<String, dynamic> body) {
