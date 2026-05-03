@@ -251,8 +251,21 @@ void main() {
         timeout: const Duration(seconds: 10),
         reason: 'model picker search input',
       );
-      // Pick the first ListView row inside the picker (tap the InkWell
-      // that wraps each row).
+      // Filter to the zeroclaw recipe's verified model
+      // (anthropic/claude-haiku-4-5 — verified_cells matrix
+      // 2026-04-30 PASS). Picking the first /v1/models result is a
+      // gamble: that's whatever OpenRouter ordered first today, and
+      // the zeroclaw container has been observed to fail on grok-4.3
+      // first-contact (recipe-runtime issue, not a Phase 25 bug).
+      // Search narrows the picker to the verified cell so the e2e
+      // gate exercises a known-good recipe×model combination.
+      final searchField = find.descendant(
+        of: find.byType(ModelPickerScreen),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(searchField, 'haiku');
+      await pumpUntilSettled(tester, timeout: const Duration(seconds: 1));
+      // After filter, the first InkWell row is anthropic/claude-haiku-4.5.
       final firstModelRow = find
           .descendant(
             of: find.byType(ModelPickerScreen),
