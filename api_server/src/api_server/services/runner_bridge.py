@@ -94,6 +94,72 @@ async def _get_tag_lock(app_state, image_tag: str) -> asyncio.Lock:
     return lock
 
 
+async def _ensure_image_for_recipe(
+    recipe: dict,
+    image_tag: str,
+) -> Any | None:
+    """Run ``tools/run_recipe.py:ensure_image`` for ``recipe`` in a thread.
+
+    Returns ``None`` when the image is ready (cache hit or fresh build/pull
+    succeeded), or a ``Verdict`` namedtuple on failure (CLONE_FAIL,
+    BUILD_FAIL, PULL_FAIL, INFRA_FAIL).
+
+    Phase 25 Wave 5 fix: Plan 19's runner_bridge docstring (lines 13-15)
+    explicitly designed the per-tag ``Lock`` to serialize ``ensure_image``,
+    but the call site was never wired up. Without this step, the api_server
+    relied on the CLI's ``main()`` to have built every image up-front —
+    so any recipe in ``GET /v1/recipes`` whose ``ap-recipe-<name>:latest``
+    tag was missing locally hit ``docker run exit 125: Unable to find
+    image locally`` from inside ``run_cell``. Calling ``ensure_image``
+    inside the existing per-tag lock matches the original design.
+
+    Caller MUST already hold the per-tag lock. ``ensure_image`` shells out
+    to git + docker (sync, multi-second to multi-minute), so we wrap in
+    ``asyncio.to_thread`` to keep the event loop alive.
+    """
+    mod = _import_run_recipe_module()
+    return await asyncio.to_thread(
+        mod.ensure_image,
+        recipe,
+        image_tag=image_tag,
+        no_cache=False,
+        no_disk_check=False,
+        quiet=True,
+    )
+
+
+def _verdict_to_details(
+    verdict_obj: Any,
+    *,
+    recipe: dict,
+    model: str = "",
+    prompt: str = "",
+) -> dict[str, Any]:
+    """Build a ``run_cell``-shaped details dict from an ``ensure_image`` Verdict.
+
+    ``run_cell`` returns a fully-populated dict; when ``ensure_image`` fails
+    we short-circuit before ``run_cell`` runs, so we synthesize the same
+    keys with empty/zero defaults. The route layer downstream
+    (``routes/runs.py:write_verdict`` + ``RunResponse``) reads these keys
+    directly — preserving the exact shape avoids a divergent failure-path
+    schema.
+    """
+    category = getattr(verdict_obj, "category", None)
+    return {
+        "recipe": recipe.get("name", ""),
+        "model": model,
+        "prompt": prompt,
+        "pass_if": None,
+        "verdict": getattr(verdict_obj, "verdict", "FAIL"),
+        "category": getattr(category, "value", str(category)) if category else "INFRA_FAIL",
+        "detail": getattr(verdict_obj, "detail", ""),
+        "exit_code": None,
+        "wall_time_s": 0.0,
+        "filtered_payload": None,
+        "stderr_tail": None,
+    }
+
+
 async def execute_run(
     app_state,
     recipe: dict,
@@ -123,6 +189,15 @@ async def execute_run(
     image_tag = f"ap-recipe-{recipe['name']}"   # matches tools/run_recipe.py convention
     tag_lock = await _get_tag_lock(app_state, image_tag)
     async with tag_lock:                         # serialize SAME-tag builds
+        # Phase 25 Wave 5 fix: ensure the image exists before docker run.
+        # The Lock above was designed to serialize this call (see module
+        # docstring); the wiring was never landed in Plan 19, so non-zeroclaw
+        # recipes hit ``docker run exit 125: image not found locally``.
+        ensure_verdict = await _ensure_image_for_recipe(recipe, image_tag)
+        if ensure_verdict is not None:
+            return _verdict_to_details(
+                ensure_verdict, recipe=recipe, model=model, prompt=prompt,
+            )
         async with app_state.run_semaphore:      # bound total concurrent runs
             result = await asyncio.to_thread(
                 run_cell,
@@ -196,6 +271,20 @@ async def execute_persistent_start(
     image_tag = f"ap-recipe-{recipe['name']}"   # matches tools/run_recipe.py convention
     tag_lock = await _get_tag_lock(app_state, image_tag)
     async with tag_lock:                         # serialize SAME-tag builds
+        # Phase 25 Wave 5 fix: same image-precondition gap as execute_run —
+        # without ensure_image the persistent boot hits ``docker run exit
+        # 125: image not found locally`` for any recipe whose tag wasn't
+        # pre-built via the CLI.
+        ensure_verdict = await _ensure_image_for_recipe(recipe, image_tag)
+        if ensure_verdict is not None:
+            details = _verdict_to_details(
+                ensure_verdict, recipe=recipe, model=model,
+            )
+            # Preserve persistent-mode field shape — these keys are read
+            # by the route layer (Plan 22-05) on failure paths.
+            details.setdefault("container_id", None)
+            details.setdefault("ready_at_s", None)
+            return details
         async with app_state.run_semaphore:      # bound total concurrent boots
             result = await asyncio.to_thread(
                 mod.run_cell_persistent,
