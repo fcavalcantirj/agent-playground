@@ -33,7 +33,7 @@ final class AgentsListProvider
   AgentsList create() => AgentsList();
 }
 
-String _$agentsListHash() => r'09dc3dcfd585163fcfdccbb188decb5bb440501f';
+String _$agentsListHash() => r'27e8af4de5cf285b1e59c1b924bdfc0131c05bc1';
 
 abstract class _$AgentsList extends $AsyncNotifier<List<AgentSummary>> {
   FutureOr<List<AgentSummary>> build();
