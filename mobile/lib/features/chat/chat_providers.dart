@@ -348,6 +348,13 @@ class ChatScope extends Notifier<ChatState> {
   }
 
   /// D-36 — parallel GET /messages?limit=200 + SSE connect.
+  ///
+  /// The two tasks are launched concurrently; history awaits its own
+  /// future and updates state as soon as it lands. SSE connect runs
+  /// fire-and-forget — failures are silently tolerated and the next
+  /// resume triggers a reconnect (D-52). This decoupling matters so
+  /// rendering history doesn't block on the longer-running SSE stream
+  /// connection (and so widget tests don't time out on a real socket).
   Future<void> _bootstrap() async {
     _historyToken = CancelToken();
     final api = ref.read(apiClientProvider);
@@ -357,15 +364,9 @@ class ChatScope extends Notifier<ChatState> {
       cancelToken: _historyToken,
     );
     _sseSub = _stream.events.listen(_onSseEvent);
-    try {
-      await _stream.connect();
-    // SSE connect failures should not block history; surface via state on
-    // a future iteration. For now we tolerate stream failure quietly so
-    // the chat history still renders.
-    // ignore: avoid_catches_without_on_clauses
-    } catch (_) {
-      // intentionally empty — SSE retry happens on lifecycle resume.
-    }
+    // Fire-and-forget SSE connect; failures are silently tolerated.
+    // ignore: discarded_futures
+    _stream.connect().catchError((_) {});
     final res = await histFuture;
     if (res case Ok(:final value)) {
       // D-39 — banner if exactly 200 returned (more may exist).
