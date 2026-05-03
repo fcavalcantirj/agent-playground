@@ -119,7 +119,7 @@ invoke:
 smoke:
   prompt: "Who are you in 1 short sentence?"
   pass_if: response_contains_string
-  pass_if_string: "ZeroClaw"
+  needle: "ZeroClaw"
   case_insensitive: true
   timeout_s: 60
   verified_cells:
