@@ -186,11 +186,17 @@ class ApiClient {
     CancelToken? cancelToken,
   }) async {
     try {
-      final res = await _dio.get<List<dynamic>>(
+      // Server returns AgentListResponse → `{"agents":[...]}`. Same
+      // envelope shape as /v1/recipes; same mocks-vs-prod divergence
+      // (Wave 5 manual app run — Phase 25 dashboard showed
+      // "Couldn't load agents" while api_server returned 200 OK).
+      final res = await _dio.get<Map<String, dynamic>>(
         ApiEndpoints.agentsList,
         cancelToken: cancelToken,
       );
-      final rows = (res.data ?? const <dynamic>[])
+      final raw = (res.data?['agents'] as List<dynamic>?) ??
+          const <dynamic>[];
+      final rows = raw
           .cast<Map<String, dynamic>>()
           .map(AgentSummary.fromJson)
           .toList(growable: false);

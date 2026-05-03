@@ -53,7 +53,7 @@ class _Harness {
   late final _FakeAuth auth;
 
   void stubAgents(List<Map<String, dynamic>> rows, {int status = 200}) {
-    adapter.onGet('/v1/agents', (s) => s.reply(status, rows));
+    adapter.onGet('/v1/agents', (s) => s.reply(status, {'agents': rows}));
   }
 
   void stubAgentsError() {
@@ -142,7 +142,7 @@ void main() {
         '/v1/agents',
         (s) async {
           await Future<void>.delayed(const Duration(seconds: 5));
-          return s.reply(200, <dynamic>[]);
+          return s.reply(200, {'agents': <dynamic>[]});
         },
       );
       h.stubRecipes(const []);

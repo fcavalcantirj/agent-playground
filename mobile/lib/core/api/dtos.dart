@@ -44,6 +44,10 @@ class RunResponse {
   const RunResponse({
     required this.agentInstanceId,
     required this.smokeOk,
+    this.verdict,
+    this.category,
+    this.detail,
+    this.stderrTail,
   });
 
   factory RunResponse.fromJson(Map<String, dynamic> json) => RunResponse(
@@ -53,10 +57,22 @@ class RunResponse {
         // unit fixtures fed `smoke_ok: true` directly. Map verdict→bool here.
         smokeOk: (json['verdict'] as String?) == 'PASS' ||
             ((json['smoke_ok'] as bool?) ?? false),
+        verdict: json['verdict'] as String?,
+        category: json['category'] as String?,
+        detail: json['detail'] as String?,
+        stderrTail: json['stderr_tail'] as String?,
       );
 
   final String agentInstanceId;
   final bool smokeOk;
+  // Server-side smoke diagnostics; surfaced on the deploy fail card per
+  // D-30 ("red-bordered card with verdict.detail"). Null when /runs was
+  // a transport-error fallthrough — orchestrator falls back to a generic
+  // string in that case.
+  final String? verdict;
+  final String? category;
+  final String? detail;
+  final String? stderrTail;
 }
 
 /// `POST /v1/agents/:id/start` request body.
@@ -169,8 +185,13 @@ class AgentSummary {
         name: (json['name'] as String?) ?? '',
         recipeName: json['recipe_name'] as String,
         model: (json['model'] as String?) ?? '',
-        status: json['status'] as String,
-        createdAt: json['created_at'] as String,
+        // status is null on the wire when the agent has no container yet
+        // (initial deploy crash, manually stopped, etc). Default to
+        // 'stopped' so the dashboard renders a grey dot rather than
+        // crashing. Wave 5 manual-app run caught this on a list with
+        // mixed running / null-status agents from prior test sweeps.
+        status: (json['status'] as String?) ?? 'stopped',
+        createdAt: (json['created_at'] as String?) ?? '',
         lastActivity: json['last_activity'] as String?,
       );
 

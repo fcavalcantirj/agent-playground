@@ -121,9 +121,18 @@ class DeployOrchestrator {
         return DeployOutcome.runsError(error: error);
       case Ok(:final value):
         if (!value.smokeOk) {
+          // D-30: surface the server-side detail so the user sees the
+          // actual failure cause (e.g. "Unable to find image locally")
+          // instead of a generic "verdict != PASS". Falls back to the
+          // category + verdict pair when detail is null.
+          final reason = value.detail ??
+              [
+                if (value.verdict != null) 'verdict=${value.verdict}',
+                if (value.category != null) 'category=${value.category}',
+              ].join(', ');
           return DeployOutcome.smokeFail(
             agentInstanceId: value.agentInstanceId,
-            reason: 'verdict != PASS',
+            reason: reason.isEmpty ? 'verdict != PASS' : reason,
           );
         }
         final agentId = value.agentInstanceId;
