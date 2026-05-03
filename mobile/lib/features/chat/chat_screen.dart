@@ -27,6 +27,7 @@ import 'package:agent_playground/features/chat/bubble_widget.dart';
 import 'package:agent_playground/features/chat/chat_providers.dart';
 import 'package:agent_playground/features/chat/input_bar.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
+import 'package:agent_playground/features/chat/timestamp_divider.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/shared/failed_bubble.dart';
 import 'package:agent_playground/shared/restart_banner.dart';
@@ -288,7 +289,19 @@ class _MessageList extends StatelessWidget {
             itemCount: state.orderedIds.length,
             itemBuilder: (ctx, i) {
               final row = state.byId[state.orderedIds[i]]!;
-              return _ChatRowWidget(row: row, notifier: notifier);
+              final prev = i == 0
+                  ? null
+                  : state.byId[state.orderedIds[i - 1]];
+              final divider = TimestampDivider.maybeBuildFromIso(
+                prevIso: prev?.createdAt,
+                nextIso: row.createdAt,
+              );
+              final bubble = _ChatRowWidget(row: row, notifier: notifier);
+              if (divider == null) return bubble;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [divider, bubble],
+              );
             },
           ),
           if (showJumpChip)
