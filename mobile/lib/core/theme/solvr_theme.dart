@@ -31,6 +31,9 @@ abstract final class SolvrColors {
   static const Color mutedForeground = Color(0xFF6B6B6B); // --muted-foreground
   static const Color border = Color(0xFFDEDEDA); // --border / --input
   static const Color destructive = Color(0xFFD9333A); // --destructive
+
+  // Phase 25 D-14 — running-state status dot (the only new color in Phase 25).
+  static const Color success = Color(0xFF22C55E);
 }
 
 /// Solvr Labs typography.
