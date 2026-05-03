@@ -84,6 +84,14 @@ streaming chat (deferred seed), token-level streaming.
 - **D-22:** **Deploy flow uses existing endpoints.** `POST /v1/runs` (creates the agent_instances row via `(user_id, name)` UPSERT + smoke-tests recipe+model+BYOK) → `POST /v1/agents/:id/start` (spawns persistent container with channel config). Web playground-form already uses exactly this 2-call flow. Mobile reuses identically. **Zero new backend endpoints for deploy.**
 - **D-27:** **`last_activity` field.** Compute in the same LATERAL extension as D-10: `last_activity = MAX(ai.last_run_at, MAX(im.created_at) WHERE im.agent_id=ai.id)`. NULL when user has never run nor messaged. Existing `last_run_at` field stays for backward compat with Phase 22c-09 callers; `last_activity` is the new mobile-friendly field.
 - **D-28:** **Mobile Phase 25 deploys with `{channel: 'inapp', channel_inputs: {}}`.** Backend `POST /v1/agents/:id/start` contract unchanged (it accepts all channels). Constraint at the planner level so executor doesn't auto-add Telegram/other-channel UI to Phase 25. The Telegram/web/etc paths stay accessible via the existing web playground.
+
+  > **AMD (Phase 25 D-56):** This constraint relaxes to "the inapp
+  > container is always deployed; an additional Telegram container is
+  > optional and gated by the recipe's `channels_supported` metadata
+  > + a user toggle". The /v1/agents/:id/start endpoint contract is
+  > unchanged (still single-channel-per-call); mobile orchestrates two
+  > sequential calls when Telegram is toggled. No backend code changes;
+  > UI-02 amended in same commit chain (AMD-01).
 - **D-29:** **Backend keeps `(user_id, name)` UPSERT semantics.** Mobile UI (Phase 25) does pre-flight `GET /v1/agents` and surfaces a "name already used by [recipe/model] — re-deploy or rename?" confirmation dialog before submitting Deploy. Backend behavior unchanged.
 
 ### Models proxy (`GET /v1/models`)
