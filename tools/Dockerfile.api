@@ -44,7 +44,7 @@ ARG DOCKER_GID=999
 # add apiuser to that group; otherwise create a fresh `docker` group with the
 # right GID. Either way apiuser ends up in a group that owns the host socket.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker-cli curl ca-certificates \
+ && apt-get install -y --no-install-recommends docker-cli docker-buildx curl ca-certificates git \
  && rm -rf /var/lib/apt/lists/* \
  && if ! getent group ${DOCKER_GID} >/dev/null; then groupadd -g ${DOCKER_GID} docker; fi \
  && useradd -m -u 1001 -G "$(getent group ${DOCKER_GID} | cut -d: -f1)" apiuser
@@ -53,6 +53,10 @@ COPY --from=build /src /app
 WORKDIR /app/api_server
 ENV PYTHONPATH=/app/api_server/src:/app/tools
 ENV AP_RECIPES_DIR=/app/recipes
+# Phase 25 Wave 5: tools/run_recipe.py invokes `docker build` against the
+# host daemon via the mounted socket. Recipes use BuildKit Dockerfile syntax
+# (e.g. --platform=$BUILDPLATFORM), so we need BuildKit + the buildx plugin.
+ENV DOCKER_BUILDKIT=1
 USER apiuser
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=10s \

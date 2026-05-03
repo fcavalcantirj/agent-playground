@@ -64,6 +64,11 @@ class ApiClient {
         data: body.toJson(),
         cancelToken: cancelToken,
         options: Options(
+          // Cold-cache image build can take 2-15 min depending on the
+          // recipe (hermes ~7 min, openclaw ~15 min, picoclaw ~2 min).
+          // Override the global 30s receiveTimeout for /v1/runs only.
+          receiveTimeout: const Duration(minutes: 15),
+          sendTimeout: const Duration(minutes: 1),
           headers: byokOpenRouterKey == null
               ? null
               : <String, String>{'Authorization': 'Bearer $byokOpenRouterKey'},
@@ -90,6 +95,10 @@ class ApiClient {
         data: body.toJson(),
         cancelToken: cancelToken,
         options: Options(
+          // /start can include a cold image build via runner_bridge's
+          // ensure_image step. Match /v1/runs receiveTimeout for parity.
+          receiveTimeout: const Duration(minutes: 15),
+          sendTimeout: const Duration(minutes: 1),
           headers: byokOpenRouterKey == null
               ? null
               : <String, String>{'Authorization': 'Bearer $byokOpenRouterKey'},
@@ -324,13 +333,23 @@ class ApiClient {
   // POST /v1/auth/github/mobile
   // ---------------------------------------------------------------------------
   Future<Result<MobileAuthResponse>> authGithubMobile({
-    required String accessToken,
+    required String code,
+    required String redirectUri,
+    String? codeVerifier,
     CancelToken? cancelToken,
   }) async {
     try {
+      // Phase 25 Wave 5: backend-side code exchange + PKCE. Mobile
+      // generated a code_verifier during authorize(); pass it so the
+      // backend's exchange request matches GitHub's stored
+      // code_challenge.
       final res = await _dio.post<Map<String, dynamic>>(
         ApiEndpoints.authGithubMobile,
-        data: {'access_token': accessToken},
+        data: {
+          'code': code,
+          'redirect_uri': redirectUri,
+          if (codeVerifier != null) 'code_verifier': codeVerifier,
+        },
         cancelToken: cancelToken,
       );
       return Result.ok(MobileAuthResponse.fromJson(res.data!));
