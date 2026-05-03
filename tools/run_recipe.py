@@ -1356,12 +1356,20 @@ def run_cell_persistent(
         # 5. Build daemon docker run command. Reset t0 (D-31 — boot_timeout_s
         # applies only to the persistent container's ready-poll budget, NOT
         # to the pre_start loop total).
+        # AP_DOCKER_NETWORK: pin the spawned container onto the same docker
+        # network as api_server (default deploy_default). Without this the
+        # container lands on the host's default bridge (172.17.x) and the
+        # api_server's inapp_dispatcher cannot resolve its IP for HTTP
+        # forwarding (Networks[<docker_network_name>].IPAddress is empty).
+        docker_network = os.environ.get("AP_DOCKER_NETWORK", "").strip()
         docker_cmd = [
             "docker", "run", "-d",
             "--name", container_name,
             "--env-file", str(env_file),
             "-v", f"{data_dir}:{container_mount}",
         ]
+        if docker_network:
+            docker_cmd += ["--network", docker_network]
         if user_override:
             docker_cmd += ["--user", str(user_override)]
         if entrypoint:
@@ -1369,8 +1377,9 @@ def run_cell_persistent(
         docker_cmd += [image_tag] + argv
 
         log(
-            f"  $ docker run -d --name {container_name} ... {image_tag} "
-            f"[argv elided]",
+            f"  $ docker run -d --name {container_name} "
+            f"{'--network ' + docker_network + ' ' if docker_network else ''}"
+            f"... {image_tag} [argv elided]",
             quiet=quiet,
         )
 
@@ -1418,12 +1427,16 @@ def run_cell_persistent(
             tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-")
         )
 
+        # AP_DOCKER_NETWORK: same fix as the channel-aware path above.
+        docker_network = os.environ.get("AP_DOCKER_NETWORK", "").strip()
         docker_cmd = [
             "docker", "run", "-d",
             "--name", container_name,
             "--env-file", str(env_file),
             "-v", f"{data_dir}:{container_mount}",
         ]
+        if docker_network:
+            docker_cmd += ["--network", docker_network]
         if user_override:
             docker_cmd += ["--user", user_override]
         if entrypoint:
@@ -1431,8 +1444,9 @@ def run_cell_persistent(
         docker_cmd += [image_tag] + argv
 
         log(
-            f"  $ docker run -d --name {container_name} ... {image_tag} "
-            f"[argv elided]",
+            f"  $ docker run -d --name {container_name} "
+            f"{'--network ' + docker_network + ' ' if docker_network else ''}"
+            f"... {image_tag} [argv elided]",
             quiet=quiet,
         )
 

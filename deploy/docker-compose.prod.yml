@@ -77,6 +77,11 @@ services:
       # (the `redis` service above). The outbox pump publishes here; the
       # SSE handler subscribes here. No host port; no public exposure.
       AP_REDIS_URL: "redis://redis:6379/0"
+      # Pin spawned agent containers onto deploy_default so api_server's
+      # inapp_dispatcher can resolve their NetworkSettings.Networks[<name>].IPAddress
+      # for HTTP forwarding. Without this they default to the host's bridge
+      # network and the dispatcher's get_container_ip() raises ip_lookup_failed.
+      AP_DOCKER_NETWORK: "deploy_default"
       # NOTE: password is injected via env_file (.env.prod) so the secret never
       # appears in compose config output or `docker inspect`. deploy.sh writes
       # .env.prod from secrets/pg_password at deploy time.
