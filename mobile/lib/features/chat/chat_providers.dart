@@ -347,34 +347,47 @@ class ChatScope extends Notifier<ChatState> {
     return const ChatState();
   }
 
-  /// D-36 — parallel GET /messages?limit=200 + SSE connect.
+  /// D-36 — GET /messages?limit=200 then SSE connect.
   ///
-  /// The two tasks are launched concurrently; history awaits its own
-  /// future and updates state as soon as it lands. SSE connect runs
-  /// fire-and-forget — failures are silently tolerated and the next
-  /// resume triggers a reconnect (D-52). This decoupling matters so
-  /// rendering history doesn't block on the longer-running SSE stream
-  /// connection (and so widget tests don't time out on a real socket).
+  /// Bug 3 follow-up (2026-05-04): history is now AWAITED FIRST and the
+  /// SSE subscription only starts on Ok. flutter_client_sse 2.0.3 has a
+  /// hardcoded 5-second retry on ANY non-2xx response (package source
+  /// flutter_client_sse-2.0.3/lib/flutter_client_sse.dart:27 +
+  /// switch-default at 119-130 — it never inspects HTTP status), so a
+  /// 404 from the server (genuine ownership mismatch) used to flood the
+  /// api_server with one /messages/stream request every 5s forever.
+  /// Pre-flighting via the history call (same auth + ownership gate as
+  /// the SSE endpoint) catches the 4xx path before SSE ever fires.
+  /// 5xx during an active SSE stream still triggers the package's retry
+  /// loop — accepted for now (transient/server-side).
+  ///
+  /// Cost of sequencing vs the prior parallel D-36: ~50-100ms added to
+  /// initial render in the happy path. Acceptable trade for eliminating
+  /// the retry storm.
   Future<void> _bootstrap() async {
     _historyToken = CancelToken();
     final api = ref.read(apiClientProvider);
-    final histFuture = api.messagesHistory(
+    final res = await api.messagesHistory(
       agentId: agentInstanceId,
       limit: 200,
       cancelToken: _historyToken,
     );
-    _sseSub = _stream.events.listen(_onSseEvent);
-    // Fire-and-forget SSE connect; failures are silently tolerated.
-    // ignore: discarded_futures
-    _stream.connect().catchError((_) {});
-    final res = await histFuture;
     if (res case Ok(:final value)) {
       // D-39 — banner if exactly 200 returned (more may exist).
       final has200 = value.messages.length >= 200;
       state = state.upsertManyHistory(value.messages).copyWith(
             hasOlderMessages: has200,
           );
+      // Ownership + auth proven by the successful history fetch — safe
+      // to subscribe to the SSE stream without risking a retry storm.
+      _sseSub = _stream.events.listen(_onSseEvent);
+      // Fire-and-forget SSE connect; failures are silently tolerated
+      // (next resume triggers a reconnect via D-52).
+      // ignore: discarded_futures
+      _stream.connect().catchError((_) {});
     }
+    // On Err we leave the SSE unstarted. The chat shows whatever state
+    // existed (likely empty); the user can pull-to-refresh or back out.
   }
 
   Future<void> _onResumed() async {
