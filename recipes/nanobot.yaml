@@ -143,7 +143,17 @@ invoke:
       engine: none
 
 smoke:
-  prompt: "What is nanobot? Reply in one short sentence starting with 'nanobot is'."
+  # Bug fix 2026-05-04: prompt previously contained inner apostrophes
+  # (`'nanobot is'`). The runner's substitute_argv shlex.quotes any value
+  # substituted into a larger template (tools/run_recipe.py:403), producing
+  # `'...''"'"'...'"'"'...'`-style quoting. The recipe's argv pre-quoted
+  # `"$PROMPT"` (already-double-quoted context) caused those single-quote
+  # escapes to fall outside the surrounding double-quotes when sh parsed
+  # the result, splitting the prompt into multiple args. nanobot's Typer
+  # CLI rejected the tail fragment with `Got unexpected extra argument
+  # (is"'.')`. Rephrasing without apostrophes keeps the smoke shape stable
+  # against shlex.quote without changing the runner contract.
+  prompt: "What is nanobot? Reply in one short sentence starting with the words nanobot is."
   pass_if: response_contains_name
   case_insensitive: true
   timeout_s: 90
