@@ -49,19 +49,40 @@ class _ModelStepState extends ConsumerState<ModelStep> {
   }
 
   /// D-32 BYOK label-swap. Reads server-supplied
-  /// `channel_provider_compat[inapp].deferred`; defaults to OpenRouter
-  /// when no recipe is selected (defensive — first-render before
-  /// selectedRecipe lands).
+  /// `channel_provider_compat[inapp].supported` (canonical "primary
+  /// provider" of the recipe). Bug fix 2026-05-04: previously this
+  /// switched on `deferred.contains('openrouter')` — a heuristic that
+  /// was correct for openclaw.telegram (`{supported:[anthropic],
+  /// deferred:[openrouter]}`) but wrong for openclaw.inapp where the
+  /// synthesizer (api_server commit 925a1bf) produces
+  /// `{supported:[anthropic], deferred:[]}` (no deferral; Anthropic is
+  /// just THE provider). Switching on `supported` directly is correct
+  /// for all 6 v0.2 recipes — the synthesizer guarantees the field is
+  /// populated. Defaults to OpenRouter when no recipe is selected
+  /// (defensive — first-render before selectedRecipe lands).
   ({String label, String storageProvider}) _byokConfig(
     RecipeDetail? recipe,
   ) {
-    final defers =
-        recipe?.channelProviderCompat['inapp']?.deferred ?? const <String>[];
-    final useAnthropic = defers.contains('openrouter');
-    return (
-      label: useAnthropic ? 'Anthropic API Key' : 'OpenRouter API Key',
-      storageProvider: useAnthropic ? 'anthropic' : 'openrouter',
+    final supported = recipe?.channelProviderCompat['inapp']?.supported ??
+        const <String>['openrouter'];
+    final primary = supported.firstWhere(
+      (p) => p == 'anthropic' || p == 'openrouter' || p == 'openai',
+      orElse: () => 'openrouter',
     );
+    return switch (primary) {
+      'anthropic' => (
+          label: 'Anthropic API Key',
+          storageProvider: 'anthropic',
+        ),
+      'openai' => (
+          label: 'OpenAI API Key',
+          storageProvider: 'openai',
+        ),
+      _ => (
+          label: 'OpenRouter API Key',
+          storageProvider: 'openrouter',
+        ),
+    };
   }
 
   /// D-33 auto-fill from secureStorage.readByokKey() on first build (or

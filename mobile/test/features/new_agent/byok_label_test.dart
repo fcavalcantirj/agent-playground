@@ -1,10 +1,12 @@
 // Phase 25 Wave 3 plan 25-05 task 3 — BYOK label-swap (D-32) tests.
 //
 // Critical Golden Rule #2 invariant: the label MUST come from
-// `recipe.channelProviderCompat['inapp'].deferred` — NEVER from a Dart
-// `if recipe == 'hermes'` branch. This test fixture asserts BOTH branches
-// of the label-swap with mock RecipeDetail values that vary only in
-// the channelProviderCompat dict.
+// `recipe.channelProviderCompat['inapp'].supported` — NEVER from a Dart
+// `if recipe == 'hermes'` branch. Bug fix 2026-05-04: the original
+// implementation switched on `deferred.contains('openrouter')`, which
+// silently broke openclaw inapp (synthesized as
+// `{supported:[anthropic], deferred:[]}`). The label-swap now switches
+// on `supported.first`; this fixture asserts every supported branch.
 
 import 'package:agent_playground/core/api/api_client.dart';
 import 'package:agent_playground/core/api/dtos.dart';
@@ -62,14 +64,17 @@ Widget _harnessForRecipe(RecipeDetail recipe, {ProviderContainer? c}) {
   );
 }
 
-RecipeDetail _recipeWithCompat({required List<String> deferred}) =>
+RecipeDetail _recipeWithCompat({
+  required List<String> supported,
+  List<String> deferred = const <String>[],
+}) =>
     RecipeDetail.fromJson(<String, dynamic>{
       'recipe': <String, dynamic>{
         'name': 'fixture',
         'channels': <String, dynamic>{
           'inapp': <String, dynamic>{
             'provider_compat': <String, dynamic>{
-              'supported': <dynamic>['anthropic'],
+              'supported': supported,
               'deferred': deferred,
             },
           },
@@ -85,9 +90,10 @@ void main() {
   });
 
   testWidgets(
-      "label = 'OpenRouter API Key' when channelProviderCompat[inapp]"
-      ' deferred does NOT contain openrouter', (tester) async {
-    final recipe = _recipeWithCompat(deferred: const <String>[]);
+      "label = 'OpenRouter API Key' when supported=[openrouter] "
+      '(nullclaw / hermes / picoclaw / nanobot / zeroclaw inapp)',
+      (tester) async {
+    final recipe = _recipeWithCompat(supported: const ['openrouter']);
     final container = ProviderContainer(
       overrides: [apiClientProvider.overrideWithValue(_api())],
     );
@@ -99,9 +105,9 @@ void main() {
   });
 
   testWidgets(
-      "label = 'Anthropic API Key' when deferred contains openrouter "
-      '(hermes / openclaw+telegram path)', (tester) async {
-    final recipe = _recipeWithCompat(deferred: const ['openrouter']);
+      "label = 'Anthropic API Key' when supported=[anthropic] "
+      '(openclaw inapp)', (tester) async {
+    final recipe = _recipeWithCompat(supported: const ['anthropic']);
     final container = ProviderContainer(
       overrides: [apiClientProvider.overrideWithValue(_api())],
     );
@@ -110,6 +116,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Anthropic API Key'), findsOneWidget);
     expect(find.text('OpenRouter API Key'), findsNothing);
+  });
+
+  testWidgets(
+      "label = 'OpenAI API Key' when supported=[openai] "
+      '(future recipe)', (tester) async {
+    final recipe = _recipeWithCompat(supported: const ['openai']);
+    final container = ProviderContainer(
+      overrides: [apiClientProvider.overrideWithValue(_api())],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(_harnessForRecipe(recipe, c: container));
+    await tester.pumpAndSettle();
+    expect(find.text('OpenAI API Key'), findsOneWidget);
   });
 
   testWidgets('no recipe selected (defensive) — defaults to OpenRouter label',
