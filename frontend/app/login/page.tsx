@@ -16,10 +16,21 @@ export default function LoginPage() {
   // silently ignored to avoid reflecting attacker-controlled strings into
   // the UI (T-22c-25 in this plan's threat model).
   useEffect(() => {
-    const err = new URLSearchParams(window.location.search).get("error")
+    const params = new URLSearchParams(window.location.search)
+    const err = params.get("error")
     if (err === "access_denied") toast.error("Sign-in cancelled")
     else if (err === "state_mismatch") toast.error("Security check failed — try again")
     else if (err === "oauth_failed") toast.error("Sign-in failed — try again")
+
+    // Phase 26: ?reason=session_revoked is set by hooks/use-user.ts when
+    // the api returns a 401 with error.code='SESSION_REVOKED' (this
+    // device's session was killed by another device's logout-all).
+    // Other reason values are ignored to avoid reflecting attacker-
+    // controlled strings into the UI (T-22c-25 carry-forward).
+    const reason = params.get("reason")
+    if (reason === "session_revoked") {
+      toast.error("Your session was ended on another device. Please sign in again.")
+    }
   }, [])
 
   // OAuth requires a top-level page navigation so the browser can follow
