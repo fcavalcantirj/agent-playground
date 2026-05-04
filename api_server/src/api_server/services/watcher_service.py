@@ -513,6 +513,33 @@ async def run_watcher(
     stop_event = asyncio.Event()
     app_state.log_watchers[container_row_id] = (asyncio.current_task(), stop_event)
     try:
+        # Phase 25 Wave 5 (2026-05-04 debug session, 4-agent root-cause
+        # confirmation): a synthesized `agent_ready` entry from
+        # `ready_log_regex` is NOT enough to justify spinning up a
+        # DockerLogsStreamSource against a recipe whose stdout is barren by
+        # design (nullclaw + zeroclaw inapp both declare `ready_log_regex`
+        # but no `event_log_regex` and no `event_source_fallback`). The
+        # source's `next(it, None)` blocks on the docker socket forever for
+        # silent containers, pegging one default-executor thread per watcher.
+        # Once N silent watchers ≥ pool cap (`min(32, cpu+4)` ≈ 12-16 here),
+        # every other `asyncio.to_thread` caller — `_ensure_image_for_recipe`,
+        # `_probe_docker_sync`, `run_cell` — queues forever. POST /v1/runs
+        # and /readyz hang; /healthz still answers because it's pure-async.
+        # Strengthen the guard: idle the watcher unless there's at least one
+        # real event_log_regex entry OR an event_source_fallback declared.
+        channel_spec = (recipe.get("channels") or {}).get(channel, {}) or {}
+        real_event_regexes = channel_spec.get("event_log_regex") or {}
+        has_real_event_regex = any(v for v in real_event_regexes.values())
+        has_event_source_fallback = bool(
+            channel_spec.get("event_source_fallback")
+        )
+        if not has_real_event_regex and not has_event_source_fallback:
+            _log.info(
+                "watcher idle: recipe declares no event_log_regex and no "
+                "event_source_fallback — would otherwise block on silent stdout",
+                extra={"container_id": container_id[:12], "channel": channel},
+            )
+            return
         source = _select_source(recipe, channel, container_id, chat_id_hint, stop_event)
         regexes = _compile_regexes(recipe, channel)
         if not regexes:
