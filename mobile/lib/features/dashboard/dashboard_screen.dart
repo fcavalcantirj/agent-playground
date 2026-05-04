@@ -63,6 +63,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // which fits delete but not restart).
   final Set<String> _deletingIds = <String>{};
   final Set<String> _restartingIds = <String>{};
+  final Set<String> _stoppingIds = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -177,8 +178,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       hasFreshError: isError,
       deletingIds: _deletingIds,
       restartingIds: _restartingIds,
+      stoppingIds: _stoppingIds,
       onDelete: (a) => _confirmDelete(context, a),
       onRestart: (a) => _restartAgent(context, a),
+      onStop: (a) => _stopAgent(context, a),
       onRefresh: () async {
         ref.invalidate(agentsListProvider);
         // Wait for the new fetch to settle so RefreshIndicator dismisses
@@ -307,6 +310,54 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
   }
 
+  /// Gracefully stop a running agent. No ConfirmDialog — stop is
+  /// non-destructive (the user can restart immediately) so the
+  /// ceremony would be friction. Re-entrancy guard via _stoppingIds.
+  ///
+  /// Result mapping:
+  /// - StopOk → 'Agent stopped' (4s) + invalidate provider (status →
+  ///   'stopped' so the menu re-renders with Restart + Delete).
+  /// - StopAlreadyStopped → soft 'Agent already stopped' (4s) +
+  ///   invalidate (the local cache was stale).
+  /// - StopFailed → 'Stop failed: <message>' (8s).
+  Future<void> _stopAgent(BuildContext ctx, AgentSummary a) async {
+    if (_stoppingIds.contains(a.id)) return; // re-entrancy guard
+    setState(() => _stoppingIds.add(a.id));
+    try {
+      final outcome = await stopAgent(
+        agent: a,
+        api: ref.read(apiClientProvider),
+        storage: ref.read(secureStorageProvider),
+      );
+      if (!ctx.mounted) return;
+      switch (outcome) {
+        case StopOk():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              content: Text('Agent stopped'),
+            ),
+          );
+          ref.invalidate(agentsListProvider);
+        case StopAlreadyStopped():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              content: Text('Agent already stopped'),
+            ),
+          );
+          ref.invalidate(agentsListProvider);
+        case StopFailed(:final error):
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 8),
+              content: Text('Stop failed: ${error.message}'),
+            ),
+          );
+      }
+    } finally {
+      if (mounted) setState(() => _stoppingIds.remove(a.id));
+    }
+  }
+
   Future<void> _confirmSignOut(BuildContext context) async {
     final result = await ConfirmDialog.show(
       context,
@@ -361,8 +412,10 @@ class _PopulatedState extends StatelessWidget {
     required this.hasFreshError,
     required this.deletingIds,
     required this.restartingIds,
+    required this.stoppingIds,
     required this.onDelete,
     required this.onRestart,
+    required this.onStop,
     required this.onRefresh,
   });
 
@@ -370,8 +423,10 @@ class _PopulatedState extends StatelessWidget {
   final bool hasFreshError;
   final Set<String> deletingIds;
   final Set<String> restartingIds;
+  final Set<String> stoppingIds;
   final void Function(AgentSummary) onDelete;
   final void Function(AgentSummary) onRestart;
+  final void Function(AgentSummary) onStop;
   final Future<void> Function() onRefresh;
 
   @override
@@ -401,13 +456,20 @@ class _PopulatedState extends StatelessWidget {
           final canRestart = agent.status != 'running' &&
               agent.status != 'starting' &&
               agent.status != 'stopping';
+          // Stop is offered only when the agent is currently running.
+          // Any other status would 409 AGENT_NOT_RUNNING server-side
+          // (no live container row for fetch_running_container_for_
+          // agent to find). Mutually exclusive with canRestart.
+          final canStop = agent.status == 'running';
           return AgentRow(
             agent: agent,
             isDeleting: deletingIds.contains(agent.id),
             isRestarting: restartingIds.contains(agent.id),
+            isStopping: stoppingIds.contains(agent.id),
             onTap: () => GoRouter.of(ctx).push('/chat/${agent.id}'),
             onDelete: () => onDelete(agent),
             onRestart: canRestart ? () => onRestart(agent) : null,
+            onStop: canStop ? () => onStop(agent) : null,
           );
         },
       ),

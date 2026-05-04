@@ -66,6 +66,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Stopwatch? _restartElapsed;
   Timer? _restartTick;
 
+  // Stop inflight guard. AppBar overflow menu replaces 'Stop' with
+  // 'Stopping…' + spinner while in flight. Stop is fast (5-15s docker
+  // SIGTERM + rm), so no Stopwatch/Timer needed — the post-success
+  // status flip + RestartBanner reveal is its own visual confirmation.
+  bool _stopInflight = false;
+
   @override
   void initState() {
     super.initState();
@@ -116,6 +122,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final isStopped =
         agent != null && agent.status != 'running' && agent.status.isNotEmpty;
 
+    // The AppBar overflow menu only renders when there's at least one
+    // valid action — currently only 'Stop' when the agent is running.
+    // (Restart already has its own RestartBanner pinned above the
+    // input when stopped, and Delete intentionally requires the
+    // dashboard friction so the user can't nuke a chat mid-conversation
+    // by accident.)
+    final showStopMenu = agent != null && agent.status == 'running';
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -127,6 +141,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           agent: agent,
           fallbackId: widget.agentInstanceId,
         ),
+        actions: [
+          if (showStopMenu)
+            PopupMenuButton<String>(
+              key: const Key('chat-overflow-menu'),
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Agent actions',
+              enabled: !_stopInflight,
+              onSelected: (v) {
+                if (v == 'stop') _stopAgent(context, agent);
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem<String>(
+                  value: 'stop',
+                  enabled: !_stopInflight,
+                  child: _stopInflight
+                      ? const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Stopping…'),
+                          ],
+                        )
+                      : const Text('Stop'),
+                ),
+              ],
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -282,6 +328,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
     }
     ref.invalidate(agentsListProvider);
+  }
+
+  /// Gracefully stop the running agent via POST /v1/agents/:id/stop.
+  /// Mirrors the dashboard `_stopAgent` flow but lives here so the
+  /// AppBar overflow menu can swap to a 'Stopping…' label + spinner
+  /// while in flight (re-entrancy guard via `_stopInflight`).
+  Future<void> _stopAgent(BuildContext ctx, AgentSummary agent) async {
+    if (_stopInflight) return;
+    setState(() => _stopInflight = true);
+    try {
+      final outcome = await stopAgent(
+        agent: agent,
+        api: ref.read(apiClientProvider),
+        storage: ref.read(secureStorageProvider),
+      );
+      if (!ctx.mounted) return;
+      switch (outcome) {
+        case StopOk():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(content: Text('Agent stopped')),
+          );
+        case StopAlreadyStopped():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(content: Text('Agent already stopped')),
+          );
+        case StopFailed(:final error):
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 8),
+              content: Text('Stop failed: ${error.message}'),
+            ),
+          );
+      }
+      // Invalidate on success + already-stopped (cache-correction);
+      // skip on hard failures so the row keeps its current state.
+      if (outcome is StopOk || outcome is StopAlreadyStopped) {
+        ref.invalidate(agentsListProvider);
+      }
+    } finally {
+      if (mounted) setState(() => _stopInflight = false);
+    }
   }
 }
 

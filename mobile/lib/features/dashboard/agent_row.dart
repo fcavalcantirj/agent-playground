@@ -25,8 +25,10 @@ class AgentRow extends StatelessWidget {
     required this.onTap,
     this.onDelete,
     this.onRestart,
+    this.onStop,
     this.isDeleting = false,
     this.isRestarting = false,
+    this.isStopping = false,
     @visibleForTesting this.now,
     super.key,
   });
@@ -47,6 +49,12 @@ class AgentRow extends StatelessWidget {
   /// `'stopped'`), pass the callback so the user can recover.
   final VoidCallback? onRestart;
 
+  /// Optional stop trigger. When null, the 'Stop' menu entry is
+  /// suppressed — the dashboard passes null UNLESS `agent.status ==
+  /// 'running'` (the only state where the server has a live container
+  /// to SIGTERM; any other status would 409 AGENT_NOT_RUNNING).
+  final VoidCallback? onStop;
+
   /// True while a DELETE /v1/agents/:id is in flight for this row.
   /// Disables onTap, replaces the trailing menu with a small spinner,
   /// AND dims the whole row to 50% opacity (delete = "going away").
@@ -58,6 +66,12 @@ class AgentRow extends StatelessWidget {
   /// shouldn't read as "vanishing". 4-agent design 2026-05-04 nit.
   final bool isRestarting;
 
+  /// True while a POST /v1/agents/:id/stop is in flight for this row.
+  /// Same visual treatment as [isRestarting] — spinner, no dimming
+  /// (stop is "transitioning" not "going away"; the agent comes back
+  /// with status='stopped' and the user can restart it).
+  final bool isStopping;
+
   /// Test seam — defaults to DateTime.now() at render time. Allows the unit
   /// tests for `_relativeTime` to assert deterministic output without
   /// freezing the wall clock.
@@ -67,7 +81,7 @@ class AgentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final body = Theme.of(context).textTheme.bodyLarge;
     final caption = Theme.of(context).textTheme.bodySmall;
-    final isBusy = isDeleting || isRestarting;
+    final isBusy = isDeleting || isRestarting || isStopping;
     final core = InkWell(
       onTap: isBusy ? null : onTap,
       child: Padding(
@@ -122,16 +136,22 @@ class AgentRow extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              else if (onDelete != null || onRestart != null)
+              else if (onDelete != null || onRestart != null || onStop != null)
                 PopupMenuButton<String>(
                   key: ValueKey('agent-row-menu-${agent.id}'),
                   icon: const Icon(Icons.more_vert, size: 20),
                   tooltip: 'Agent actions',
                   onSelected: (v) {
+                    if (v == 'stop' && onStop != null) onStop!();
                     if (v == 'restart' && onRestart != null) onRestart!();
                     if (v == 'delete' && onDelete != null) onDelete!();
                   },
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    if (onStop != null)
+                      const PopupMenuItem<String>(
+                        value: 'stop',
+                        child: Text('Stop'),
+                      ),
                     if (onRestart != null)
                       const PopupMenuItem<String>(
                         value: 'restart',
