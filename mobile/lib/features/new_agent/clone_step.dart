@@ -1,23 +1,31 @@
 // Phase 25 Wave 3 plan 25-05 task 3 — Step 1: Clone picker (D-25).
 //
-// UI-SPEC ### Step 1 (lines 561-565):
-// - Horizontal scrolling row of recipe cards from `recipesProvider`
-//   (Phase 25 Plan 25-04 — already shipped).
-// - Card: 200×160 white bg; idle 1px #DEDEDA border; selected 2px #1F1F1F
-//   border; recipe name JetBrains Mono w600 body 16; 1-line description
-//   below.
-// - Below: 32px gap then `Next` button (full-width 48dp), disabled until
-//   any card has been tapped.
+// UX rev 2026-05-04: switched from horizontal-scroll list to 2-column
+// vertical grid. The horizontal layout stretched cards full-height
+// (Expanded > horizontal ListView passes infinite height; the inner
+// Container's height:160 wasn't honored). Grid is more scannable,
+// shows multiple recipes without scrolling, and matches the recipe-
+// emoji-prefixed dashboard rows visually. Each card:
+//   - leading emoji (per-recipe, recipe-author controlled, falls back
+//     to no glyph if recipe declares none)
+//   - recipe name (mono w600 16)
+//   - 3-4 line description, ellipsized
+//   - border 2px in both states (color-only state change). A 1↔2px
+//     border swap reflowed the description by 2px of inner width —
+//     picoclaw/zeroclaw wrap points sat at the column edge.
 //
-// On card tap: fetch RecipeDetail (api.recipeDetail(name)) so downstream
-// steps (BYOK label-swap D-32, Telegram dynamic fields D-54) have the
-// channels.<id>.* metadata. Store in `wizardScopeProvider.selectedRecipe`
-// so step 2 / 3 read from a single source of truth (Pitfall #10 Pattern A).
+// On card tap: fetch RecipeDetail (api.recipeDetail(name)) so
+// downstream steps (BYOK label-swap D-32, Telegram dynamic fields
+// D-54) have the channels.<id>.* metadata. Store in
+// `wizardScopeProvider.selectedRecipe` so step 2 / 3 read from a
+// single source of truth (Pitfall #10 Pattern A).
 //
-// Golden Rule #2: NO hardcoded recipe names. Every name comes from the
-// API. The `_RecipeCard` widget receives a `Recipe` summary (name +
-// description); the description may be null when the recipe yaml omits
-// it.
+// Golden Rule #2: NO hardcoded recipe names. Every name comes from
+// the API. The `_RecipeCard` widget receives a `Recipe` summary
+// (name + description + emoji); description/emoji may be null when
+// the recipe yaml omits them.
+
+import 'dart:async';
 
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
@@ -57,11 +65,19 @@ class CloneStep extends ConsumerWidget {
         data: (list) => Column(
           children: [
             Expanded(
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: GridView.builder(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 8,
+                ),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  mainAxisExtent: 160,
+                ),
                 itemCount: list.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (ctx, i) {
                   final r = list[i];
                   final isSelected = scope.selectedRecipe?.name == r.name;
@@ -102,10 +118,41 @@ class CloneStep extends ConsumerWidget {
         await ref.read(apiClientProvider).recipeDetail(name: name);
     if (detailRes case Ok(:final value)) {
       ref.read(wizardScopeProvider.notifier).setSelectedRecipe(value);
+      // Fire-and-forget: pre-select the recipe's first verified model
+      // so step 2 lands on a known-working pairing without forcing the
+      // user through the full-screen picker. User can override via the
+      // "Change" button. See _maybePreselectFirstVerified for guards.
+      unawaited(_maybePreselectFirstVerified(ref, value));
     }
     // On Err the selection silently no-ops; the user retains their
     // prior state and can tap another card. Plan 25-06 will add inline
     // error UX if this becomes a UX problem.
+  }
+
+  /// Pre-select the recipe author's canonical model so the user lands
+  /// on a known-working pairing without opening the picker. Silent
+  /// no-op on any failure (empty verified list, model deprecated from
+  /// catalog, catalog fetch error). recipeModelsProvider is keepAlive
+  /// so the picker that opens later reuses the same future.
+  Future<void> _maybePreselectFirstVerified(
+    WidgetRef ref,
+    RecipeDetail r,
+  ) async {
+    if (r.verifiedModels.isEmpty) return;
+    final firstId = r.verifiedModels.first;
+    final primaryProvider =
+        r.channelProviderCompat['inapp']?.supported.firstOrNull ??
+            'openrouter';
+    try {
+      final catalog =
+          await ref.read(recipeModelsProvider(primaryProvider).future);
+      final match = catalog.where((m) => m.id == firstId).firstOrNull;
+      if (match == null) return;
+      ref.read(wizardScopeProvider.notifier).setSelectedModel(match);
+    } on Object catch (_) {
+      // Catalog unavailable (ApiError or otherwise) — silent no-op so
+      // the wizard still works in degraded mode; user picks manually.
+    }
   }
 }
 
@@ -125,25 +172,42 @@ class _RecipeCard extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        width: 200,
-        height: 160,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: SolvrColors.card,
           border: Border.all(
             color: selected ? SolvrColors.foreground : SolvrColors.border,
-            width: selected ? 2 : 1,
+            // Constant 2px in both states. `Border.all` insets the child by
+            // `width` on every side, so a 1↔2 swap on selection reflowed
+            // the description text by 2px of inner width — visible on
+            // picoclaw/zeroclaw whose wrap point sat at the column edge.
+            // Emphasis is now carried entirely by color contrast.
+            width: 2,
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              recipe.name,
-              style: SolvrTextStyles.mono(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+            Row(
+              children: [
+                if (recipe.emoji != null) ...[
+                  Text(
+                    recipe.emoji!,
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: Text(
+                    recipe.name,
+                    style: SolvrTextStyles.mono(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Expanded(
@@ -163,26 +227,24 @@ class _RecipeCard extends StatelessWidget {
   }
 }
 
-/// 3 placeholder cards while `recipesProvider` is loading. Mirrors the
-/// dashboard's SkeletonRow vocabulary in horizontal layout. Uses a
-/// horizontal ListView so the loading state is scrollable just like the
-/// data state — three 200px cards exceed the typical 342px usable width
-/// on phone-class screens.
+/// 4 placeholder tiles while `recipesProvider` is loading. Matches the
+/// 2-column grid the data state uses so the layout doesn't reflow when
+/// recipes arrive.
 class _LoadingCards extends StatelessWidget {
   const _LoadingCards();
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      itemCount: 3,
-      separatorBuilder: (_, _) => const SizedBox(width: 8),
-      itemBuilder: (_, _) => const SizedBox(
-        width: 200,
-        height: 160,
-        child: SkeletonRow(),
+    return GridView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        mainAxisExtent: 160,
       ),
+      itemCount: 4,
+      itemBuilder: (_, _) => const SkeletonRow(),
     );
   }
 }

@@ -132,6 +132,9 @@ class _ModelStepState extends ConsumerState<ModelStep> {
             else
               _SelectedModelCard(
                 model: scope.selectedModel!,
+                verified: scope.selectedRecipe?.verifiedModels
+                        .contains(scope.selectedModel!.id) ??
+                    false,
                 onChange: () => _openPicker(context),
               ),
             const SizedBox(height: 24),
@@ -185,10 +188,20 @@ class _ModelStepState extends ConsumerState<ModelStep> {
 }
 
 class _SelectedModelCard extends StatelessWidget {
-  const _SelectedModelCard({required this.model, required this.onChange});
+  const _SelectedModelCard({
+    required this.model,
+    required this.onChange,
+    this.verified = false,
+  });
 
   final OpenRouterModel model;
   final VoidCallback onChange;
+
+  /// True when `model.id` is in the selected recipe's `verifiedModels`
+  /// list — surfaces a "✓ verified pairing" chip so the user knows the
+  /// preselection / current choice is a recipe-author-tested combo.
+  /// Mirrors the chip vocabulary used by `model_picker_screen._ModelRow`.
+  final bool verified;
 
   @override
   Widget build(BuildContext context) {
@@ -204,10 +217,47 @@ class _SelectedModelCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  model.id,
-                  style: SolvrTextStyles.mono(fontSize: 14),
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        model.id,
+                        style: SolvrTextStyles.mono(fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (verified) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: SolvrColors.card,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.check,
+                              size: 12,
+                              color: SolvrColors.foreground,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'verified pairing',
+                              style: SolvrTextStyles.mono(fontSize: 10)
+                                  .copyWith(
+                                color: SolvrColors.mutedForeground,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 if (model.name != model.id) ...[
                   const SizedBox(height: 2),
