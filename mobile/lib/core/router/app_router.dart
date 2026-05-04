@@ -14,6 +14,7 @@
 // against GET /v1/users/me (D-01..D-02).
 
 import 'package:agent_playground/features/chat/chat_screen.dart';
+import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/dashboard/dashboard_screen.dart';
 import 'package:agent_playground/features/login/login_screen.dart';
 import 'package:agent_playground/features/new_agent/clone_step.dart';
@@ -21,10 +22,37 @@ import 'package:agent_playground/features/new_agent/deploy_step.dart';
 import 'package:agent_playground/features/new_agent/model_picker_screen.dart';
 import 'package:agent_playground/features/new_agent/model_step.dart';
 import 'package:agent_playground/features/retry_bootstrap/retry_bootstrap_screen.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-GoRouter buildRouter({String initialLocation = '/login'}) => GoRouter(
+/// Phase 25 Wave 5: invalidates `agentsListProvider` whenever any
+/// route pops back to /dashboard. Catches every entry path (system
+/// back gesture, X close, route.push pop, programmatic context.pop)
+/// without per-screen plumbing — the previous attempt of invalidating
+/// in ChatScreen.dispose / WizardShell._onClose missed the system
+/// back-gesture path during the wizard's deploy step. Reading is
+/// cheap because Riverpod caches; the network round-trip only fires
+/// when the dashboard widget is actually visible.
+class _DashboardRefreshObserver extends NavigatorObserver {
+  _DashboardRefreshObserver(this._ref);
+
+  final WidgetRef _ref;
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    // Cheap: ref.invalidate marks the cache stale. The actual GET
+    // /v1/agents only fires if the dashboard widget is currently
+    // subscribing (i.e. visible). Off-screen no network round-trip.
+    _ref.invalidate(agentsListProvider);
+  }
+}
+
+GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
+    GoRouter(
       initialLocation: initialLocation,
+      observers: ref == null ? const [] : [_DashboardRefreshObserver(ref)],
       routes: [
         GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
         GoRoute(

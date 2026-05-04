@@ -29,6 +29,7 @@ class SolvrLabsApp extends ConsumerStatefulWidget {
 class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
   late final GoRouter _router = buildRouter(
     initialLocation: widget.initialRoute,
+    ref: ref,
   );
   StreamSubscription<void>? _authSub;
 
