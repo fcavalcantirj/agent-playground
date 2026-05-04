@@ -533,7 +533,38 @@ Plans:
   4. Web clients hit a 401 on the next protected call → frontend routes to /login with the same banner.
   5. Concurrent logout-all calls are idempotent (two device taps within ms produce the same end state, no race conditions on `sessions.revoked_at`).
   6. Audit trail: a single `auth_event` row records the logout-all with device count + IP, queryable for incident response.
+**Plans:** SHIPPED 2026-05-04 (5 atomic commits, no formal plan files — direct-execute pattern with 3-agent-per-change recon)
+Plans:
+- [x] migration 009 — auth_events table + sessions.revoked_reason column (commit `c83e43c`)
+- [x] backend — POST /v1/auth/logout-all + SessionMiddleware SESSION_REVOKED branch + ErrorCode + cookie clear (commit `df10668`)
+- [x] mobile — AuthInterceptor SESSION_REVOKED detection + login banner conditional copy + dashboard popup wiring (commit `4430dbc`)
+- [x] web — Settings → Security button + AlertDialog + login `?reason=session_revoked` toast (commit `f43a407`)
+- [x] mobile dashboard popup hide — destructive option oversized for the surface; web is the canonical button (commit `d7c609a`)
+**UI hint:** shipped — web Settings → Security has the button; mobile waits for a dedicated Settings screen
+**Status:** ✓ COMPLETE 2026-05-04. Live-tested end-to-end: logout-all returns `{revoked: N}` with cookie cleared, sessions row marked, auth_events row written in same transaction, dead cookie next request returns 401 + `code:'SESSION_REVOKED'`. See `memory/project_phase_26_shipped.md` for the full ledger.
+
+### Phase 27: BYOK Usage Visibility (Phase A from solidity audit — value-building)
+
+**Goal:** Surface "what is this agent costing me?" to BYOK users. Captures upstream LLM usage per chat message, persists per-agent + per-user totals, displays a real-time USD running total in the AppBar (mobile + web) — always visible — plus a per-agent breakdown on the agent details / profile screen. **No money flow** (no Stripe, no debits, no balance, no paywall) — Phase A is the pure-visibility precursor that proves the data shape against real upstream calls before Phase B (paywall + platform-billed tier) lands.
+
+*Strategic frame:* MSV's "always-proxy" pattern is for the case where the platform pays upstream (cash register at the wire). AP-BYOK is the opposite — the user pays upstream with their own key. We don't need a proxy to gate the call; we just need a way to record what each call cost. Provider-agnostic abstraction with three backends:
+  - **OpenRouter**: post-hoc fetch of `/api/v1/generation?id=<gen_id>` (canonical USD cost — don't reinvent)
+  - **Anthropic direct**: parse `usage` block from upstream response (token counts) + `cost_weights` table multiplier
+  - **OpenAI direct**: same — parse + table
+
+**Depends on:** Phase 22c.3 (inapp dispatcher; the chat path already routes upstream responses through api_server).
+**Requirements:** new — USE-01 "User sees a per-message USD cost recorded against their BYOK key in the AppBar within ≤ 5s of the assistant reply rendering" + USE-02 "Per-agent cumulative cost is visible on the agent details screen" + USE-03 "`cost_weights` config table is admin-mutable without code deploy".
+**Success Criteria** (what must be TRUE):
+  1. Send a chat message via mobile to an OpenRouter-backed agent with a BYOK OpenRouter key. Within 5s of the assistant reply, AppBar shows a non-zero USD value for the user. The value reflects OpenRouter's authoritative `/api/v1/generation` cost (not a token-count estimate).
+  2. The same flow works for an Anthropic-direct-backed agent (e.g. openclaw) — token counts come from the upstream response, USD cost is computed from `cost_weights` table.
+  3. AppBar USD ticker is **always visible** when signed in (mobile: top-bar before menu; web: top-right beside profile). Click → opens a per-agent breakdown view.
+  4. Agent details screen shows: cumulative tokens (input + output), cumulative USD, count of messages, last activity. All sourced from `usage_logs` rows for that `agent_instance_id`.
+  5. `cost_weights` table seeded with current OpenRouter / Anthropic / OpenAI prices. Admin can `UPDATE` a row and the next message uses the new weights without app restart.
+  6. Egress path is provider-agnostic: a single `UsageRecorder` interface with `OpenRouterRecorder` / `AnthropicRecorder` / `OpenAIRecorder` impls. Adding a new provider is one new impl class, not a fork.
+  7. No money moves. No `credit_balances`, no Stripe, no 402 anywhere. Phase B (paywall + debits) is a follow-up phase that builds ON TOP of `usage_logs` + `cost_weights` without rewrite.
+  8. **Tested.** Unit tests for the recorders + cost computation. Live integration test against real OpenRouter (with the team's BYOK key from `.env`) confirming a real chat message produces a `usage_logs` row matching the OpenRouter generation cost within rounding.
 **Plans:** TBD
 Plans:
-- [ ] (to be planned)
-**UI hint:** small (logout-all button on settings + "session ended elsewhere" SnackBar)
+- [ ] (to be planned via /gsd-discuss-phase 27)
+**UI hint:** medium (AppBar USD ticker on web + mobile + per-agent breakdown view)
+**Status:** queued; opens after `/clear`
