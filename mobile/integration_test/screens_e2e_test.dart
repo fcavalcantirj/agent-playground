@@ -172,16 +172,18 @@ void main() {
       // CRITICAL: pumpAndSettle does not wait for network futures. The
       // wizard title appears synchronously but recipesProvider is still
       // fetching — wait for an actual tappable recipe card (InkWell
-      // descendant of the ListView) before tapping. Both loading-state
-      // (`_LoadingCards`) and data-state render a horizontal ListView,
+      // descendant of the GridView) before tapping. Both loading-state
+      // (`_LoadingCards`) and data-state render a 2-column GridView,
       // but only the data state has InkWell children, so InkWell is the
-      // unambiguous data-state signal.
+      // unambiguous data-state signal. (UX rev 2026-05-04: switched from
+      // horizontal ListView to GridView; SkeletonRow placeholders in the
+      // loading state still don't render InkWells, so the signal holds.)
       // Wait on the BASE finder (matches 0..N candidates) — `.first.evaluate()`
       // throws StateError on empty, so we'd crash inside waitForFinder.
       await waitForFinder(
         tester,
         find.descendant(
-          of: find.byType(ListView),
+          of: find.byType(GridView),
           matching: find.byType(InkWell),
         ),
         timeout: const Duration(seconds: 30),
@@ -230,56 +232,57 @@ void main() {
         timeout: const Duration(seconds: 10),
         reason: 'wizard step 2 title',
       );
-      // Push the model picker.
-      await tapAndSettle(
-        tester,
-        find.widgetWithText(ElevatedButton, 'Pick a model'),
-        timeout: const Duration(seconds: 5),
-      );
-      // Wait for /v1/models to load + ListView.builder to render.
-      await waitForFinder(
-        tester,
-        find.byType(ModelPickerScreen),
-        timeout: const Duration(seconds: 30),
-        reason: 'model picker screen pushed',
-      );
-      // Wait for the picker list to populate (search field + at least
-      // one model row visible).
-      await waitForFinder(
-        tester,
-        find.byIcon(Icons.search),
-        timeout: const Duration(seconds: 10),
-        reason: 'model picker search input',
-      );
-      // Filter to the zeroclaw recipe's verified model
-      // (anthropic/claude-haiku-4-5 — verified_cells matrix
-      // 2026-04-30 PASS). Picking the first /v1/models result is a
-      // gamble: that's whatever OpenRouter ordered first today, and
-      // the zeroclaw container has been observed to fail on grok-4.3
-      // first-contact (recipe-runtime issue, not a Phase 25 bug).
-      // Search narrows the picker to the verified cell so the e2e
-      // gate exercises a known-good recipe×model combination.
-      final searchField = find.descendant(
-        of: find.byType(ModelPickerScreen),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(searchField, 'haiku');
-      await pumpUntilSettled(tester, timeout: const Duration(seconds: 1));
-      // After filter, the first InkWell row is anthropic/claude-haiku-4.5.
-      final firstModelRow = find
-          .descendant(
-            of: find.byType(ModelPickerScreen),
-            matching: find.byType(InkWell),
-          )
-          .first;
-      await tester.tap(firstModelRow);
-      // The picker pops back to step 2; wait until the title returns.
-      await waitForFinder(
-        tester,
-        find.text('Pick a model + key'),
-        timeout: const Duration(seconds: 10),
-        reason: 'returned to wizard step 2 after model pick',
-      );
+      // UX rev 2026-05-04: clone_step pre-selects the recipe author's
+      // first verified model on tap — for zeroclaw that's
+      // anthropic/claude-haiku-4.5, exactly the model this test wanted
+      // to pick anyway. So the picker may be skipped entirely. If the
+      // "Pick a model" CTA is absent (pre-selection landed) we proceed
+      // straight to BYOK; otherwise we fall back to the explicit
+      // search-and-tap flow (race condition: pre-selection lost the
+      // catalog fetch, or recipe.verifiedModels is empty).
+      final pickButton = find.widgetWithText(ElevatedButton, 'Pick a model');
+      if (pickButton.evaluate().isNotEmpty) {
+        await tapAndSettle(
+          tester,
+          pickButton,
+          timeout: const Duration(seconds: 5),
+        );
+        await waitForFinder(
+          tester,
+          find.byType(ModelPickerScreen),
+          timeout: const Duration(seconds: 30),
+          reason: 'model picker screen pushed',
+        );
+        await waitForFinder(
+          tester,
+          find.byIcon(Icons.search),
+          timeout: const Duration(seconds: 10),
+          reason: 'model picker search input',
+        );
+        // Filter to the zeroclaw recipe's verified model
+        // (anthropic/claude-haiku-4-5 — verified_cells matrix
+        // 2026-04-30 PASS).
+        final searchField = find.descendant(
+          of: find.byType(ModelPickerScreen),
+          matching: find.byType(TextField),
+        );
+        await tester.enterText(searchField, 'haiku');
+        await pumpUntilSettled(tester, timeout: const Duration(seconds: 1));
+        // After filter, the first InkWell row is anthropic/claude-haiku-4.5.
+        final firstModelRow = find
+            .descendant(
+              of: find.byType(ModelPickerScreen),
+              matching: find.byType(InkWell),
+            )
+            .first;
+        await tester.tap(firstModelRow);
+        await waitForFinder(
+          tester,
+          find.text('Pick a model + key'),
+          timeout: const Duration(seconds: 10),
+          reason: 'returned to wizard step 2 after model pick',
+        );
+      }
 
       // BYOK field — only one TextField on step 2.
       final byokField = find.byType(TextField).first;
