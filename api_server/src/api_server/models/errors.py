@@ -44,6 +44,11 @@ class ErrorCode:
     RATE_LIMITED = "RATE_LIMITED"
     IDEMPOTENCY_BODY_MISMATCH = "IDEMPOTENCY_BODY_MISMATCH"
     UNAUTHORIZED = "UNAUTHORIZED"
+    # Phase 26: differentiates "your session was revoked elsewhere
+    # (logout-all from another device, or admin revoke)" from generic
+    # UNAUTHORIZED ("no cookie / expired / never signed in"). Mobile +
+    # web clients map this to a "session ended elsewhere" banner.
+    SESSION_REVOKED = "SESSION_REVOKED"
     INTERNAL = "INTERNAL"
     RUNNER_TIMEOUT = "RUNNER_TIMEOUT"
     INFRA_UNAVAILABLE = "INFRA_UNAVAILABLE"
@@ -67,6 +72,7 @@ _CODE_TO_TYPE = {
     ErrorCode.RATE_LIMITED: "rate_limit_error",
     ErrorCode.IDEMPOTENCY_BODY_MISMATCH: "invalid_request",
     ErrorCode.UNAUTHORIZED: "unauthorized",
+    ErrorCode.SESSION_REVOKED: "unauthorized",
     ErrorCode.INTERNAL: "internal_error",
     ErrorCode.RUNNER_TIMEOUT: "runner_error",
     ErrorCode.INFRA_UNAVAILABLE: "infra_error",

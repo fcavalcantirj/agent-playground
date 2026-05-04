@@ -42,12 +42,21 @@ def require_user(request: Request) -> JSONResponse | UUID:
     session). FastAPI promotes scope['state'] values onto ``request.state``
     as attributes, so ``request.state.user_id`` is the idiomatic read.
 
+    Phase 26: also reads ``request.state.session_revoked`` (set by
+    SessionMiddleware when the cookie matches a recently-revoked session
+    via logout-all / admin). When True, returns 401 with
+    ``ErrorCode.SESSION_REVOKED`` + clears the ``ap_session`` cookie so
+    the client doesn't keep replaying a dead cookie. Mobile + web clients
+    map the code to a "session ended elsewhere" banner.
+
     Return shape — inline, never raising — mirrors every ``_err()`` site in
     ``routes/runs.py``, ``routes/agent_events.py``, ``routes/agent_lifecycle.py``
     so the Stripe-shape envelope stays byte-identical across the surface.
     """
     user_id = getattr(request.state, "user_id", None)
     if user_id is None:
+        if getattr(request.state, "session_revoked", False):
+            return _session_revoked_response(request)
         return JSONResponse(
             status_code=401,
             content=make_error_envelope(
@@ -70,6 +79,31 @@ def require_user(request: Request) -> JSONResponse | UUID:
                 param="ap_session",
             ),
         )
+
+
+def _session_revoked_response(request: Request) -> JSONResponse:
+    """401 with SESSION_REVOKED + cookie clear (Phase 26 D-04 + D-09)."""
+    settings = request.app.state.settings
+    resp = JSONResponse(
+        status_code=401,
+        content=make_error_envelope(
+            ErrorCode.SESSION_REVOKED,
+            "Your session was ended on another device. Please sign in again.",
+            param="ap_session",
+        ),
+    )
+    # Mirror routes/auth.py::_clear_session_cookie inline so deps.py stays
+    # standalone (no circular import on routes/auth.py).
+    resp.set_cookie(
+        key="ap_session",
+        value="",
+        max_age=0,
+        httponly=True,
+        samesite="lax",
+        secure=(settings.env == "prod"),
+        path="/",
+    )
+    return resp
 
 
 __all__ = ["require_user"]
