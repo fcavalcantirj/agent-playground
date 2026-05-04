@@ -32,6 +32,8 @@ If you see api_server log lines like `OAuth config oauth_X missing in dev; using
 
 **Postgres / Redis:** `docker compose -f docker-compose.dev.yml up -d postgresql` brings Postgres on 5432 (db `agent_playground_api` must exist; create with `psql ... -c "CREATE DATABASE agent_playground_api"` then `make migrate-api`). Redis can be reused from the deploy stack (`deploy-redis-1` already publishes 6379). The api_server defaults to `redis://redis:6379/0` (Docker DNS), so when running native pass `AP_REDIS_URL=redis://localhost:6379/0` explicitly.
 
+**End-to-end tests on macOS — `make screens-e2e` will fail on native uvicorn.** The inapp_dispatcher resolves agent containers by Docker bridge IP (`172.18.0.x`), and macOS Docker Desktop does not route from host to the bridge network. Symptom: `inapp_dispatcher.ip_lookup_failed` in logs; chat sits at "..." forever; manual sign-in + chat works (different code path). The supported macOS workaround is `make e2e-inapp-docker` which runs the test process inside a container that joins the bridge — the screens spike does NOT yet have an equivalent dockerized harness. Don't burn time chasing this on native; the screens themselves work end-to-end with manual testing. The dockerized screens harness is H8 (CI gating) work.
+
 # ⚠️ Current project state as of 2026-04-15
 
 **READ THIS FIRST. The content below this banner is historical.**
