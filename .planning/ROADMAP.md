@@ -558,10 +558,10 @@ Plans:
   1. Send a chat message via mobile to an OpenRouter-backed agent with a BYOK OpenRouter key. Within 5s of the assistant reply, AppBar shows a non-zero USD value for the user. The value reflects OpenRouter's authoritative `/api/v1/generation` cost (not a token-count estimate).
   2. The same flow works for an Anthropic-direct-backed agent (e.g. openclaw) — token counts come from the upstream response, USD cost is computed from `cost_weights` table.
   3. AppBar USD ticker is **always visible** when signed in (mobile: top-bar before menu; web: top-right beside profile). Click → opens a per-agent breakdown view.
-  4. Agent details screen shows: cumulative tokens (input + output), cumulative USD, count of messages, last activity. All sourced from `usage_logs` rows for that `agent_instance_id`.
+  4. Agent details screen shows: cumulative tokens (input + output), cumulative USD, count of messages, last activity, **last 7d / last 30d daily series (temporal view)** — all sourced from `usage_logs` rows for that `agent_instance_id`.
   5. `cost_weights` table seeded with current OpenRouter / Anthropic / OpenAI prices. Admin can `UPDATE` a row and the next message uses the new weights without app restart.
   6. Egress path is provider-agnostic: a single `UsageRecorder` interface with `OpenRouterRecorder` / `AnthropicRecorder` / `OpenAIRecorder` impls. Adding a new provider is one new impl class, not a fork.
-  7. No money moves. No `credit_balances`, no Stripe, no 402 anywhere. Phase B (paywall + debits) is a follow-up phase that builds ON TOP of `usage_logs` + `cost_weights` without rewrite.
+  7. No money moves. No `credit_balances`, no Stripe, no 402 anywhere. Phase B (pay-upfront paywall + debits — no free trial) is a follow-up phase that builds ON TOP of `usage_logs` + `cost_weights` without rewrite.
   8. **Tested.** Unit tests for the recorders + cost computation. Live integration test against real OpenRouter (with the team's BYOK key from `.env`) confirming a real chat message produces a `usage_logs` row matching the OpenRouter generation cost within rounding.
 **Plans:** TBD
 Plans:

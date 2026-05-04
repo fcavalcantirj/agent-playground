@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase 25 context gathered
-last_updated: "2026-05-03T13:44:17.490Z"
-last_activity: 2026-05-03 -- Phase 25 execution started
+stopped_at: Phase 26 SHIPPED — clearing context to start Phase 27 fresh (2026-05-04)
+last_updated: "2026-05-04T22:55:00.000Z"
+last_activity: 2026-05-04 -- Phase 26 (logout-everywhere/H2) shipped 5 atomic commits; Phase 27 (BYOK Usage Visibility/Phase A) queued, CONTEXT pending
 progress:
   total_phases: 19
   completed_phases: 5
@@ -582,9 +582,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-03T02:44:43.082Z
+Last session: 2026-05-03T22:48:05.652Z
 
-Stopped at: Phase 25 context gathered
+Stopped at: context exhaustion at 90% (2026-05-03)
 
 **Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
 
@@ -608,4 +608,4 @@ Stopped at: Phase 25 context gathered
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: .planning/phases/25-mobile-screens/25-CONTEXT.md
+Resume file: None
