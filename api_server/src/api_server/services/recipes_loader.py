@@ -48,12 +48,79 @@ def load_recipe(path: Path) -> dict:
     return _fresh_yaml().load(path.read_text())
 
 
+# ENV var → LLM provider id mapping for the synthesizer below. The 3 names
+# here are the canonical client-SDK env vars: any recipe whose
+# ``runtime.process_env.api_key`` matches gets a synthesized
+# ``channels.<id>.provider_compat`` populated with that provider. New env-var
+# names need an explicit ``provider_compat:`` block on the channel — that
+# stays the recipe-author contract.
+_ENV_TO_PROVIDER: dict[str, str] = {
+    "OPENROUTER_API_KEY": "openrouter",
+    "ANTHROPIC_API_KEY": "anthropic",
+    "OPENAI_API_KEY": "openai",
+}
+
+
+def _synthesize_provider_compat_in_place(recipe: dict) -> None:
+    """Mutate ``recipe['channels'][cid]['provider_compat']`` for any channel
+    that doesn't declare it explicitly.
+
+    Source of truth: ``runtime.process_env.api_key`` (the env var name the
+    recipe expects to receive the BYOK in). Recipes that DECLARE
+    ``provider_compat`` on a channel are untouched — the explicit author
+    intent wins (e.g. openclaw.telegram declares
+    ``deferred=[openrouter] supported=[anthropic]`` to flag the broken
+    OpenRouter→Anthropic path).
+
+    Bug fix 2026-05-04 (4-agent root-cause confirmation, commit context
+    Phase 25 Wave 5 follow-up): all 6 v0.2 recipes omit ``provider_compat``
+    under ``channels.inapp``. Mobile's ``_restartAgent`` loops
+    ``compat.supported`` to find a stored BYOK key — when ``compat`` is
+    null, the loop runs 0 iterations and the SnackBar fires "No BYOK key
+    stored" even though the wizard saved the key correctly during deploy.
+    Frontend ``playground-form.tsx`` BYOK label-swap and mobile
+    ``model_step.dart`` BYOK label degrade through the same null-check
+    path. Synthesizing here closes all three at once without duplicating
+    the env-name→provider mapping in every client (Rule #2: intelligence
+    in API).
+
+    Mutates ``recipe`` in place — load-time, before any
+    ``app.state.recipes`` read. Both ``GET /v1/recipes`` (via
+    ``to_summary``) and ``GET /v1/recipes/{name}`` (raw dict passthrough)
+    see the synthesized values uniformly.
+    """
+    runtime = recipe.get("runtime") or {}
+    process_env = runtime.get("process_env") or {}
+    api_key_var = process_env.get("api_key")
+    synth_provider = (
+        _ENV_TO_PROVIDER.get(str(api_key_var)) if api_key_var else None
+    )
+    if not synth_provider:
+        return  # unknown env-var name → recipe must declare provider_compat
+    channels = recipe.get("channels")
+    if not isinstance(channels, dict):
+        return
+    for cid, cinfo in channels.items():
+        if not isinstance(cinfo, dict):
+            continue
+        if cinfo.get("provider_compat") is not None:
+            continue  # explicit author value wins
+        cinfo["provider_compat"] = {
+            "supported": [synth_provider],
+            "deferred": [],
+        }
+
+
 def load_all_recipes(dir_path: Path) -> dict[str, dict]:
     """Load every ``*.yaml`` file in ``dir_path`` into a name-keyed dict.
 
     Raises ``ValueError`` if any file is missing the ``name`` field or if
     two files share a name. Called at app startup; app boot refuses to
     complete on malformed or duplicate recipes (fail-loud).
+
+    Post-load step: synthesize ``channels.<id>.provider_compat`` from
+    ``runtime.process_env.api_key`` for any channel that doesn't declare
+    it. See ``_synthesize_provider_compat_in_place`` for the why.
     """
     result: dict[str, dict] = {}
     for yaml_path in sorted(dir_path.glob("*.yaml")):
@@ -67,6 +134,7 @@ def load_all_recipes(dir_path: Path) -> dict[str, dict]:
             raise ValueError(f"{yaml_path}: recipe missing 'name' field")
         if name in result:
             raise ValueError(f"duplicate recipe name {name!r} in {yaml_path}")
+        _synthesize_provider_compat_in_place(recipe)
         result[name] = recipe
     return result
 
