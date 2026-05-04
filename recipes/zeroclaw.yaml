@@ -1,6 +1,7 @@
 apiVersion: ap.recipe/v0.2
 name: zeroclaw
 display_name: ZeroClaw
+emoji: "🦀"
 description: |
   Fast, small, fully autonomous personal AI assistant by zeroclaw-labs —
   Rust 2024, ~50 MB distroless image. 30,845 ★ at recon date, top of the

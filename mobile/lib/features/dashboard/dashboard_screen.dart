@@ -173,12 +173,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     if (list.isEmpty) {
       return _EmptyState(namesStream: namesStream);
     }
+    // Recipe-emoji lookup map. Built from `recipesProvider` (already
+    // cached at dashboard mount). Null entries fall back to text-only
+    // rendering on the row. Computed inline (no Riverpod codegen
+    // dance) to keep this commit non-invasive.
+    final recipesAsync = ref.watch(recipesProvider);
+    final recipeList = recipesAsync.maybeWhen(
+      data: (l) => l,
+      orElse: () => const <Recipe>[],
+    );
+    final recipeEmojiByName = <String, String?>{
+      for (final r in recipeList) r.name: r.emoji,
+    };
+
     return _PopulatedState(
       agents: list,
       hasFreshError: isError,
       deletingIds: _deletingIds,
       restartingIds: _restartingIds,
       stoppingIds: _stoppingIds,
+      recipeEmojiByName: recipeEmojiByName,
       onDelete: (a) => _confirmDelete(context, a),
       onRestart: (a) => _restartAgent(context, a),
       onStop: (a) => _stopAgent(context, a),
@@ -413,6 +427,7 @@ class _PopulatedState extends StatelessWidget {
     required this.deletingIds,
     required this.restartingIds,
     required this.stoppingIds,
+    required this.recipeEmojiByName,
     required this.onDelete,
     required this.onRestart,
     required this.onStop,
@@ -424,6 +439,7 @@ class _PopulatedState extends StatelessWidget {
   final Set<String> deletingIds;
   final Set<String> restartingIds;
   final Set<String> stoppingIds;
+  final Map<String, String?> recipeEmojiByName;
   final void Function(AgentSummary) onDelete;
   final void Function(AgentSummary) onRestart;
   final void Function(AgentSummary) onStop;
@@ -463,6 +479,7 @@ class _PopulatedState extends StatelessWidget {
           final canStop = agent.status == 'running';
           return AgentRow(
             agent: agent,
+            recipeEmoji: recipeEmojiByName[agent.recipeName],
             isDeleting: deletingIds.contains(agent.id),
             isRestarting: restartingIds.contains(agent.id),
             isStopping: stoppingIds.contains(agent.id),

@@ -43,6 +43,11 @@ class RecipeSummary(BaseModel):
     name: str
     api_version: str = Field(..., alias="apiVersion")
     display_name: str | None = None
+    # Optional short visual marker (emoji or ASCII token) for UI list
+    # rows. Recipe-author controlled — see ap.recipe.schema.json. Mobile
+    # dashboard renders this as a leading glyph in each AgentRow + the
+    # chat AppBar subtitle for cross-screen recipe-identity parity.
+    emoji: str | None = None
     description: str | None = None
     upstream_version: str | None = None
     image_size_gb: float | None = None

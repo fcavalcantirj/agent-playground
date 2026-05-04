@@ -26,6 +26,7 @@ class AgentRow extends StatelessWidget {
     this.onDelete,
     this.onRestart,
     this.onStop,
+    this.recipeEmoji,
     this.isDeleting = false,
     this.isRestarting = false,
     this.isStopping = false,
@@ -35,6 +36,14 @@ class AgentRow extends StatelessWidget {
 
   final AgentSummary agent;
   final VoidCallback onTap;
+
+  /// Optional per-recipe glyph (single codepoint emoji or ASCII
+  /// token) — surfaced inline before [agent.name] so the user can
+  /// distinguish recipe types at a glance. Resolved by
+  /// DashboardScreen against `recipesProvider`. Null = no glyph
+  /// rendered (graceful fallback when the recipe declares no emoji
+  /// or `recipesProvider` hasn't loaded yet).
+  final String? recipeEmoji;
 
   /// Optional delete trigger. When null, the 'Delete' menu entry is
   /// suppressed (test fixtures + future read-only contexts).
@@ -97,19 +106,39 @@ class AgentRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      agent.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: body?.copyWith(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: SolvrColors.foreground,
-                      ),
+                    Row(
+                      children: [
+                        if (recipeEmoji != null && recipeEmoji!.isNotEmpty) ...[
+                          // Decorative — VoiceOver skips, the recipe name
+                          // on the model line below carries the meaning.
+                          ExcludeSemantics(
+                            child: Text(
+                              recipeEmoji!,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                height: 1.0,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Flexible(
+                          child: Text(
+                            agent.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: body?.copyWith(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: SolvrColors.foreground,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      agent.model,
+                      '${agent.recipeName} · ${agent.model}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: SolvrTextStyles.mono(

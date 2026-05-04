@@ -586,6 +586,12 @@
           "minLength": 1,
           "description": "Human-readable name shown in logs and future UI."
         },
+        "emoji": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Optional short visual marker (emoji glyph or ASCII token, single codepoint preferred) for UI list rows. Recipe-author controlled. Clients fall back to text-only when absent."
+        },
         "description": {
           "type": "string",
           "minLength": 1,
@@ -1181,6 +1187,12 @@
         "display_name": {
           "type": "string",
           "minLength": 1
+        },
+        "emoji": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Optional short visual marker (emoji glyph or ASCII token, single codepoint preferred) for UI list rows. Recipe-author controlled."
         },
         "description": {
           "type": "string",

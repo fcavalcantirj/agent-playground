@@ -1,6 +1,7 @@
 apiVersion: ap.recipe/v0.2
 name: hermes
 display_name: Hermes Agent
+emoji: "⚡"
 description: |
   Self-improving AI agent by Nous Research. Full TUI with slash-commands,
   skills system, multi-provider model support, messaging gateways.

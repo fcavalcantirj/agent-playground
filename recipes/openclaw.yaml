@@ -1,6 +1,7 @@
 apiVersion: ap.recipe/v0.2
 name: openclaw
 display_name: OpenClaw
+emoji: "🪶"
 description: |
   Personal AI assistant (TypeScript, Node.js 24) — multi-channel gateway
   with messaging integrations + headless `openclaw infer` CLI. This

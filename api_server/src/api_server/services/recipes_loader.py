@@ -228,6 +228,7 @@ def to_summary(recipe: dict) -> RecipeSummary:
         name=recipe["name"],
         apiVersion=recipe.get("apiVersion", "ap.recipe/v0.1"),
         display_name=recipe.get("display_name"),
+        emoji=recipe.get("emoji"),
         description=str(recipe["description"]).strip() if recipe.get("description") else None,
         upstream_version=str(source["upstream_version"]).strip() if source.get("upstream_version") else None,
         image_size_gb=float(observed["image_size_gb"]) if observed.get("image_size_gb") is not None else None,

@@ -1,6 +1,7 @@
 apiVersion: ap.recipe/v0.2
 name: picoclaw
 display_name: PicoClaw
+emoji: "◽"
 description: |
   Ultra-lightweight personal AI assistant written in Go (sipeed/picoclaw).
   <10MB RAM, single-binary, runs on $10 hardware. Multi-provider via

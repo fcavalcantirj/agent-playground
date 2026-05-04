@@ -1,6 +1,7 @@
 apiVersion: ap.recipe/v0.2
 name: nanobot
 display_name: nanobot
+emoji: "🐝"
 description: |
   Ultra-lightweight personal AI agent by HKUDS — "99% fewer lines of
   code than OpenClaw", pure Python, pip-installable as `nanobot-ai`.

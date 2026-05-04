@@ -372,19 +372,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 }
 
-class _ChatAppBarTitle extends StatelessWidget {
+class _ChatAppBarTitle extends ConsumerWidget {
   const _ChatAppBarTitle({required this.agent, required this.fallbackId});
 
   final AgentSummary? agent;
   final String fallbackId;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     // If the agentsListProvider hasn't surfaced this agent yet (cold-mount
     // race after a fresh deploy), show 'Loading…' rather than the raw
     // agent_instance UUID. The provider invalidates on chat dispose +
     // wizard close so this branch is short-lived.
     final title = agent?.name ?? 'Loading…';
+
+    // Resolve the per-recipe emoji for the agent (parity with the
+    // dashboard AgentRow). Falls back to no glyph when the recipe
+    // declares none or recipesProvider hasn't loaded yet.
+    String? emoji;
+    if (agent != null) {
+      final recipesAsync = ref.watch(recipesProvider);
+      emoji = recipesAsync
+          .maybeWhen(data: (l) => l, orElse: () => const <Recipe>[])
+          .where((r) => r.name == agent!.recipeName)
+          .map((r) => r.emoji)
+          .firstOrNull;
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -403,6 +417,15 @@ class _ChatAppBarTitle extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (emoji != null && emoji.isNotEmpty) ...[
+                ExcludeSemantics(
+                  child: Text(
+                    emoji,
+                    style: const TextStyle(fontSize: 12, height: 1.0),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
               Flexible(
                 child: Text(
                   // recipe · model — gives the user immediate context

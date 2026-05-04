@@ -215,6 +215,7 @@ class Recipe {
     required this.name,
     required this.channelsSupported,
     this.description,
+    this.emoji,
   });
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -224,11 +225,19 @@ class Recipe {
                 .map((e) => e as String)
                 .toList(growable: false),
         description: json['description'] as String?,
+        emoji: json['emoji'] as String?,
       );
 
   final String name;
   final List<String> channelsSupported;
   final String? description;
+
+  /// Optional short visual marker (single-codepoint emoji or ASCII
+  /// token, recipe-author controlled). Surfaces in the dashboard
+  /// AgentRow + chat AppBar subtitle so the user can tell agent types
+  /// apart at a glance. Null when the recipe declares no emoji —
+  /// callers fall back to text-only rendering.
+  final String? emoji;
 }
 
 /// Per-channel user-input descriptor from `GET /v1/recipes/{name}` —
@@ -356,6 +365,7 @@ class RecipeDetail extends Recipe {
     required this.channels,
     required this.channelProviderCompat,
     super.description,
+    super.emoji,
   });
 
   factory RecipeDetail.fromJson(Map<String, dynamic> json) {
@@ -386,6 +396,7 @@ class RecipeDetail extends Recipe {
       // Mirror recipes_loader.py:124 — channels_supported == channels.keys.
       channelsSupported: channels.keys.toList(growable: false),
       description: r['description'] as String?,
+      emoji: r['emoji'] as String?,
       channels: channels,
       channelProviderCompat: compat,
     );

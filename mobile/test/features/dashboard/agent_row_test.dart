@@ -52,7 +52,13 @@ void main() {
       final dot = tester.widget<StatusDot>(find.byType(StatusDot));
       expect(dot.status, 'running');
       expect(find.text('claude-test-1'), findsOneWidget);
-      expect(find.text('anthropic/claude-haiku-4-5'), findsOneWidget);
+      // Model line now reads `<recipeName> · <model>` (commit landing
+      // recipe.emoji glyph in the row). Match by substring instead of
+      // standalone model id.
+      expect(
+        find.textContaining('anthropic/claude-haiku-4-5'),
+        findsOneWidget,
+      );
       expect(taps, 0);
     });
 
@@ -100,7 +106,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final modelText = tester.widget<Text>(find.text(longModel));
+      // Model line now reads `<recipeName> · <model>`. Find by
+      // substring match on the long model id.
+      final modelText = tester.widget<Text>(
+        find.textContaining(longModel),
+      );
       expect(modelText.maxLines, 1);
       expect(modelText.overflow, TextOverflow.ellipsis);
     });
