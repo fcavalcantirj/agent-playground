@@ -140,6 +140,35 @@ class ApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // DELETE /v1/agents/:id
+  // ---------------------------------------------------------------------------
+  /// Hard-delete an agent and all dependent rows.
+  ///
+  /// Backend stops a running container (if any) and cascade-deletes
+  /// agent_containers + agent_events + inapp_messages + runs. Idempotent
+  /// end-state: a second delete returns 404. No Bearer required (no
+  /// provider call). Receive timeout bumped to 30s because a graceful
+  /// SIGTERM + docker rm can take 5-15s on a cold daemon.
+  Future<Result<void>> deleteAgent({
+    required String agentId,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      await _dio.delete<dynamic>(
+        ApiEndpoints.agentDetail(agentId),
+        cancelToken: cancelToken,
+        options: Options(
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 10),
+        ),
+      );
+      return const Result.ok(null);
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /v1/agents/:id/messages   (D-36 / Phase 23 D-09: Idempotency-Key)
   // ---------------------------------------------------------------------------
   Future<Result<MessagePostAck>> postMessage({

@@ -8,6 +8,11 @@
 //
 // Tap handler is wired from the parent (DashboardScreen) so the row stays
 // agnostic of GoRouter — easier widget-testing without a router harness.
+//
+// Bug 2 follow-up: trailing PopupMenuButton with a single 'Delete' entry
+// next to the relative-time label. While `isDeleting` is true, the menu
+// is replaced with a small spinner and the row's onTap is disabled —
+// mirrors the inflight pattern from RestartBanner (commit d3c8863).
 
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
@@ -18,12 +23,24 @@ class AgentRow extends StatelessWidget {
   const AgentRow({
     required this.agent,
     required this.onTap,
+    this.onDelete,
+    this.isDeleting = false,
     @visibleForTesting this.now,
     super.key,
   });
 
   final AgentSummary agent;
   final VoidCallback onTap;
+
+  /// Optional delete trigger. When null, the trailing menu is hidden
+  /// (test fixtures + future read-only contexts). When set, the
+  /// PopupMenuButton renders with a single 'Delete' entry.
+  final VoidCallback? onDelete;
+
+  /// True while a DELETE /v1/agents/:id is in flight for this row.
+  /// Disables onTap, replaces the trailing menu with a small spinner,
+  /// and dims the whole row to 50% opacity.
+  final bool isDeleting;
 
   /// Test seam — defaults to DateTime.now() at render time. Allows the unit
   /// tests for `_relativeTime` to assert deterministic output without
@@ -34,8 +51,8 @@ class AgentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final body = Theme.of(context).textTheme.bodyLarge;
     final caption = Theme.of(context).textTheme.bodySmall;
-    return InkWell(
-      onTap: onTap,
+    final core = InkWell(
+      onTap: isDeleting ? null : onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: SizedBox(
@@ -79,11 +96,39 @@ class AgentRow extends StatelessWidget {
                   color: SolvrColors.mutedForeground,
                 ),
               ),
+              if (isDeleting)
+                const Padding(
+                  padding: EdgeInsets.only(left: 8, right: 4),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (onDelete != null)
+                PopupMenuButton<String>(
+                  key: ValueKey('agent-row-menu-${agent.id}'),
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  tooltip: 'Agent actions',
+                  onSelected: (v) {
+                    if (v == 'delete') onDelete!();
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Text(
+                        'Delete',
+                        style: TextStyle(color: SolvrColors.destructive),
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
       ),
     );
+    return Opacity(opacity: isDeleting ? 0.5 : 1.0, child: core);
   }
 
   /// D-15 — relative time renderer.

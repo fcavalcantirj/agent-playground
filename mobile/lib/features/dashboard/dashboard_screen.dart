@@ -29,6 +29,8 @@
 // a fresh CancelToken (Pitfall #8 concurrency guard).
 
 import 'package:agent_playground/core/api/dtos.dart';
+import 'package:agent_playground/core/api/providers.dart';
+import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/auth/providers.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/dashboard/agent_row.dart';
@@ -43,11 +45,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  // Per-row inflight set for DELETE /v1/agents/:id. Mirrors the
+  // _restartInflight pattern in chat_screen.dart (commit d3c8863) —
+  // single-screen ephemeral state, no Riverpod StateNotifier needed.
+  final Set<String> _deletingIds = <String>{};
+
+  @override
+  Widget build(BuildContext context) {
     final agents = ref.watch(agentsListProvider);
     final namesAsync = ref.watch(recipeNamesStreamProvider);
     // Bridge AsyncValue<List<String>> → Stream<List<String>> so the dumb
@@ -61,7 +73,7 @@ class DashboardScreen extends ConsumerWidget {
       ),
     );
 
-    final body = _buildBody(context, ref, agents, namesStream);
+    final body = _buildBody(context, agents, namesStream);
 
     return Scaffold(
       appBar: AppBar(
@@ -78,7 +90,7 @@ class DashboardScreen extends ConsumerWidget {
             tooltip: 'More',
             onSelected: (value) async {
               if (value == 'signout') {
-                await _confirmSignOut(context, ref);
+                await _confirmSignOut(context);
               }
             },
             itemBuilder: (_) => const <PopupMenuEntry<String>>[
@@ -128,7 +140,6 @@ class DashboardScreen extends ConsumerWidget {
 
   Widget _buildBody(
     BuildContext context,
-    WidgetRef ref,
     AsyncValue<List<AgentSummary>> agents,
     Stream<List<String>> namesStream,
   ) {
@@ -158,6 +169,8 @@ class DashboardScreen extends ConsumerWidget {
     return _PopulatedState(
       agents: list,
       hasFreshError: isError,
+      deletingIds: _deletingIds,
+      onDelete: (a) => _confirmDelete(context, a),
       onRefresh: () async {
         ref.invalidate(agentsListProvider);
         // Wait for the new fetch to settle so RefreshIndicator dismisses
@@ -173,7 +186,49 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
+  /// Confirm + execute DELETE /v1/agents/:id. Adds the agent id to
+  /// `_deletingIds` while in flight so the row shows a spinner and is
+  /// non-tappable. Always clears the inflight state in `finally`.
+  /// SnackBar on success (4s) and on failure (8s, longer so the user can
+  /// read the error). On success, invalidate `agentsListProvider` so the
+  /// row disappears once the next fetch lands.
+  Future<void> _confirmDelete(BuildContext ctx, AgentSummary a) async {
+    final result = await ConfirmDialog.show(
+      ctx,
+      title: 'Delete ${a.name}?',
+      body:
+          'This will stop and remove the agent. This cannot be undone.',
+      confirmLabel: 'Delete',
+    );
+    if (result != ConfirmDialogResult.confirm) return;
+    if (!ctx.mounted) return;
+    setState(() => _deletingIds.add(a.id));
+    try {
+      final res = await ref
+          .read(apiClientProvider)
+          .deleteAgent(agentId: a.id);
+      if (!ctx.mounted) return;
+      if (res case Err(:final error)) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 8),
+            content: Text('Delete failed: ${error.message}'),
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(
+          content: Text('Agent deleted'),
+        ),
+      );
+      ref.invalidate(agentsListProvider);
+    } finally {
+      if (mounted) setState(() => _deletingIds.remove(a.id));
+    }
+  }
+
+  Future<void> _confirmSignOut(BuildContext context) async {
     final result = await ConfirmDialog.show(
       context,
       title: 'Sign out of Solvr Labs?',
@@ -225,11 +280,15 @@ class _PopulatedState extends StatelessWidget {
   const _PopulatedState({
     required this.agents,
     required this.hasFreshError,
+    required this.deletingIds,
+    required this.onDelete,
     required this.onRefresh,
   });
 
   final List<AgentSummary> agents;
   final bool hasFreshError;
+  final Set<String> deletingIds;
+  final void Function(AgentSummary) onDelete;
   final Future<void> Function() onRefresh;
 
   @override
@@ -253,7 +312,9 @@ class _PopulatedState extends StatelessWidget {
           final agent = agents[idx];
           return AgentRow(
             agent: agent,
+            isDeleting: deletingIds.contains(agent.id),
             onTap: () => GoRouter.of(ctx).push('/chat/${agent.id}'),
+            onDelete: () => onDelete(agent),
           );
         },
       ),

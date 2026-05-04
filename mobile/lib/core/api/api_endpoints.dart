@@ -15,6 +15,7 @@ abstract final class ApiEndpoints {
 
   static String agentStart(String agentId) => '/v1/agents/$agentId/start';
   static String agentStop(String agentId) => '/v1/agents/$agentId/stop';
+  static String agentDetail(String agentId) => '/v1/agents/$agentId';
   static String agentMessages(String agentId) =>
       '/v1/agents/$agentId/messages';
   static String agentMessagesStream(String agentId) =>
