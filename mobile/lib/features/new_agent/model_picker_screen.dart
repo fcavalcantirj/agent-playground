@@ -36,7 +36,17 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final modelsAsync = ref.watch(modelsProvider);
+    // Resolve the recipe's primary provider so the picker only shows
+    // candidates the recipe can actually deploy with. openclaw routes
+    // Anthropic-direct (runtime.provider=anthropic per recipe yaml) —
+    // showing OpenAI / random OpenRouter models would let the user pick
+    // a combo the recipe will reject. Falls back to 'openrouter' (full
+    // catalog) when no recipe is selected or compat is missing.
+    final recipe = ref.watch(wizardScopeProvider).selectedRecipe;
+    final primaryProvider =
+        recipe?.channelProviderCompat['inapp']?.supported.firstOrNull ??
+            'openrouter';
+    final modelsAsync = ref.watch(recipeModelsProvider(primaryProvider));
     return Scaffold(
       appBar: AppBar(title: const Text('Pick a model')),
       body: Column(

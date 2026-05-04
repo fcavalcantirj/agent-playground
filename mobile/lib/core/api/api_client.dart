@@ -293,12 +293,20 @@ class ApiClient {
   // ---------------------------------------------------------------------------
   // GET /v1/models   (OpenRouter passthrough — accepts both wire shapes)
   // ---------------------------------------------------------------------------
+  /// Fetch the OpenRouter catalog. When [provider] is set, the server
+  /// filters to entries whose id starts with `<provider>/` or
+  /// `~<provider>/` (routing aliases). Used by the wizard's model picker
+  /// to show only candidates a recipe can actually deploy with — e.g.
+  /// `provider: 'anthropic'` for openclaw recipes that route Anthropic
+  /// direct.
   Future<Result<List<OpenRouterModel>>> models({
+    String? provider,
     CancelToken? cancelToken,
   }) async {
     try {
       final res = await _dio.get<dynamic>(
         ApiEndpoints.models,
+        queryParameters: provider == null ? null : {'provider': provider},
         cancelToken: cancelToken,
       );
       final data = res.data;

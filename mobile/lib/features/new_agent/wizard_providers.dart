@@ -16,6 +16,7 @@
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'wizard_providers.g.dart';
@@ -112,3 +113,28 @@ Future<List<OpenRouterModel>> models(Ref ref) async {
     Err(:final error) => throw error,
   };
 }
+
+/// Provider-scoped catalog: same as [modelsProvider] but passes
+/// `?provider=<arg>` to the server so the response is filtered to ids
+/// matching the recipe's primary provider (`anthropic/...`,
+/// `~anthropic/...`, etc. for openclaw; full catalog for openrouter
+/// recipes). Bug fix 2026-05-04 (4-agent confirmation): the wizard's
+/// model picker uses this when `selectedRecipe?.channelProviderCompat
+/// ['inapp']?.supported.first` ≠ 'openrouter' so users only see
+/// candidates the recipe can actually deploy with. `keepAlive: true`
+/// keeps each per-provider catalog cached after the picker closes.
+final recipeModelsProvider = FutureProvider.family<List<OpenRouterModel>, String>(
+  (Ref ref, String provider) async {
+    final api = ref.watch(apiClientProvider);
+    // 'openrouter' is the unfiltered catalog — pass null so the server
+    // hits the byte-passthrough hot path (no JSON re-serialize).
+    final r = await api.models(
+      provider: provider == 'openrouter' ? null : provider,
+    );
+    return switch (r) {
+      Ok<List<OpenRouterModel>>(:final value) => value,
+      // ignore: only_throw_errors
+      Err<List<OpenRouterModel>>(:final error) => throw error,
+    };
+  },
+);
