@@ -98,19 +98,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             onSelected: (value) async {
               if (value == 'signout') {
                 await _confirmSignOut(context);
-              } else if (value == 'signout_all') {
-                await _confirmSignOutEverywhere(context);
               }
+              // Phase 26: 'signout_all' menu entry is hidden on mobile —
+              // sat alongside 'Sign out' in a 2-item popup, the
+              // destructive option felt disproportionate for the casual
+              // dashboard surface. Web Settings → Security carries it.
+              // Re-enable here when a dedicated mobile Settings/Profile
+              // screen lands. Plumbing kept: _confirmSignOutEverywhere
+              // below + AuthService.signOutEverywhere() + ApiClient
+              // .authLogoutAll() are wired and ready.
+              // else if (value == 'signout_all') {
+              //   await _confirmSignOutEverywhere(context);
+              // }
             },
             itemBuilder: (_) => const <PopupMenuEntry<String>>[
               PopupMenuItem<String>(
                 value: 'signout',
                 child: Text('Sign out'),
               ),
-              PopupMenuItem<String>(
-                value: 'signout_all',
-                child: Text('Log out everywhere'),
-              ),
+              // PopupMenuItem<String>(
+              //   value: 'signout_all',
+              //   child: Text('Log out everywhere'),
+              // ),
             ],
           ),
         ],
@@ -394,6 +403,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
   }
 
+  // Phase 26: dashboard popup hides this for now (overkill alongside
+  // single-device "Sign out" in a 2-item menu); re-wired when a
+  // dedicated mobile Settings/Profile screen lands. Linter would flag
+  // this method as unused without the ignore.
+  // ignore: unused_element
   Future<void> _confirmSignOutEverywhere(BuildContext context) async {
     // Phase 26 H2 — destructive: revokes EVERY device's session including
     // this one (CONTEXT D-04). Confirms with destructive styling so the
