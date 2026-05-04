@@ -98,6 +98,18 @@ class Settings(BaseSettings):
         None, validation_alias="AP_OAUTH_GITHUB_REDIRECT_URI"
     )
 
+    # Phase 25 Wave 5 — Mobile GitHub OAuth credentials. Separate App
+    # from the web one because GitHub allows only one callback URL per
+    # OAuth App (web => /v1/auth/github/callback, mobile => solvrlabs://oauth/github).
+    # Backend exchanges the authorization code for an access_token using
+    # these credentials so the secret never lives on the device.
+    oauth_github_mobile_client_id: str | None = Field(
+        None, validation_alias="AP_OAUTH_GITHUB_MOBILE_CLIENT_ID"
+    )
+    oauth_github_mobile_client_secret: str | None = Field(
+        None, validation_alias="AP_OAUTH_GITHUB_MOBILE_CLIENT_SECRET"
+    )
+
     # Phase 23 (D-23): Mobile native-SDK Google sign-in client IDs.
     # Google Cloud Console issues SEPARATE client IDs per platform
     # (Android, iOS) — both are different from oauth_google_client_id

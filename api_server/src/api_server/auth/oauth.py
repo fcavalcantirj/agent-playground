@@ -317,6 +317,74 @@ async def verify_google_id_token(
         raise
 
 
+async def exchange_github_code(
+    code: str,
+    redirect_uri: str,
+    client_id: str,
+    client_secret: str,
+    http_client: "httpx.AsyncClient",
+    code_verifier: str | None = None,
+) -> str:
+    """Exchange a GitHub authorization code for an access_token.
+
+    Mobile (Phase 25 Wave 5) — flutter_appauth's authorize() returns
+    the authorization code (no exchange) so the client_secret never
+    lives on the device. This server-side helper performs the exchange
+    using the mobile-app's GitHub OAuth credentials (separate from the
+    web OAuth App because GitHub allows only one callback URL per app).
+
+    Critical: GitHub's ``/login/oauth/access_token`` defaults to a
+    ``application/x-www-form-urlencoded`` response body. We send
+    ``Accept: application/json`` so the response is JSON and we can
+    parse it without form-decoding. Without this header, AppAuth-iOS
+    fails with NSCocoaErrorDomain code=3840 ("JSON text did not start
+    with array or object") — the very bug that drove this refactor.
+
+    Raises ``ValueError`` on any failure mode (transport error,
+    non-200, missing access_token, GitHub error envelope) without
+    leaking the secret in the message.
+    """
+    if not client_id or not client_secret:
+        raise ValueError("github mobile OAuth credentials not configured")
+    try:
+        form = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }
+        if code_verifier:
+            form["code_verifier"] = code_verifier
+        res = await http_client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            data=form,
+            timeout=10.0,
+        )
+    except Exception as e:  # httpx HTTPError, TLS, DNS
+        raise ValueError(f"github code exchange transport failure: {type(e).__name__}") from e
+    if res.status_code != 200:
+        # Wave 5 debugging: surface GitHub's response body so the failure
+        # category (missing field, wrong endpoint, etc) is visible to the
+        # mobile UI instead of just the status code.
+        body_preview = (res.text or "")[:200]
+        raise ValueError(
+            f"github code exchange returned {res.status_code}: {body_preview}",
+        )
+    body = res.json()
+    if isinstance(body, dict) and body.get("error"):
+        # GitHub returns {error, error_description, error_uri} on auth failure.
+        # Wave 5 debugging: include error_description so the mobile UI can
+        # show the actual reason (e.g. "redirect_uri does not match...").
+        err = body.get("error")
+        desc = body.get("error_description") or ""
+        raise ValueError(f"github code exchange rejected: {err}: {desc}".strip(": "))
+    access_token = body.get("access_token") if isinstance(body, dict) else None
+    if not access_token:
+        raise ValueError("github code exchange returned no access_token")
+    return str(access_token)
+
+
 async def verify_github_access_token(
     access_token: str, http_client: "httpx.AsyncClient"
 ) -> dict:

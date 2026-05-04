@@ -53,6 +53,7 @@ from pydantic import BaseModel, Field
 
 from ..auth.deps import require_user
 from ..auth.oauth import (
+    exchange_github_code,
     get_oauth,
     mint_session,
     upsert_user,
@@ -340,8 +341,24 @@ class MobileGoogleAuthRequest(BaseModel):
 
 
 class MobileGitHubAuthRequest(BaseModel):
-    """Body of POST /v1/auth/github/mobile."""
-    access_token: str = Field(..., min_length=1)
+    """Body of POST /v1/auth/github/mobile.
+
+    Phase 25 Wave 5: backend exchanges the authorization ``code`` (not
+    a pre-exchanged ``access_token``) so the GitHub OAuth client_secret
+    never lives on the device. flutter_appauth's authorize() returns
+    the code; mobile POSTs it here. The exchange step uses
+    ``oauth_github_mobile_client_id`` / ``oauth_github_mobile_client_secret``
+    from server config — separate OAuth App from the web flow because
+    GitHub allows only one callback URL per app (web uses
+    ``http://localhost:8000/v1/auth/github/callback``; mobile uses
+    ``solvrlabs://oauth/github``).
+    """
+    code: str = Field(..., min_length=1)
+    redirect_uri: str = Field(..., min_length=1)
+    # PKCE: flutter_appauth.authorize() always generates a code_challenge,
+    # so the exchange step MUST include the matching verifier or GitHub
+    # returns invalid_grant.
+    code_verifier: str | None = None
 
 
 class MobileSessionResponse(BaseModel):
@@ -451,17 +468,36 @@ async def github_mobile(request: Request, body: MobileGitHubAuthRequest):
     already wired in lifespan and reusing it avoids adding a second
     httpx client just for this one path.
 
-    Failure modes (all map to 401, param=``access_token``):
+    Failure modes (all map to 401, param=``code``):
+      * Mobile GitHub OAuth credentials not configured
+      * GitHub code exchange returned an error (bad_verification_code, etc)
       * /user returns non-200 (revoked / forged token)
       * /user response missing the ``id`` field
       * No verified primary email recoverable from /user/emails
       * httpx HTTPError (network / TLS / DNS)
     """
+    settings = request.app.state.settings
     http_client = request.app.state.bot_http_client
+
+    # Phase 25 Wave 5: backend-side code exchange — mobile sends the
+    # authorization code (not a pre-exchanged access_token) so the
+    # client_secret never lives on the device. Also fixes the
+    # AppAuth-iOS / GitHub form-encoded-vs-JSON mismatch.
+    try:
+        access_token = await exchange_github_code(
+            code=body.code,
+            redirect_uri=body.redirect_uri,
+            client_id=settings.oauth_github_mobile_client_id or "",
+            client_secret=settings.oauth_github_mobile_client_secret or "",
+            http_client=http_client,
+            code_verifier=body.code_verifier,
+        )
+    except ValueError as e:
+        return _err(401, ErrorCode.UNAUTHORIZED, str(e), param="code")
 
     try:
         profile = await verify_github_access_token(
-            body.access_token, http_client,
+            access_token, http_client,
         )
     except ValueError as e:
         return _err(401, ErrorCode.UNAUTHORIZED, str(e), param="access_token")

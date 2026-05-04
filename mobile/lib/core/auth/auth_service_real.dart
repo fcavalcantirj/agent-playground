@@ -104,8 +104,13 @@ class AuthServiceReal implements AuthService {
   @override
   Future<Result<SessionUser>> signInWithGithub() async {
     try {
-      final result = await _appAuth.authorizeAndExchangeCode(
-        AuthorizationTokenRequest(
+      // Phase 25 Wave 5 (production-safe): client_secret-free flow.
+      // authorize() returns the authorization code only; backend
+      // exchanges with its stored secret (so it never lives on device).
+      // This also sidesteps AppAuth-iOS's JSON-only token-response
+      // parser hitting GitHub's default x-www-form-urlencoded body.
+      final result = await _appAuth.authorize(
+        AuthorizationRequest(
           githubClientId ?? '',
           githubRedirectUrl,
           serviceConfiguration: AuthorizationServiceConfiguration(
@@ -115,16 +120,24 @@ class AuthServiceReal implements AuthService {
           scopes: const ['read:user', 'user:email'],
         ),
       );
-      final accessToken = result.accessToken;
-      if (accessToken == null) {
+      final code = result.authorizationCode;
+      if (code == null) {
         return const Result.err(
           ApiError(
             code: ErrorCode.unknownServer,
-            message: 'no access_token from GitHub',
+            message: 'no authorization code from GitHub',
           ),
         );
       }
-      final res = await apiClient.authGithubMobile(accessToken: accessToken);
+      // flutter_appauth.authorize() generates a PKCE code_verifier and
+      // sends its challenge to the authorize endpoint; the exchange
+      // step at /login/oauth/access_token MUST include the same
+      // verifier or GitHub returns invalid_grant.
+      final res = await apiClient.authGithubMobile(
+        code: code,
+        redirectUri: githubRedirectUrl,
+        codeVerifier: result.codeVerifier,
+      );
       if (res case Err(:final error)) {
         return Result<SessionUser>.err(error);
       }

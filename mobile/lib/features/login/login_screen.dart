@@ -113,7 +113,7 @@ class LoginScreen extends ConsumerWidget {
         ref.read(loginSuccessProvider.notifier).state = value;
       case Err(:final error):
         ref.read(loginErrorProvider.notifier).state =
-            "Couldn't sign in. ${_friendly(error)}".trim();
+            "Couldn't sign in. ${_friendly(error)}\n${error.message}".trim();
     }
   }
 
