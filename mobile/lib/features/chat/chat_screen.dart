@@ -34,6 +34,8 @@ import 'package:agent_playground/shared/restart_banner.dart';
 import 'package:agent_playground/shared/retry_banner.dart';
 import 'package:agent_playground/shared/status_dot.dart';
 import 'package:agent_playground/shared/typing_dots.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -52,6 +54,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final ScrollController _scrollCtl = ScrollController();
   bool _userScrolledUp = false;
 
+  // Restart inflight state — shows spinner + elapsed timer in the
+  // RestartBanner instead of the click-spammable "Restart" button.
+  // /v1/agents/:id/start can take 30-90s on a cold cache; without this
+  // feedback the user thinks nothing happened and rapidly fires more
+  // /start calls that all queue behind the tag_lock and 409 (debug
+  // session 2026-05-04 found 12 click-spammed /start attempts in 3min,
+  // 11 returned 409 Conflict).
+  bool _restartInflight = false;
+  Stopwatch? _restartElapsed;
+  Timer? _restartTick;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +75,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void dispose() {
     _scrollCtl.removeListener(_onScroll);
     _scrollCtl.dispose();
+    _restartTick?.cancel();
     // Phase 25 Wave 5: when the user pops back from chat to dashboard,
     // refresh the agents list so newly-deployed agents and updated
     // last_activity timestamps land without requiring a pull-to-refresh.
@@ -143,6 +157,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (isStopped)
             RestartBanner(
               onRestart: () => _restartAgent(context),
+              inflight: _restartInflight,
+              elapsed: _restartElapsed,
             ),
           ChatInputBar(
             enabled: !isStopped,
@@ -173,6 +189,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _restartAgent(BuildContext context) async {
+    // Re-entrancy guard — `/v1/agents/:id/start` can take 30-90s on a cold
+    // cache (debug session 2026-05-04 measured 53s for poolprobe4). Without
+    // this, click-spamming the Restart button fires N parallel /start
+    // requests that all queue behind the per-tag asyncio.Lock; the first
+    // wins, the rest 409 Conflict. Mirror deploy_step.dart's CancelToken
+    // pattern in spirit: one-in-flight + visible elapsed timer.
+    if (_restartInflight) return;
+
     // D-49 — multi-channel restart needs the channel set; the extended
     // /v1/agents response is not yet wired here, so mobile defaults to
     // inapp. Surfaced as a planner-deferred TODO in CONTEXT.
@@ -212,6 +236,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
+            duration: Duration(seconds: 8),
             content: Text(
               'No BYOK key stored for this agent — re-deploy via the wizard '
               'to enter your API key.',
@@ -221,13 +246,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
       return;
     }
-    final res = await api.start(
-      agentId: widget.agentInstanceId,
-      byokOpenRouterKey: byokKey,
-    );
+
+    // Inflight state — disables the button + shows spinner + elapsed
+    // counter in the RestartBanner. Tick every 1s so the user sees the
+    // counter advance and knows the request is alive.
+    setState(() {
+      _restartInflight = true;
+      _restartElapsed = Stopwatch()..start();
+    });
+    _restartTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+
+    Result<StartResponse>? res;
+    try {
+      res = await api.start(
+        agentId: widget.agentInstanceId,
+        byokOpenRouterKey: byokKey,
+      );
+    } catch (e) {
+      // Defensive — api.start wraps DioException in Result.err but a
+      // non-dio throw (parse error, etc.) would otherwise vanish into
+      // an unhandled Future.
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 8),
+            content: Text('Restart failed: $e'),
+          ),
+        );
+      }
+    } finally {
+      _restartTick?.cancel();
+      _restartTick = null;
+      if (mounted) {
+        setState(() {
+          _restartInflight = false;
+          _restartElapsed = null;
+        });
+      }
+    }
     if (res is Err<StartResponse> && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restart failed: ${res.error.message}')),
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text('Restart failed: ${res.error.message}'),
+        ),
+      );
+    } else if (res is Ok<StartResponse> && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 4),
+          content: Text('Agent restarted'),
+        ),
       );
     }
     ref.invalidate(agentsListProvider);
