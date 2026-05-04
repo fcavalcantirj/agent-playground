@@ -1,5 +1,26 @@
 # Agent Recipe Backlog
 
+## Known recipe-runtime drift — nullclaw `/webhook` + `/a2a` auth gate (2026-05-03, Phase 25 Wave 5)
+
+**Status:** BLOCKED on upstream. Recipe runs `verdict: PASS` smoke (single-shot CLI exit-zero), but persistent-mode HTTP delivery (`POST /v1/agents/:id/messages`) fails with `bot_5xx:401` from inside the container.
+
+**Root cause (proven, not theorized):** Current nullclaw upstream gates the gateway HTTP endpoints (`/webhook`, `/a2a`) behind a pairing flow whose code is **never printed or written to a file an automated client can read**. The "hidden for security" pairing code is generated at boot, kept inside encrypted state in `/nullclaw-data/.secret_key`, and only exposed via human-in-the-loop CLI prompt or QR scan. The published documented bypasses do not work:
+
+- `gateway.require_pairing: false` → disables `/pair` endpoint but keeps `/webhook` + `/a2a` returning 401
+- `NULLCLAW_GATEWAY_TOKEN` / `NULLCLAW_WEB_TOKEN` env vars → only feed the **web channel** websocket on port 32123, not the gateway HTTP listener on 3000
+- `host: 127.0.0.1` + a `socat` loopback bridge → auth check inspects the actual peer address, sees the bridge IP, still 401
+- `--verbose` flag → does not surface the pairing code
+
+**Three viable resolutions (Phase 25 scope is mobile UI, so deferred):**
+
+1. **Pin `source.ref` to a SHA before the auth gate was added** — needs upstream history bisect.
+2. **Refactor `api_server` dispatcher to add a WebSocket transport** for the nullclaw `web` channel; that channel honors `message_auth_mode: token` + `NULLCLAW_GATEWAY_TOKEN` env. ~moderate work.
+3. **File upstream issue** asking for `gateway.allow_anonymous: true` (or equivalent) for trusted-network deployments, or a `NULLCLAW_PAIR_CODE` env var to make the code programmatic.
+
+Until one of those lands, **only `zeroclaw` deploys end-to-end via the mobile flow.** The other 4 `ref: main` recipes (hermes, nanobot, openclaw, picoclaw) are subject to the same drift risk; they have not been re-verified against current upstream.
+
+---
+
 > **✅ v0.1 canonical as of 2026-04-15 — see [`../docs/RECIPE-SCHEMA.md`](../docs/RECIPE-SCHEMA.md) and [`README.md`](./README.md).**
 >
 > The format-v0.1 consolidation phase shipped: schema spec, runner upgrades (new `pass_if` verbs, `--json`, `--all-cells` sweep with drift detection, disk guard), retroactive re-validation of all 5 committed recipes, and a user-facing README. All 5 existing recipes returned `verdict: PASS` (or documented FAIL) under `--all-cells --json` with zero drift — openclaw required a minimal probe retrofit (forcing prompt vs. the blank-slate "who are you?").
