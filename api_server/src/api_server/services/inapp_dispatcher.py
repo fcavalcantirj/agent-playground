@@ -145,16 +145,22 @@ async def _dispatch_http_localhost(
     url = f"http://{container_ip}:{inapp.port}{inapp.endpoint}"
     headers = {"Content-Type": "application/json"}
 
+    # Phase 25 Wave 5: hoist the auth_mode='bearer' Authorization header
+    # OUT of the openai_compat-only branch so a2a_jsonrpc + zeroclaw_native
+    # contracts also receive it. Per nullclaw upstream HEAD ≥ 2026-05, the
+    # gateway's /a2a endpoint enforces bearer auth even with require_pairing
+    # =false (drift from 2026-04-30 verified_cell). The recipe pre-seeds
+    # gateway.paired_tokens=[INAPP_AUTH_TOKEN]; this header completes the
+    # pair so /a2a returns 200.
+    if inapp.auth_mode == "bearer" and row["inapp_auth_token"]:
+        headers["Authorization"] = f"Bearer {row['inapp_auth_token']}"
+
     match inapp.contract:
         case "openai_compat":
             body: dict[str, Any] = {
                 "model": inapp.contract_model_name or "agent",
                 "messages": [{"role": "user", "content": row["content"]}],
             }
-            # auth_mode='bearer' uses agent_containers.inapp_auth_token
-            # (already on the row from Plan 04's JOIN).
-            if inapp.auth_mode == "bearer" and row["inapp_auth_token"]:
-                headers["Authorization"] = f"Bearer {row['inapp_auth_token']}"
             resp = await http_client.post(
                 url, json=body, headers=headers, timeout=timeout_seconds,
             )
