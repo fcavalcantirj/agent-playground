@@ -76,6 +76,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _scrollCtl.addListener(_onScroll);
+    // Bug fix 2026-05-04: invalidate agentsListProvider on chat mount
+    // so we always render against the freshest agent.status, not whatever
+    // the dashboard cached before /v1/agents/:id/start completed. After
+    // a successful deploy the wizard navigates to /chat/<id> while
+    // /v1/agents may still report status='starting' from a fetch
+    // captured during the wizard. Without this invalidate the chat
+    // shows the RestartBanner ("Agent stopped") for the running agent
+    // until the user pulls-to-refresh — confusing UX. The dispose-side
+    // invalidate (added Phase 25 Wave 5) handles the dashboard direction
+    // but mounted-chat-with-stale-data needed its own refresh.
+    // ignore: discarded_futures
+    Future<void>.microtask(() {
+      if (mounted) ref.invalidate(agentsListProvider);
+    });
   }
 
   @override
