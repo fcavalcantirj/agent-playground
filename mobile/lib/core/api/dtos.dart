@@ -216,6 +216,7 @@ class Recipe {
     required this.channelsSupported,
     this.description,
     this.emoji,
+    this.verifiedModels = const <String>[],
   });
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -226,6 +227,10 @@ class Recipe {
                 .toList(growable: false),
         description: json['description'] as String?,
         emoji: json['emoji'] as String?,
+        verifiedModels:
+            ((json['verified_models'] as List<dynamic>?) ?? const <dynamic>[])
+                .cast<String>()
+                .toList(growable: false),
       );
 
   final String name;
@@ -238,6 +243,17 @@ class Recipe {
   /// apart at a glance. Null when the recipe declares no emoji —
   /// callers fall back to text-only rendering.
   final String? emoji;
+
+  /// Model ids that have a `verdict: PASS` cell in the recipe's
+  /// `smoke.verified_cells[]` block, in declared order, deduped.
+  /// Empty for recipes that haven't been smoke-verified against any
+  /// model yet. The wizard's model picker pins these to the top with
+  /// a `✓ verified` chip so users land on a known-working combo.
+  /// Source: api_server's recipes_loader projects this onto the
+  /// `RecipeSummary` (list endpoint) and the raw recipe dict
+  /// passthrough on `GET /v1/recipes/{name}` carries the underlying
+  /// `smoke.verified_cells` for `RecipeDetail` to project locally.
+  final List<String> verifiedModels;
 }
 
 /// Per-channel user-input descriptor from `GET /v1/recipes/{name}` —
@@ -366,6 +382,7 @@ class RecipeDetail extends Recipe {
     required this.channelProviderCompat,
     super.description,
     super.emoji,
+    super.verifiedModels,
   });
 
   factory RecipeDetail.fromJson(Map<String, dynamic> json) {
@@ -391,12 +408,35 @@ class RecipeDetail extends Recipe {
       }
     });
 
+    // Project verified models from `smoke.verified_cells[]`. Mirrors
+    // api_server/src/api_server/services/recipes_loader.py:104-113 — keep
+    // entries where verdict == 'PASS', dedupe by model id, preserve
+    // declared order. The list endpoint exposes this on RecipeSummary.
+    // verified_models; the detail endpoint is a raw-dict passthrough so
+    // we project locally here. Defensive: tolerates missing/malformed
+    // smoke block.
+    final verified = <String>[];
+    final cells = (r['smoke'] is Map<String, dynamic>)
+        ? (r['smoke'] as Map<String, dynamic>)['verified_cells']
+        : null;
+    if (cells is List<dynamic>) {
+      for (final cell in cells) {
+        if (cell is! Map<String, dynamic>) continue;
+        if (cell['verdict'] != 'PASS') continue;
+        final m = cell['model'];
+        if (m is String && m.isNotEmpty && !verified.contains(m)) {
+          verified.add(m);
+        }
+      }
+    }
+
     return RecipeDetail(
       name: r['name'] as String,
       // Mirror recipes_loader.py:124 — channels_supported == channels.keys.
       channelsSupported: channels.keys.toList(growable: false),
       description: r['description'] as String?,
       emoji: r['emoji'] as String?,
+      verifiedModels: List.unmodifiable(verified),
       channels: channels,
       channelProviderCompat: compat,
     );

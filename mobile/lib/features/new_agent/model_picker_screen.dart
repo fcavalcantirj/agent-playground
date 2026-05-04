@@ -75,9 +75,22 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
   }
 
   Widget _buildList(BuildContext context, List<OpenRouterModel> list) {
+    // Pin the recipe's smoke-verified models to the top so the user
+    // lands on a known-working combo first. Reorder happens BEFORE
+    // the search filter so verified rows stay pinned even when the
+    // user types. Empty `verifiedModels` (recipe never smoke-tested
+    // any model) → no reorder, picker is identical to before.
+    final verified = ref
+            .watch(wizardScopeProvider)
+            .selectedRecipe
+            ?.verifiedModels ??
+        const <String>[];
+    final reordered = _reorder(list, verified);
+    final verifiedSet = verified.toSet();
+
     final filtered = _query.isEmpty
-        ? list
-        : list
+        ? reordered
+        : reordered
             .where(
               (m) =>
                   m.id.toLowerCase().contains(_query) ||
@@ -102,17 +115,46 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
       itemCount: filtered.length,
       itemBuilder: (ctx, i) => _ModelRow(
         model: filtered[i],
+        verified: verifiedSet.contains(filtered[i].id),
         onTap: () => Navigator.of(context).pop(filtered[i]),
       ),
     );
   }
+
+  /// Pin verified ids in declared order at the top, preserve server
+  /// order for the rest. Verified ids not present in `all` (deprecated
+  /// or removed from /v1/models) are silently skipped — no placeholder
+  /// row, no error toast.
+  static List<OpenRouterModel> _reorder(
+    List<OpenRouterModel> all,
+    List<String> verified,
+  ) {
+    if (verified.isEmpty) return all;
+    final byId = {for (final m in all) m.id: m};
+    final pinned = <OpenRouterModel>[
+      for (final id in verified)
+        if (byId.containsKey(id)) byId[id]!,
+    ];
+    final pinnedIds = pinned.map((m) => m.id).toSet();
+    final rest = all.where((m) => !pinnedIds.contains(m.id));
+    return [...pinned, ...rest];
+  }
 }
 
 class _ModelRow extends StatelessWidget {
-  const _ModelRow({required this.model, required this.onTap});
+  const _ModelRow({
+    required this.model,
+    required this.onTap,
+    this.verified = false,
+  });
 
   final OpenRouterModel model;
   final VoidCallback onTap;
+
+  /// True when this model's id appears in the selected recipe's
+  /// `verifiedModels` list. Surfaces a small `✓ verified` chip on
+  /// the right edge of the row.
+  final bool verified;
 
   @override
   Widget build(BuildContext context) {
@@ -120,20 +162,57 @@ class _ModelRow extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              model.id,
-              style: SolvrTextStyles.mono(fontSize: 12),
-              overflow: TextOverflow.ellipsis,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    model.id,
+                    style: SolvrTextStyles.mono(fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (model.name != model.id) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      model.name,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
             ),
-            if (model.name != model.id) ...[
-              const SizedBox(height: 2),
-              Text(
-                model.name,
-                style: Theme.of(context).textTheme.bodyMedium,
-                overflow: TextOverflow.ellipsis,
+            if (verified) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: SolvrColors.muted,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.check,
+                      size: 12,
+                      color: SolvrColors.foreground,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'verified',
+                      style: SolvrTextStyles.mono(fontSize: 10).copyWith(
+                        color: SolvrColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
