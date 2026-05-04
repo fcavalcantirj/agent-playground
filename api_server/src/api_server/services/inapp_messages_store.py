@@ -134,9 +134,11 @@ async def fetch_pending_for_dispatch(
         SELECT m.id, m.agent_id, m.user_id, m.content, m.attempts,
                c.id AS container_row_id, c.container_id, c.container_status,
                c.ready_at, c.stopped_at, c.recipe_name, c.channel_type,
-               c.inapp_auth_token
+               c.inapp_auth_token,
+               i.model AS agent_model
         FROM inapp_messages m
         JOIN agent_containers c ON c.agent_instance_id = m.agent_id
+        JOIN agent_instances i ON i.id = m.agent_id
         WHERE m.status = 'pending'
         ORDER BY m.created_at ASC
         FOR UPDATE OF m SKIP LOCKED

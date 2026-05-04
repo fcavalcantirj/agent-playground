@@ -402,11 +402,16 @@ channels:
     port: 8900                          # nanobot serve bake-time default
     endpoint: /v1/chat/completions      # OpenAI-compat
     contract: openai_compat
-    contract_model_name: "agent"        # nanobot accepts the configured model id;
-                                         # "agent" is the safe placeholder string
-                                         # the dispatcher sends per D-22 dumb-pipe
-                                         # (the bot consults its config.json for
-                                         # the actual upstream model resolution).
+    # Bug fix 2026-05-04 (5-agent root-cause confirmation + empirical
+    # curl probe): nanobot's HTTP server enforces literal model
+    # matching against the configured-at-boot model id. Sending the
+    # placeholder "agent" → 400 "Only configured model 'X' is
+    # available". The "$AGENT_MODEL" sentinel tells the dispatcher to
+    # substitute agent_instances.model (the same string nanobot has
+    # baked into its config.json from the persistent_argv_override
+    # below). Empirically verified: with the agent's actual model id
+    # the bot returns 200 + valid OpenAI envelope.
+    contract_model_name: "$AGENT_MODEL"
     auth_header: "none"                 # A5 = no_auth (spike line 95); v1 acceptable
                                          # risk = loopback-only inside container
                                          # network namespace + Docker bridge boundary.

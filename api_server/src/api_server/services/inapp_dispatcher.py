@@ -157,8 +157,19 @@ async def _dispatch_http_localhost(
 
     match inapp.contract:
         case "openai_compat":
+            # Resolve the model field. Most recipes pin a fixed alias
+            # (hermes='hermes-agent', openclaw='openclaw') because the
+            # bot accepts that alias internally. Some bots (nanobot)
+            # enforce literal match against the model the agent was
+            # deployed with — for those, the recipe declares the
+            # sentinel "$AGENT_MODEL" and the dispatcher substitutes
+            # the agent_instances.model value joined into the row by
+            # inapp_messages_store.fetch_pending_for_dispatch.
+            model_name = inapp.contract_model_name or "agent"
+            if model_name == "$AGENT_MODEL":
+                model_name = row["agent_model"]
             body: dict[str, Any] = {
-                "model": inapp.contract_model_name or "agent",
+                "model": model_name,
                 "messages": [{"role": "user", "content": row["content"]}],
             }
             resp = await http_client.post(
