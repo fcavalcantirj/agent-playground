@@ -35,4 +35,7 @@ abstract final class ApiEndpoints {
   static const String usersMe = '/v1/users/me';
   static const String authGoogleMobile = '/v1/auth/google/mobile';
   static const String authGithubMobile = '/v1/auth/github/mobile';
+  /// Phase 26 H2: revokes EVERY sessions row for the calling user
+  /// (including this device's). Returns ``{revoked: <count>}``.
+  static const String authLogoutAll = '/v1/auth/logout-all';
 }

@@ -45,7 +45,10 @@ class AuthInterceptor extends Interceptor {
   ) async {
     if (err.response?.statusCode == 401 && _isSessionAuthFailure(err)) {
       await _storage.clearSessionId();
-      _authEvents.emit();
+      // Phase 26: forward the SESSION_REVOKED reason (if present) so the
+      // login screen can render the "session ended elsewhere" banner
+      // instead of the generic "Signed out" copy.
+      _authEvents.emit(reason: _extractRevocationReason(err));
     }
     handler.next(err);
   }
@@ -74,5 +77,18 @@ class AuthInterceptor extends Interceptor {
     if (error is! Map<String, dynamic>) return true;
     final param = error['param'] as String?;
     return param != 'Authorization';
+  }
+
+  /// Phase 26: extract the revocation reason from the response body so the
+  /// login screen can branch its banner copy. Returns ``'session_revoked'``
+  /// when the api_server returned ``error.code == 'SESSION_REVOKED'``;
+  /// ``null`` for any other 401 shape (generic UNAUTHORIZED / malformed
+  /// body / no body at all).
+  String? _extractRevocationReason(DioException err) {
+    final data = err.response?.data;
+    if (data is! Map<String, dynamic>) return null;
+    final error = data['error'];
+    if (error is! Map<String, dynamic>) return null;
+    return error['code'] == 'SESSION_REVOKED' ? 'session_revoked' : null;
   }
 }

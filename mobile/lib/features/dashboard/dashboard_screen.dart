@@ -98,12 +98,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             onSelected: (value) async {
               if (value == 'signout') {
                 await _confirmSignOut(context);
+              } else if (value == 'signout_all') {
+                await _confirmSignOutEverywhere(context);
               }
             },
             itemBuilder: (_) => const <PopupMenuEntry<String>>[
               PopupMenuItem<String>(
                 value: 'signout',
                 child: Text('Sign out'),
+              ),
+              PopupMenuItem<String>(
+                value: 'signout_all',
+                child: Text('Log out everywhere'),
               ),
             ],
           ),
@@ -382,9 +388,38 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     await ref.read(authServiceProvider).signOut();
     // Login screen banner is reset on every sign-out — clean slate.
     ref.read(showSignedOutBannerProvider.notifier).state = false;
+    ref.read(sessionRevocationReasonProvider.notifier).state = null;
     if (context.mounted) {
       context.go('/login');
     }
+  }
+
+  Future<void> _confirmSignOutEverywhere(BuildContext context) async {
+    // Phase 26 H2 — destructive: revokes EVERY device's session including
+    // this one (CONTEXT D-04). Confirms with destructive styling so the
+    // user understands they'll have to re-login here too.
+    final result = await ConfirmDialog.show(
+      context,
+      title: 'Log out everywhere?',
+      body:
+          'You will be signed out on every device, including this one. '
+          'Running agents keep running.',
+      confirmLabel: 'Log out everywhere',
+    );
+    if (result != ConfirmDialogResult.confirm) return;
+    final res = await ref.read(authServiceProvider).signOutEverywhere();
+    if (!context.mounted) return;
+    // Reset login-screen banners — user did this themselves, no
+    // "session ended elsewhere" banner on the destination.
+    ref.read(showSignedOutBannerProvider.notifier).state = false;
+    ref.read(sessionRevocationReasonProvider.notifier).state = null;
+    if (res case Err(:final error)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't log out everywhere: ${error.message}")),
+      );
+      return;
+    }
+    context.go('/login');
   }
 }
 

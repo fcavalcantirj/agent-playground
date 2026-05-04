@@ -28,6 +28,7 @@ class LoginScreen extends ConsumerWidget {
     final pending = ref.watch(loginPendingProvider);
     final error = ref.watch(loginErrorProvider);
     final showBanner = ref.watch(showSignedOutBannerProvider);
+    final revocationReason = ref.watch(sessionRevocationReasonProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -48,10 +49,17 @@ class LoginScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 48),
               if (showBanner) ...[
-                const Text(
-                  'Signed out · Sign in to continue',
+                Text(
+                  // Phase 26: branch on the revocation reason carried via
+                  // the AuthRequired event. 'session_revoked' = a logout-all
+                  // from another device or admin revoke; everything else
+                  // (cookie expired / never signed in / self-logout) gets
+                  // the existing generic copy.
+                  revocationReason == 'session_revoked'
+                      ? 'Your session was ended on another device. Please sign in again.'
+                      : 'Signed out · Sign in to continue',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 12,
                     color: SolvrColors.mutedForeground,
                   ),
