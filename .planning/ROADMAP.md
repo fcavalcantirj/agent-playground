@@ -517,3 +517,23 @@ Plans:
 **UI hint:** yes
 
 *Milestone v0.3 (Mobile MVP / Solvr Labs) opened: 2026-05-01 — 3 phases (23, 24, 25); coverage 16/16 v0.3 requirements; numbering continues from Phase 22c.3.1.*
+
+### Phase 26: Logout-everywhere + session-invalidation pub/sub (H2 — auth hardening)
+
+**Goal:** Today `POST /v1/auth/logout` deletes one sessions row — a user logged in on three devices stays signed in on the other two after clicking "logout". With billing on the way, a stolen device cookie can drain a balance until manually noticed. This phase adds (1) `POST /v1/auth/logout-all` that revokes every session for the calling user, (2) a Redis pub/sub channel that broadcasts session-invalidations so multi-replica api_server instances drop their resolved-user cache immediately, and (3) a "your session was ended elsewhere" UX hook so the mobile app + web frontend re-route to login on the next request. Closes H2 from `memory/project_solidity_audit_2026_05_04.md`.
+
+*Note:* H1 (Google OAuth refresh tokens) was retired during recon — Phase 22c AMD-02 was correct, our session is OUR cookie not Google's access token, and we never call Google APIs post-signin. The original audit conflated those concerns.
+
+**Depends on:** Phase 22c (OAuth substrate), Phase 22c.3 (Redis pub/sub already wired for inapp outbox — same infra reused).
+**Requirements:** new — AUTH-02 "A user can revoke all of their sessions across devices in one call; subsequent requests on those devices return 401 within ≤ 1s of the revocation".
+**Success Criteria** (what must be TRUE):
+  1. `POST /v1/auth/logout-all` (authenticated) revokes all sessions for the calling user_id atomically: every existing sessions row gets `revoked_at = NOW()`, the `ap_session` cookie is cleared on the responding device, and a `session.invalidated` event is published on Redis with the user_id payload.
+  2. A second device for the same user, mid-poll on `GET /v1/users/me`, gets 401 within ≤ 1s of the logout-all (multi-replica safety: SessionMiddleware subscribes to the Redis channel and invalidates its in-process cache; not just cookie expiry on next request).
+  3. Mobile clients receive the same 401 → existing AuthInterceptor's `AuthRequired` event fires → user lands on login screen with a "session ended elsewhere" SnackBar.
+  4. Web clients hit a 401 on the next protected call → frontend routes to /login with the same banner.
+  5. Concurrent logout-all calls are idempotent (two device taps within ms produce the same end state, no race conditions on `sessions.revoked_at`).
+  6. Audit trail: a single `auth_event` row records the logout-all with device count + IP, queryable for incident response.
+**Plans:** TBD
+Plans:
+- [ ] (to be planned)
+**UI hint:** small (logout-all button on settings + "session ended elsewhere" SnackBar)
