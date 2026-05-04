@@ -13,12 +13,18 @@ test:  ## Phase 24 D-22 — unit + widget tests (NOT the spike).
 ios:  ## Phase 24 D-22 — run on iOS Simulator.  e.g. make ios DEVICE=<id> BASE_URL=http://localhost:8000
 	fvm flutter run \
 	  $(if $(DEVICE),-d $(DEVICE),) \
-	  --dart-define BASE_URL=$(BASE_URL)
+	  --dart-define BASE_URL=$(BASE_URL) \
+	  --dart-define GOOGLE_IOS_CLIENT_ID=$(GOOGLE_IOS_CLIENT_ID) \
+	  --dart-define GOOGLE_SERVER_CLIENT_ID=$(AP_OAUTH_GOOGLE_CLIENT_ID) \
+	  --dart-define GITHUB_CLIENT_ID=$(AP_OAUTH_GITHUB_MOBILE_CLIENT_ID)
 
 android:  ## Phase 24 D-22 — run on Android Emulator.  e.g. make android BASE_URL=http://10.0.2.2:8000
 	fvm flutter run \
 	  $(if $(DEVICE),-d $(DEVICE),) \
-	  --dart-define BASE_URL=$(BASE_URL)
+	  --dart-define BASE_URL=$(BASE_URL) \
+	  --dart-define GOOGLE_IOS_CLIENT_ID=$(GOOGLE_IOS_CLIENT_ID) \
+	  --dart-define GOOGLE_SERVER_CLIENT_ID=$(AP_OAUTH_GOOGLE_CLIENT_ID) \
+	  --dart-define GITHUB_CLIENT_ID=$(AP_OAUTH_GITHUB_MOBILE_CLIENT_ID)
 
 spike:  ## Phase 24 D-50 — 9-step roundtrip integration_test. Requires BASE_URL, SESSION_ID, OPENROUTER_KEY (D-49/D-51).
 	@test -n "$$BASE_URL" || (echo "ERROR: BASE_URL not set. Per-target values: iOS Sim=http://localhost:8000  Android Emu=http://10.0.2.2:8000  device=http://<lan-ip>:8000  ngrok=https://<id>.ngrok-free.app" && exit 1)

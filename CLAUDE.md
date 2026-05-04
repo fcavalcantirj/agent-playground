@@ -6,6 +6,32 @@
 4. **Root cause first, never fix-to-pass.** Investigate before removing code. See `memory/feedback_root_cause_first.md`.
 5. **Test everything. Probe gray areas empirically BEFORE planning.** No PLAN may assume "pattern X in another module will work the same here" — every non-trivial mechanism (new file format, new subprocess lifecycle, new encryption path, new env-var injection, new health check, new container flag, new regex, new HTTP contract, new DB constraint) must be spiked against real infra and the spike result captured as evidence BEFORE the planner consumes it. If the spike fails or surfaces a gray area not considered, the plan goes back. Risk budget: zero untested mechanisms in a sealed PLAN. Rule-1 extended to planning: the plan's own assumptions hit real infra too. See `memory/feedback_test_everything_before_planning.md`.
 
+# 🔌 Local dev — running both web + mobile against the same api_server
+
+There are FOUR OAuth paths (web Google, web GitHub, mobile Google, mobile GitHub). They use FOUR distinct OAuth clients (different IDs and, in GitHub's case, different secrets) because GitHub allows only one callback URL per OAuth App and Google iOS/web are different audiences. **They do not conflict** — `.env` must carry all four, plus `AP_OAUTH_STATE_SECRET` and the two web `*_REDIRECT_URI`s. Required vars (canonical names, never rename):
+
+```
+AP_OAUTH_GOOGLE_CLIENT_ID          # web Google client id
+AP_OAUTH_GOOGLE_CLIENT_SECRET      # web Google client secret
+AP_OAUTH_GOOGLE_REDIRECT_URI       # http://localhost:8000/v1/auth/google/callback
+AP_OAUTH_GOOGLE_MOBILE_CLIENT_IDS  # CSV — iOS client + web client (web is canonical serverClientId)
+AP_OAUTH_GITHUB_CLIENT_ID          # web GitHub client id
+AP_OAUTH_GITHUB_CLIENT_SECRET      # web GitHub client secret
+AP_OAUTH_GITHUB_REDIRECT_URI       # http://localhost:8000/v1/auth/github/callback
+AP_OAUTH_GITHUB_MOBILE_CLIENT_ID   # mobile GitHub client (separate App, callback solvrlabs://oauth/github)
+AP_OAUTH_GITHUB_MOBILE_CLIENT_SECRET
+AP_OAUTH_STATE_SECRET              # web state-cookie HMAC (CSRF defense on /authorize -> /callback)
+GOOGLE_IOS_CLIENT_ID               # passed to the mobile app as --dart-define
+```
+
+If you see api_server log lines like `OAuth config oauth_X missing in dev; using placeholder`, the env is incomplete and **all four** auth paths break (web with redirect-mismatch / state-failure, mobile with -3 cancelled errors). The deploy/.env.prod is the canonical source of these values; never rename or "consolidate" them.
+
+**Mobile boot:** the mobile app reads `BASE_URL`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_SERVER_CLIENT_ID`, `GITHUB_CLIENT_ID` via `String.fromEnvironment(...)` (compile-time `--dart-define`). `mobile/Makefile`'s `ios` and `android` targets pass all four. **Source `.env` before invoking `make ios`** so the Makefile substitutes them: `set -a; source .env; set +a; cd mobile && make ios DEVICE=<id> BASE_URL=http://localhost:8000`. Skipping any of the three mobile dart-defines makes mobile auth fail in flutter_appauth's iOS WebAuthenticationSession with the cryptic `code: -3 user cancelled` error — the actual cause is `client_id=""` in the authorize URL.
+
+**Native uvicorn boot:** `make dev-api` does NOT load `.env` automatically (pydantic settings runs with `env_file=None`). Use `set -a; source .env; set +a; make dev-api` — or the api_server starts with placeholder OAuth and all four paths break.
+
+**Postgres / Redis:** `docker compose -f docker-compose.dev.yml up -d postgresql` brings Postgres on 5432 (db `agent_playground_api` must exist; create with `psql ... -c "CREATE DATABASE agent_playground_api"` then `make migrate-api`). Redis can be reused from the deploy stack (`deploy-redis-1` already publishes 6379). The api_server defaults to `redis://redis:6379/0` (Docker DNS), so when running native pass `AP_REDIS_URL=redis://localhost:6379/0` explicitly.
+
 # ⚠️ Current project state as of 2026-04-15
 
 **READ THIS FIRST. The content below this banner is historical.**
