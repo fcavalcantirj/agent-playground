@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
 from ..auth.deps import require_user
@@ -706,6 +706,138 @@ async def stop_agent(
         exit_code=int(details.get("exit_code") if details.get("exit_code") is not None else -1),
         stop_wall_s=float(details.get("stop_wall_s") or 0.0),
     ).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/agents/:id
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/agents/{agent_id}", status_code=204)
+async def delete_agent(request: Request, agent_id: UUID):
+    """Hard-delete an agent and all dependent rows.
+
+    Mirrors ``stop_agent``'s graceful-shutdown sequence (signal watcher
+    → ``execute_persistent_stop``) when a container is currently
+    running, then atomically deletes ``runs`` (no FK cascade — see
+    migration 001) and ``agent_instances`` (cascade reaches
+    ``agent_containers``, ``agent_events``, ``inapp_messages``).
+
+    Idempotent end-state: a second DELETE for the same id returns 404.
+
+    Tolerant on docker, strict on DB:
+    - Docker stop failures log + proceed with DB delete (orphan reaper
+      cleans the leaked container later — never block DB delete on
+      docker flakiness).
+    - DB delete failures roll back; caller can retry. Container may
+      already be stopped by a partial first attempt — acceptable; next
+      retry just no-ops the docker step and finishes the DB delete.
+
+    Auth: ``require_user`` gate + ``fetch_agent_instance`` enforces
+    user_id ownership at the SQL layer. 404 (not 403) on
+    missing/unowned to avoid leaking agent existence across users.
+
+    No Bearer required (unlike /start, /stop, /messages POST) — delete
+    does not invoke the LLM or talk to a provider.
+
+    Concurrency note: a /delete racing with an in-flight /start can
+    leave an orphan docker container if the start completes after the
+    cascade-deletes the agent_containers row (start's
+    write_agent_container_running UPDATE then matches 0 rows). The
+    existing reaper sweeps this. A future hardening could share a
+    per-agent op-lock between /start, /stop, /delete; out of scope here.
+    """
+    # --- Step 1: auth ---
+    session_result = require_user(request)
+    if isinstance(session_result, JSONResponse):
+        return session_result
+    user_id: UUID = session_result
+
+    pool = request.app.state.db
+
+    # --- Step 2: existence + ownership ---
+    async with pool.acquire() as conn:
+        agent = await fetch_agent_instance(conn, agent_id, user_id)
+        if agent is None:
+            return _err(
+                404,
+                ErrorCode.AGENT_NOT_FOUND,
+                f"agent {agent_id} not found",
+                param="agent_id",
+            )
+        running = await fetch_running_container_for_agent(conn, agent_id)
+
+    # --- Step 3: graceful stop if a container is running ---
+    if running is not None:
+        recipe = request.app.state.recipes.get(agent["recipe_name"]) or {}
+        persistent_spec = (recipe.get("persistent") or {}).get("spec") or {}
+        graceful = int(persistent_spec.get("graceful_shutdown_s", 5))
+        sigterm_handled = bool(persistent_spec.get("sigterm_handled", True))
+
+        # Drain watcher BEFORE docker rm — same ordering as stop_agent.
+        try:
+            _row_id = UUID(running["id"])
+            _watcher_entry = request.app.state.log_watchers.get(_row_id)
+            if _watcher_entry is not None:
+                _wtask, _wstop = _watcher_entry
+                _wstop.set()
+                try:
+                    await asyncio.wait_for(_wtask, timeout=2.0)
+                except asyncio.TimeoutError:
+                    _wtask.cancel()
+                    _log.warning(
+                        "delete_agent.watcher.cancel_on_timeout",
+                        extra={"container_row_id": str(_row_id)},
+                    )
+        except Exception:
+            _log.exception("delete_agent.watcher.drain_failed")
+
+        # Tolerant docker stop — log + continue on failure.
+        try:
+            await execute_persistent_stop(
+                running["container_id"],
+                graceful_shutdown_s=graceful,
+                sigterm_handled=sigterm_handled,
+                recipe_name=agent["recipe_name"],
+                data_dir=None,
+            )
+        except Exception:
+            _log.exception(
+                "delete_agent.persistent_stop_failed_continuing",
+                extra={
+                    "agent_id": str(agent_id),
+                    "container_id": running["container_id"],
+                },
+            )
+
+    # --- Step 4: atomic DB delete ---
+    # Order: runs first (no FK cascade per migration 001), then
+    # agent_instances (cascade reaches agent_containers → agent_events,
+    # plus inapp_messages directly — see migrations 003/004/007).
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM runs WHERE agent_instance_id = $1",
+                agent_id,
+            )
+            result = await conn.execute(
+                "DELETE FROM agent_instances WHERE id = $1 AND user_id = $2",
+                agent_id,
+                user_id,
+            )
+
+    # asyncpg returns "DELETE N" — N=0 means a concurrent caller won
+    # the race. Treat as 404 (idempotent end-state from this caller's
+    # perspective).
+    if result.endswith(" 0"):
+        return _err(
+            404,
+            ErrorCode.AGENT_NOT_FOUND,
+            f"agent {agent_id} not found",
+            param="agent_id",
+        )
+
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
