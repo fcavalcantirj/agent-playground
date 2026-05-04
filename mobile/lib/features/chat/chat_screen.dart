@@ -19,6 +19,7 @@
 // Back nav goes to /dashboard always per UI-SPEC §Routing — no overflow
 // menu (D-37 says agent lifecycle is reachable only via D-49 banner).
 
+import 'package:agent_playground/core/agent_lifecycle.dart';
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
@@ -193,57 +194,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // cache (debug session 2026-05-04 measured 53s for poolprobe4). Without
     // this, click-spamming the Restart button fires N parallel /start
     // requests that all queue behind the per-tag asyncio.Lock; the first
-    // wins, the rest 409 Conflict. Mirror deploy_step.dart's CancelToken
-    // pattern in spirit: one-in-flight + visible elapsed timer.
+    // wins, the rest 409 Conflict.
     if (_restartInflight) return;
 
-    // D-49 — multi-channel restart needs the channel set; the extended
-    // /v1/agents response is not yet wired here, so mobile defaults to
-    // inapp. Surfaced as a planner-deferred TODO in CONTEXT.
-    //
-    // Phase 25 Wave 5: /v1/agents/:id/start REQUIRES a Bearer BYOK key
-    // (api_server/src/api_server/routes/agent_lifecycle.py:236-242).
-    // Look up the recipe's provider from the agent's recipe name + read
-    // the stored byok_key_<provider>. If we don't have one cached, the
-    // restart silently 401s. Surface a SnackBar so the user knows why.
-    final api = ref.read(apiClientProvider);
-    final storage = ref.read(secureStorageProvider);
     final agent = ref.read(agentsListProvider).asData?.value
         .where((a) => a.id == widget.agentInstanceId)
         .firstOrNull;
-    String? byokKey;
-    if (agent != null) {
-      final detailRes = await api.recipeDetail(name: agent.recipeName);
-      if (detailRes case Ok<RecipeDetail>(value: final detail)) {
-        // The recipe's inapp channel declares which providers are
-        // supported; we stored the BYOK under byok_key_<provider> when
-        // the user typed it during the wizard. Use the first supported
-        // provider that has a key — covers the common single-provider
-        // recipes (zeroclaw → openrouter, openclaw → anthropic, ...).
-        final compat = detail.channelProviderCompat['inapp'];
-        if (compat != null) {
-          for (final provider in compat.supported) {
-            final k = await storage.readByokKey(provider);
-            if (k != null && k.isNotEmpty) {
-              byokKey = k;
-              break;
-            }
-          }
-        }
-      }
-    }
-    if (byokKey == null || byokKey.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 8),
-            content: Text(
-              'No BYOK key stored for this agent — re-deploy via the wizard '
-              'to enter your API key.',
-            ),
-          ),
-        );
-      }
+    if (agent == null) {
+      // No agent loaded — can't lookup recipe. Should never happen
+      // because the banner only renders when agent != null, but defensive.
       return;
     }
 
@@ -258,14 +217,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (mounted) setState(() {});
     });
 
-    Result<StartResponse>? res;
+    RestartOutcome? outcome;
     try {
-      res = await api.start(
-        agentId: widget.agentInstanceId,
-        byokOpenRouterKey: byokKey,
+      outcome = await restartAgent(
+        agent: agent,
+        api: ref.read(apiClientProvider),
+        storage: ref.read(secureStorageProvider),
       );
     } catch (e) {
-      // Defensive — api.start wraps DioException in Result.err but a
+      // Defensive — restartAgent wraps dio errors in RestartFailed but a
       // non-dio throw (parse error, etc.) would otherwise vanish into
       // an unhandled Future.
       if (context.mounted) {
@@ -286,20 +246,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
       }
     }
-    if (res is Err<StartResponse> && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 8),
-          content: Text('Restart failed: ${res.error.message}'),
-        ),
-      );
-    } else if (res is Ok<StartResponse> && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 4),
-          content: Text('Agent restarted'),
-        ),
-      );
+    if (!context.mounted || outcome == null) return;
+    switch (outcome) {
+      case RestartOk():
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 4),
+            content: Text('Agent restarted'),
+          ),
+        );
+      case RestartNoBYOK():
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 8),
+            content: Text(
+              'No BYOK key stored for this agent — re-deploy via the wizard '
+              'to enter your API key.',
+            ),
+          ),
+        );
+      case RestartFailed(:final error):
+        if (error.code == ErrorCode.agentAlreadyRunning) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Agent is already running'),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 8),
+              content: Text('Restart failed: ${error.message}'),
+            ),
+          );
+        }
     }
     ref.invalidate(agentsListProvider);
   }

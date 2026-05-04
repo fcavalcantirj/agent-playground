@@ -24,7 +24,9 @@ class AgentRow extends StatelessWidget {
     required this.agent,
     required this.onTap,
     this.onDelete,
+    this.onRestart,
     this.isDeleting = false,
+    this.isRestarting = false,
     @visibleForTesting this.now,
     super.key,
   });
@@ -32,15 +34,29 @@ class AgentRow extends StatelessWidget {
   final AgentSummary agent;
   final VoidCallback onTap;
 
-  /// Optional delete trigger. When null, the trailing menu is hidden
-  /// (test fixtures + future read-only contexts). When set, the
-  /// PopupMenuButton renders with a single 'Delete' entry.
+  /// Optional delete trigger. When null, the 'Delete' menu entry is
+  /// suppressed (test fixtures + future read-only contexts).
   final VoidCallback? onDelete;
+
+  /// Optional restart trigger. When null, the 'Restart' menu entry is
+  /// suppressed — the dashboard passes null when `agent.status` is
+  /// `running` / `starting` / `stopping` (would 409 server-side
+  /// against the partial-unique index `ix_agent_containers_agent_in
+  /// stance_running` per migration 003:88). For any other status
+  /// (`stopped`, `start_failed`, `crashed`, empty/null-coerced-to-
+  /// `'stopped'`), pass the callback so the user can recover.
+  final VoidCallback? onRestart;
 
   /// True while a DELETE /v1/agents/:id is in flight for this row.
   /// Disables onTap, replaces the trailing menu with a small spinner,
-  /// and dims the whole row to 50% opacity.
+  /// AND dims the whole row to 50% opacity (delete = "going away").
   final bool isDeleting;
+
+  /// True while a POST /v1/agents/:id/start is in flight for this
+  /// row. Disables onTap + replaces the menu with a spinner, but does
+  /// NOT dim the row — restart isn't destructive, so the visual
+  /// shouldn't read as "vanishing". 4-agent design 2026-05-04 nit.
+  final bool isRestarting;
 
   /// Test seam — defaults to DateTime.now() at render time. Allows the unit
   /// tests for `_relativeTime` to assert deterministic output without
@@ -51,8 +67,9 @@ class AgentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final body = Theme.of(context).textTheme.bodyLarge;
     final caption = Theme.of(context).textTheme.bodySmall;
+    final isBusy = isDeleting || isRestarting;
     final core = InkWell(
-      onTap: isDeleting ? null : onTap,
+      onTap: isBusy ? null : onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: SizedBox(
@@ -96,7 +113,7 @@ class AgentRow extends StatelessWidget {
                   color: SolvrColors.mutedForeground,
                 ),
               ),
-              if (isDeleting)
+              if (isBusy)
                 const Padding(
                   padding: EdgeInsets.only(left: 8, right: 4),
                   child: SizedBox(
@@ -105,22 +122,29 @@ class AgentRow extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              else if (onDelete != null)
+              else if (onDelete != null || onRestart != null)
                 PopupMenuButton<String>(
                   key: ValueKey('agent-row-menu-${agent.id}'),
                   icon: const Icon(Icons.more_vert, size: 20),
                   tooltip: 'Agent actions',
                   onSelected: (v) {
-                    if (v == 'delete') onDelete!();
+                    if (v == 'restart' && onRestart != null) onRestart!();
+                    if (v == 'delete' && onDelete != null) onDelete!();
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem<String>(
-                      value: 'delete',
-                      child: Text(
-                        'Delete',
-                        style: TextStyle(color: SolvrColors.destructive),
+                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    if (onRestart != null)
+                      const PopupMenuItem<String>(
+                        value: 'restart',
+                        child: Text('Restart'),
                       ),
-                    ),
+                    if (onDelete != null)
+                      const PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Text(
+                          'Delete',
+                          style: TextStyle(color: SolvrColors.destructive),
+                        ),
+                      ),
                   ],
                 ),
             ],
@@ -128,6 +152,7 @@ class AgentRow extends StatelessWidget {
         ),
       ),
     );
+    // Dim only on delete — restart isn't "going away" (Agent 4 nit).
     return Opacity(opacity: isDeleting ? 0.5 : 1.0, child: core);
   }
 

@@ -28,6 +28,7 @@
 // path: ref.invalidate(agentsListProvider) → AgentsList.build re-runs with
 // a fresh CancelToken (Pitfall #8 concurrency guard).
 
+import 'package:agent_playground/core/agent_lifecycle.dart';
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
@@ -53,10 +54,15 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  // Per-row inflight set for DELETE /v1/agents/:id. Mirrors the
-  // _restartInflight pattern in chat_screen.dart (commit d3c8863) —
-  // single-screen ephemeral state, no Riverpod StateNotifier needed.
+  // Per-row inflight sets. Mirrors the _restartInflight pattern in
+  // chat_screen.dart (commit d3c8863) — single-screen ephemeral state,
+  // no Riverpod StateNotifier needed. Two parallel sets (not one
+  // unified _busyIds) so the AgentRow can render delete and restart
+  // with different visuals — restart spinner without dimming, delete
+  // spinner WITH dimming (Agent 4 nit: dimming reads as "going away"
+  // which fits delete but not restart).
   final Set<String> _deletingIds = <String>{};
+  final Set<String> _restartingIds = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -170,7 +176,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       agents: list,
       hasFreshError: isError,
       deletingIds: _deletingIds,
+      restartingIds: _restartingIds,
       onDelete: (a) => _confirmDelete(context, a),
+      onRestart: (a) => _restartAgent(context, a),
       onRefresh: () async {
         ref.invalidate(agentsListProvider);
         // Wait for the new fetch to settle so RefreshIndicator dismisses
@@ -228,6 +236,77 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
   }
 
+  /// Restart an agent from the dashboard. No ConfirmDialog — restart
+  /// is non-destructive (idempotent on the backend; rapid double-taps
+  /// would hit the per-tag asyncio.Lock). Adds the agent id to
+  /// `_restartingIds` SYNCHRONOUSLY before any await — Agent 4 nit:
+  /// the BYOK lookup itself is a network call (~200-800ms on
+  /// recipeDetail miss), and a "menu closed but no spinner yet"
+  /// window would let a fast second tap re-fire from the popup. Setting
+  /// the busy flag first ensures the next render swaps the menu for
+  /// the spinner before the user can tap again.
+  ///
+  /// Result mapping (4-agent design, edge-case agent):
+  /// - RestartOk → 'Agent restarted' SnackBar (4s) + invalidate.
+  /// - RestartNoBYOK → 'No BYOK key stored…' SnackBar (8s, parallels
+  ///   chat-screen wording).
+  /// - RestartFailed with code AGENT_ALREADY_RUNNING → soft 'Agent is
+  ///   already running' SnackBar (4s) + invalidate (the local cache
+  ///   was stale; the next fetch will resolve to status='running').
+  /// - Any other RestartFailed → 'Restart failed: <message>' (8s).
+  Future<void> _restartAgent(BuildContext ctx, AgentSummary a) async {
+    if (_restartingIds.contains(a.id)) return; // re-entrancy guard
+    setState(() => _restartingIds.add(a.id));
+    try {
+      final outcome = await restartAgent(
+        agent: a,
+        api: ref.read(apiClientProvider),
+        storage: ref.read(secureStorageProvider),
+      );
+      if (!ctx.mounted) return;
+      switch (outcome) {
+        case RestartOk():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              content: Text('Agent restarted'),
+            ),
+          );
+          ref.invalidate(agentsListProvider);
+        case RestartNoBYOK():
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              duration: Duration(seconds: 8),
+              content: Text(
+                'No BYOK key stored for this agent — re-deploy via the '
+                'wizard to enter your API key.',
+              ),
+            ),
+          );
+        case RestartFailed(:final error):
+          // 409 Conflict surfaces from a stale local cache (the agent
+          // already came up between fetch and tap). Soft-message + let
+          // the next agentsList fetch correct the status.
+          if (error.code == ErrorCode.agentAlreadyRunning) {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+              const SnackBar(
+                content: Text('Agent is already running'),
+              ),
+            );
+            ref.invalidate(agentsListProvider);
+          } else {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+              SnackBar(
+                duration: const Duration(seconds: 8),
+                content: Text('Restart failed: ${error.message}'),
+              ),
+            );
+          }
+      }
+    } finally {
+      if (mounted) setState(() => _restartingIds.remove(a.id));
+    }
+  }
+
   Future<void> _confirmSignOut(BuildContext context) async {
     final result = await ConfirmDialog.show(
       context,
@@ -281,14 +360,18 @@ class _PopulatedState extends StatelessWidget {
     required this.agents,
     required this.hasFreshError,
     required this.deletingIds,
+    required this.restartingIds,
     required this.onDelete,
+    required this.onRestart,
     required this.onRefresh,
   });
 
   final List<AgentSummary> agents;
   final bool hasFreshError;
   final Set<String> deletingIds;
+  final Set<String> restartingIds;
   final void Function(AgentSummary) onDelete;
+  final void Function(AgentSummary) onRestart;
   final Future<void> Function() onRefresh;
 
   @override
@@ -310,11 +393,21 @@ class _PopulatedState extends StatelessWidget {
           }
           final idx = hasFreshError ? i - 1 : i;
           final agent = agents[idx];
+          // Restart is offered only when the server-derived status
+          // permits it. running/starting/stopping would 409 against
+          // the per-agent partial unique index OR overlap with an
+          // existing in-flight start (Agent 2 verified). Empty/null
+          // status defaults to 'stopped' per AgentSummary.fromJson.
+          final canRestart = agent.status != 'running' &&
+              agent.status != 'starting' &&
+              agent.status != 'stopping';
           return AgentRow(
             agent: agent,
             isDeleting: deletingIds.contains(agent.id),
+            isRestarting: restartingIds.contains(agent.id),
             onTap: () => GoRouter.of(ctx).push('/chat/${agent.id}'),
             onDelete: () => onDelete(agent),
+            onRestart: canRestart ? () => onRestart(agent) : null,
           );
         },
       ),
