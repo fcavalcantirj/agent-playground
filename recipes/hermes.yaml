@@ -365,6 +365,39 @@ channels:
       API_SERVER_KEY: "${INAPP_AUTH_TOKEN}"
       API_SERVER_PORT: "8642"
       API_SERVER_HOST: "0.0.0.0"        # Rule-1 fix above; was "127.0.0.1"
+      # MODEL is consumed at heredoc-write time by the persistent_argv_override
+      # below — env-file makes ${MODEL} resolvable in sh's heredoc-with-
+      # interpolation form (the YAML key is rendered to its value via the
+      # runner's render_placeholders pass over activation_substitutions).
+      MODEL: "${MODEL}"
+    persistent_argv_override:
+      # Bug fix (root-cause confirmed 2026-05-04 by 4-agent recon + spike
+      # artifact .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-
+      # hermes.md anomaly bullet #1): without this override the runner
+      # falls back to top-level persistent.spec.argv = `[gateway, run, -v]`
+      # — the telegram-shaped bootstrap. The api_server platform DOES
+      # boot (because activation_env injects API_SERVER_ENABLED=true), but
+      # /opt/data/config.yaml is never written, so every chat completion
+      # returns HTTP 200 with body
+      #   choices[0].message.content = "Error code: 400 - 'No models provided'"
+      # The spike's verbatim PASS reproducer included an sh-chain that
+      # writes the config file BEFORE `gateway run`. Plan 22c.3-10 absorbed
+      # this requirement but never landed in the YAML; this commit closes
+      # the gap. Pattern lifted directly from the spike (lines 25-37).
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+          mkdir -p /opt/data
+          cat > /opt/data/config.yaml <<YAML
+          model:
+            default: "${MODEL}"
+            provider: "openrouter"
+            base_url: "https://openrouter.ai/api/v1"
+          YAML
+          chown -R hermes:hermes /opt/data 2>/dev/null || true
+          exec /opt/hermes/.venv/bin/hermes gateway run -v
     verified_cells:
       - date: "2026-04-29"
         boot_wall_s: 14
