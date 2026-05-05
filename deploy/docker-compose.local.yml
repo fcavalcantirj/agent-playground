@@ -31,3 +31,29 @@ services:
     # block on redis (D-08 loopback-only inside compose net).
     ports:
       - "127.0.0.1:6379:6379"
+
+  # Phase 28 local override: expose Temporal frontend on 127.0.0.1:7233 so a
+  # host-venv test/script can dial the cluster directly. Compose-internal
+  # `temporal:7233` continues to work for in-stack services. NEVER apply on
+  # the prod box — the prod compose has no `ports` block on the temporal
+  # service (it's loopback-only inside the compose net per D-03).
+  #
+  # NOTE: there is intentionally NO override for temporal-worker here. The
+  # worker MUST stay inside compose on macOS — it resolves agent containers
+  # by Docker bridge IP, and macOS Docker Desktop does not route from host
+  # to the bridge network (RESEARCH §7 R6, see deploy/README.md "Phase 28 —
+  # Temporal worker on macOS"). A host-venv worker hits
+  # `inapp_dispatcher.ip_lookup_failed` symptoms.
+  temporal:
+    ports:
+      - "127.0.0.1:7233:7233"
+
+  temporal-worker:
+    # macOS-only workaround (matches the api_server `user: root` override on
+    # lines 12-15): Docker Desktop bind-mounts /var/run/docker.sock as
+    # root:root mode 660; the apiuser inside the image gets Permission
+    # denied calling docker.from_env(). On Linux Hetzner the socket is
+    # root:docker(gid 999) and apiuser is in that group, so this override
+    # is local-only. Wave 0 spike C verified this empirically (see
+    # 28-01-SPIKE-EVIDENCE.md and memory/feedback_check_msv_when_stuck.md).
+    user: root

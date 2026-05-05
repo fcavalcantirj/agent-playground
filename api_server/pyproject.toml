@@ -63,6 +63,14 @@ dependencies = [
   # (Redis testcontainer) can install cleanly alongside the runtime dep.
   "sse-starlette>=3.4,<4",
   "redis>=5.2,<8",
+  # Phase 28 (D-01..D-05): Temporal Python SDK for the worker process and
+  # the api_server-side `start_workflow` call from POST /messages. Pin
+  # floor 1.27.0 (matches Wave 0 spike evidence — see
+  # .planning/phases/28-temporal-dispatch/28-01-SPIKE-EVIDENCE.md) and
+  # ceiling <1.28 mirrors the floor-and-major-ceiling discipline used for
+  # respx + redis above. Lock via uv at the same time as the rest of the
+  # graph.
+  "temporalio>=1.27.0,<1.28",
   # Phase 23-01 Task 4: starlette pinned as a DIRECT dependency so the
   # SSE-non-buffer behavior D-31 + Plan 23-05 depend on cannot drift if
   # FastAPI's transitive floor relaxes. The default-exclude of

@@ -123,6 +123,43 @@ CONTEXT.md §D-08 (locked decision) for Python+FastAPI production artifacts adde
 **alongside** — not replacing — the existing content. See
 `.planning/phases/19-api-foundation/19-CONTEXT.md` §D-08.
 
+## Phase 28 — Temporal worker on macOS
+
+The Phase 28 dispatch architecture introduces a `temporal-worker` container
+that consumes the `ap-messages` task queue. **On macOS, the worker MUST run
+inside Docker Compose** — running it from a host venv is broken in two ways
+that have already been observed in Phase 22c.3.1 (see
+`memory/feedback_check_msv_when_stuck.md` and the dockerized e2e harness):
+
+1. The host venv (`uv sync` outside Docker) does not consistently install
+   `temporalio` against the same Python ABI as the api_server container.
+2. The worker resolves agent containers by Docker bridge IP (`172.18.0.x`).
+   macOS Docker Desktop does not route from host to the bridge network,
+   so a host-venv worker cannot reach agent containers — symptom is
+   `inapp_dispatcher.ip_lookup_failed` (or its Phase 28 successor
+   `phase28.forward_to_agent.container_dead`).
+
+**Canonical local boot path:**
+
+```
+make dev-api-local
+```
+
+This brings the entire compose stack up — postgres, redis, temporal,
+temporal-ui, temporal-worker, and api_server — so the worker container
+joins the same `deploy_default` bridge as agent containers and the
+in-process `temporal:7233` DNS name resolves correctly.
+
+**Do NOT** attempt `python -m api_server.temporal.worker` from a host venv
+on macOS. If you need to debug the worker outside compose, use a Linux
+host or run inside an interactive shell on the existing worker container
+(`docker exec -it deploy-temporal-worker-1 bash`). Linux dev hosts CAN
+run the worker from a host venv (the bridge route works there) but the
+canonical path remains `make dev-api-local`.
+
+The Temporal UI is reachable at <http://127.0.0.1:8088> after
+`make dev-api-local` finishes booting.
+
 ## Troubleshooting
 
 - **TLS cert reissue fails:** check `docker compose logs caddy` — ACME rate limit
