@@ -324,6 +324,9 @@ async def test_migration_005_sessions_and_users_columns(migrated_pg):
             "006_purge_anonymous",
             "007_inapp_messages",
             "008_idempotency_relax_run_fk",
+            "009_auth_events_revoked_reason",
+            "010_usage_logs_cost_weights",
+            "011_phase28_workflow_id_idem",
         }
         assert version in ALLOWED_HEADS_005_OR_LATER, (
             f"alembic HEAD is {version!r}; expected 005 or later "
@@ -400,6 +403,9 @@ async def test_migration_006_artifact_and_apply(migrated_pg):
             "006_purge_anonymous",
             "007_inapp_messages",
             "008_idempotency_relax_run_fk",
+            "009_auth_events_revoked_reason",
+            "010_usage_logs_cost_weights",
+            "011_phase28_workflow_id_idem",
         }
         assert version in ALLOWED_HEADS_006_OR_LATER, (
             f"HEAD is {version!r}; expected 006 or later "

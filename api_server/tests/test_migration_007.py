@@ -355,7 +355,17 @@ async def test_migration_007_round_trip(pg):
         # not touch any 007-owned object so the 007 round-trip below is
         # still well-defined).
         head = await conn.fetchval("SELECT version_num FROM alembic_version")
-        assert head in ("007_inapp_messages", "008_idempotency_relax_run_fk"), (
+        # Append new HEADs as later migrations land; every revision in this
+        # set has 007 in its ancestor chain so the round-trip below still
+        # exercises the 007-owned objects (even though the "downgrade -1"
+        # walks back through them via newer ones first).
+        assert head in (
+            "007_inapp_messages",
+            "008_idempotency_relax_run_fk",
+            "009_auth_events_revoked_reason",
+            "010_usage_logs_cost_weights",
+            "011_phase28_workflow_id_idem",
+        ), (
             f"pre-round-trip head {head!r} not in expected set"
         )
         # Test 1 (when run before this) inserts an agent_events row with
@@ -436,7 +446,13 @@ async def test_migration_007_round_trip(pg):
     conn = await _connect(pg)
     try:
         head = await conn.fetchval("SELECT version_num FROM alembic_version")
-        assert head in ("007_inapp_messages", "008_idempotency_relax_run_fk"), (
+        assert head in (
+            "007_inapp_messages",
+            "008_idempotency_relax_run_fk",
+            "009_auth_events_revoked_reason",
+            "010_usage_logs_cost_weights",
+            "011_phase28_workflow_id_idem",
+        ), (
             f"post-re-upgrade head {head!r} not in expected set"
         )
         # Every migration-owned object must exist again with same shape.
