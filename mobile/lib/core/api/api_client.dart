@@ -24,6 +24,7 @@
 import 'package:agent_playground/core/api/api_endpoints.dart';
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/result.dart';
+import 'package:agent_playground/features/usage/usage_models.dart';
 import 'package:dio/dio.dart';
 
 class ApiClient {
@@ -395,4 +396,45 @@ class ApiClient {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Phase 27 Change 3a — BYOK usage visibility read endpoints.
+  //
+  // Server-side aggregation per CLAUDE.md golden rule #2: the response
+  // is ready-to-render JSON. NO client-side SUM / GROUP BY / cost-rate
+  // lookup — those are computed in api_server.routes.usage.
+  // ---------------------------------------------------------------------------
+
+  /// `GET /v1/usage/summary` — total USD + message count + per-agent
+  /// breakdown for the calling user. Powers the AppBar USD ticker.
+  Future<Result<UsageSummary>> usageSummary({
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.usageSummary,
+        cancelToken: cancelToken,
+      );
+      return Result.ok(UsageSummary.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  /// `GET /v1/agents/:id/usage` — cumulative aggregates + 7-day + 30-day
+  /// daily series for one agent owned by the user. Powers the per-agent
+  /// breakdown screen. Returns ``Result.err(agentNotFound)`` on 404.
+  Future<Result<AgentUsageData>> agentUsage(
+    String agentId, {
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.agentUsage(agentId),
+        cancelToken: cancelToken,
+      );
+      return Result.ok(AgentUsageData.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
 }

@@ -35,4 +35,10 @@ abstract final class ApiEndpoints {
   static const String usersMe = '/v1/users/me';
   static const String authGoogleMobile = '/v1/auth/google/mobile';
   static const String authGithubMobile = '/v1/auth/github/mobile';
+
+  /// Phase 27 Change 3a — AppBar USD ticker payload.
+  static const String usageSummary = '/v1/usage/summary';
+
+  /// Phase 27 Change 3a — per-agent breakdown screen payload.
+  static String agentUsage(String agentId) => '/v1/agents/$agentId/usage';
 }
