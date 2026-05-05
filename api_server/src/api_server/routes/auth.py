@@ -548,20 +548,13 @@ async def logout(request: Request):
     (the middleware won't populate ``request.state.user_id`` in that
     case, so ``require_user`` returns the 401 envelope).
 
-    Phase 26 change (D-11): replaced ``DELETE FROM sessions`` with
-    ``UPDATE … SET revoked_at = NOW(), revoked_reason = 'logout'`` so
-    SessionMiddleware can distinguish self-logout (no banner) from
-    logout-all-from-another-device (SESSION_REVOKED banner). Per D-11,
-    no ``auth_events`` row is written for single-device logout.
-
     Flow:
 
     1. ``require_user`` gate (401 on no / invalid session).
     2. Read the raw ``ap_session`` cookie to get the session UUID; only
-       used for the UPDATE — we don't re-authenticate against it.
-    3. ``UPDATE sessions SET revoked_at = NOW(), revoked_reason = 'logout'
-       WHERE id = $1 AND revoked_at IS NULL`` — idempotent on the
-       already-revoked race (filter excludes the row).
+       used for the DELETE — we don't re-authenticate against it.
+    3. ``DELETE FROM sessions WHERE id = $1`` — idempotent (no rows
+       deleted is a no-op on the already-revoked race).
     4. Build a 204 response + clear the cookie.
 
     Returns ``204 No Content`` with ``Set-Cookie: ap_session=; Max-Age=0``.
@@ -577,9 +570,7 @@ async def logout(request: Request):
     async with pool.acquire() as conn:
         if session_uuid is not None:
             await conn.execute(
-                "UPDATE sessions "
-                "SET revoked_at = NOW(), revoked_reason = 'logout' "
-                "WHERE id = $1 AND revoked_at IS NULL",
+                "DELETE FROM sessions WHERE id = $1",
                 session_uuid,
             )
 
@@ -588,67 +579,6 @@ async def logout(request: Request):
     # Content-Length header for the JSON "null", which violates the 204
     # contract (no body at all).
     resp = Response(status_code=204)
-    _clear_session_cookie(resp, settings)
-    return resp
-
-
-@router.post("/auth/logout-all")
-async def logout_all(request: Request):
-    """Revoke ALL sessions for the calling user + write an ``auth_events`` audit row.
-
-    Phase 26 H2 (logout-everywhere). Closes the "stolen device cookie
-    drains balance" threat from the 2026-05-04 solidity audit.
-
-    Protected by ``require_user``. Atomically:
-
-    1. ``UPDATE sessions SET revoked_at = NOW(), revoked_reason = 'logout_all'
-       WHERE user_id = $1 AND revoked_at IS NULL RETURNING id`` — captures
-       the count of devices revoked in this call.
-    2. ``INSERT INTO auth_events (user_id, kind, ip, user_agent,
-       device_count_revoked) VALUES (..., 'logout_all', ...)`` for
-       incident-response queryability (D-02).
-    Both inside a single ``conn.transaction()`` so either both land or
-    neither does.
-
-    Per D-04: the calling device IS revoked too. Other devices learn
-    via SessionMiddleware (D-08): their next request hits the row, sees
-    ``revoked_reason = 'logout_all'`` within the 24h banner window, and
-    ``require_user`` returns 401 with ``ErrorCode.SESSION_REVOKED``.
-
-    Returns ``200 {"revoked": <count>}`` with ``Set-Cookie: ap_session=;
-    Max-Age=0`` — the caller's cookie is cleared on this device too.
-    """
-    settings = request.app.state.settings
-    result = require_user(request)
-    if isinstance(result, JSONResponse):
-        return result
-    user_id: UUID = result
-
-    ip = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
-
-    pool = request.app.state.db
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            # asyncpg's execute() returns a libpq status string ("UPDATE 3")
-            # not an int — use fetch() + len(rows) so the count is
-            # programmatic. Per asyncpg #311.
-            rows = await conn.fetch(
-                "UPDATE sessions "
-                "SET revoked_at = NOW(), revoked_reason = 'logout_all' "
-                "WHERE user_id = $1 AND revoked_at IS NULL "
-                "RETURNING id",
-                user_id,
-            )
-            count = len(rows)
-            await conn.execute(
-                "INSERT INTO auth_events "
-                "(user_id, kind, ip, user_agent, device_count_revoked) "
-                "VALUES ($1, 'logout_all', $2, $3, $4)",
-                user_id, ip, user_agent, count,
-            )
-
-    resp = JSONResponse(status_code=200, content={"revoked": count})
     _clear_session_cookie(resp, settings)
     return resp
 

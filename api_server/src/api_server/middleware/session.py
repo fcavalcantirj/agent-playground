@@ -38,16 +38,6 @@ SESSION_COOKIE_NAME = "ap_session"
 LAST_SEEN_THROTTLE = timedelta(seconds=60)
 _LAST_SEEN_CACHE_SOFT_CAP = 10_000  # LRU eviction threshold per D-22c-MIG-05
 
-# Phase 26 D-04 + D-09: window during which a freshly-revoked session
-# carries the SESSION_REVOKED signal so downstream handlers can return
-# a "session ended elsewhere" banner instead of a generic 401. After
-# this window, the cookie is just stale and routes return UNAUTHORIZED.
-_REVOKED_BANNER_WINDOW = timedelta(hours=24)
-# Reasons that warrant the banner (logout-all, admin revoke). A user
-# who clicked "Log out" themselves doesn't get the banner — they
-# expect to land on /login without explanation. Per D-11.
-_BANNER_REASONS = frozenset({"logout_all", "admin"})
-
 
 class SessionMiddleware:
     """Resolves ``request.state.user_id`` from the ``ap_session`` cookie."""
@@ -63,17 +53,13 @@ class SessionMiddleware:
         raw_cookie = _extract_cookie(scope, SESSION_COOKIE_NAME)
         session_uuid = _coerce_uuid(raw_cookie) if raw_cookie else None
         user_id: UUID | None = None
-        # Phase 26: when True, downstream require_user returns 401 with
-        # ErrorCode.SESSION_REVOKED (custom banner), not generic UNAUTHORIZED.
-        session_revoked = False
 
         if session_uuid is not None:
             asgi_app = scope["app"]
             try:
                 async with asgi_app.state.db.acquire() as conn:
                     row = await conn.fetchrow(
-                        "SELECT user_id, last_seen_at, revoked_at, "
-                        "       revoked_reason, expires_at "
+                        "SELECT user_id, last_seen_at, revoked_at, expires_at "
                         "FROM sessions "
                         "WHERE id = $1",
                         session_uuid,
@@ -82,17 +68,10 @@ class SessionMiddleware:
                         revoked_at = row["revoked_at"]
                         expires_at = row["expires_at"]
                         if revoked_at is not None:
-                            # Recent revoke by logout-all / admin → banner signal.
-                            since = datetime.now(timezone.utc) - revoked_at
-                            if (
-                                row["revoked_reason"] in _BANNER_REASONS
-                                and since < _REVOKED_BANNER_WINDOW
-                            ):
-                                session_revoked = True
-                            # Else: treat as no session (self-logout, expired
-                            # window, unknown reason) → generic 401, no banner.
+                            # Revoked → no session.
+                            pass
                         elif expires_at <= datetime.now(timezone.utc):
-                            # Expired but not revoked → generic 401.
+                            # Expired but not revoked → no session.
                             pass
                         else:
                             user_id = row["user_id"]
@@ -106,11 +85,9 @@ class SessionMiddleware:
                     "session resolution failed; treating as anonymous"
                 )
                 user_id = None
-                session_revoked = False
 
         state = scope.setdefault("state", {})
         state["user_id"] = user_id
-        state["session_revoked"] = session_revoked
         await self.app(scope, receive, send)
 
 
