@@ -568,3 +568,41 @@ Plans:
 - [ ] (to be planned via /gsd-discuss-phase 27)
 **UI hint:** medium (AppBar USD ticker on web + mobile + per-agent breakdown view)
 **Status:** queued; opens after `/clear`
+
+## Backlog
+
+### Phase 999.1: Temporal-backed message dispatch + dispatcher hardening (BACKLOG)
+
+**Goal:** Replace asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring MSV's `SendMessageWorkflow` pattern. Solves intermittent `container_not_ready` failures, observability gaps, defunct-element rendering races on chat reply, and unblocks Phase B (Stripe billing) by making debit + reply atomic-and-retryable. Also re-mounts the Phase 27 `UsageTickerWidget` (yanked at `27d3c79` due to Riverpod 3.x listener race) using a Consumer-scoped or post-frame-callback subscription.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Key MSV patterns to copy (verbatim file paths in `/Users/fcavalcanti/dev/meusecretariovirtual/messaging/`):
+1. `activities/forward_to_agent.go:64-196` — activity-internal connection-error retry with exponential backoff `[1s, 2s, 4s]`. **This is the bullseye fix for the `container_not_ready` intermittent symptom.**
+2. `workflows/send_message.go:16-198` — workflow orchestration shape (typing → set context → forward → deliver → consume → analytics → clear context). Best-effort pattern for non-critical cleanup (analytics, billing) — they fail silently rather than fail the workflow.
+3. Workflow-id idempotency = `msg-{message_uuid}` (one-shot per message). MSV uses `msg-{telegramID}-{unixMillis}`.
+4. Tier-scoped activity timeout pattern (e.g. `forward_timeout = recipe.tier_timeout + 30s buffer`).
+
+Migration scope (~3 days focused work):
+- `deploy/docker-compose.prod.yml` — add `temporal` (`temporalio/auto-setup:latest`) + `temporal-ui` (`temporalio/ui:latest`) services on `deploy_default`. Backed by existing Postgres. UI on 8088, gRPC on 7233. Mirror MSV's `infra/docker-compose.yml:86-109` shape.
+- `api_server/src/api_server/temporal/worker.py` — Python `temporalio` worker on task queue `ap-messages`. Mirror MSV's `messaging/cmd/worker/main.go` shape.
+- `api_server/src/api_server/temporal/workflows/dispatch_message.py` — Python equivalent of MSV's `SendMessageWorkflow`.
+- `api_server/src/api_server/temporal/activities/forward_to_agent.py` — connection-retry activity. Mirror `messaging/activities/forward_to_agent.go`.
+- `api_server/src/api_server/temporal/activities/record_usage_activity.py` — wraps existing `services/usage_recorder.py::record_usage` (Phase 27 reuse).
+- Replace dispatcher loop entry in `services/inapp_dispatcher.py` — start workflow instead of running async. One-line entry change.
+- Delete the asyncpg savepoint pattern in `_handle_row` — Temporal handles it via activity retries.
+- Add `temporalio` to `pyproject.toml`, lock with uv.
+
+Wins specific to AP:
+1. Solves `container_not_ready` intermittent — activity-level exponential backoff (3-5 retries) instead of giving up at attempts=2.
+2. Solves the Phase 25 Riverpod defunct-element race indirectly — workflow has durable state, mobile pull-to-refresh always finds the latest reply, SSE failures recoverable.
+3. Solves the macOS host-bridge limitation — workers run inside docker on `deploy_default`, can reach agent containers natively.
+4. Observability — Temporal UI shows every dispatch's full execution history, retry counts, timing.
+5. Phase B (Stripe billing) becomes much easier — debit + reply are activities in same workflow, atomic, retryable.
+
+Reverses earlier "Don't Mirror MSV Temporal" decision in `PROJECT.md`. That decision was framed as "session loop is short-lived; an in-process supervisor is enough" — correct for session-create, **wrong for per-message dispatch** (which is exactly what MSV uses Temporal for).
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Status:** backlog; opens when ready for hardening + Phase B prep
