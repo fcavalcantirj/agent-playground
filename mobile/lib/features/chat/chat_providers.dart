@@ -45,7 +45,6 @@ import 'package:agent_playground/core/api/messages_stream.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/lifecycle/app_lifecycle_observer.dart';
-import 'package:agent_playground/features/usage/usage_providers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -447,10 +446,12 @@ class ChatScope extends Notifier<ChatState> {
     // upserting the real row so the bubble visually replaces (D-41).
     if (role == 'assistant') {
       state = state.clearTypingPlaceholders().upsertOne(row);
-      // Phase 27 D-32 trigger #3 — assistant reply means a usage row
-      // just landed server-side. Mark the AppBar ticker stale so it
-      // re-fetches GET /v1/usage/summary the next time it builds.
-      ref.invalidate(usageSummaryProvider);
+      // Phase 27 D-32 trigger #3 (deferred) — instant ticker refresh on
+      // assistant reply was attempted via ref.invalidate(usageSummaryProvider)
+      // here, but it crashed downstream Consumers mid-SSE-handler with
+      // 'Failed assertion: _lifecycleState != _ElementLifecycle.defunct'.
+      // Triggers #1 (mount) + #2 (lifecycle resume) cover the workflow;
+      // ticker updates on next screen mount or app resume.
     } else {
       // For user mirrors, keep the optimistic 'pending:<idemKey>' rows in
       // place — they have a different id (pending vs sse) so the upsert
