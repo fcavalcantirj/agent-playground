@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.3
-milestone_name: "Mobile MVP / Solvr Labs — Phase 22-28"
-status: ready_to_execute
-stopped_at: "2026-05-05 — Phase 28 planned (verifier PASS iter 2/3); Wave 0 spike checkpoint awaits user-approved kickoff"
-last_updated: "2026-05-05T17:30:00.000Z"
-last_activity: "2026-05-05 — Phase 28 (Temporal-backed message dispatch + dispatcher hardening) planned; ready for /gsd-execute-phase 28 --auto"
+milestone: v0.2
+milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
+status: executing
+stopped_at: context exhaustion at 90% (2026-05-05)
+last_updated: "2026-05-05T20:19:53.849Z"
+last_activity: 2026-05-05 -- Phase 28 execution started
 progress:
-  total_phases: 29
-  completed_phases: 27
-  total_plans: 100+
-  completed_plans: ~95
-  percent: 93
+  total_phases: 33
+  completed_phases: 12
+  total_plans: 109
+  completed_plans: 98
+  percent: 90
 ---
 
 ## Resume after /clear (2026-05-05)
@@ -19,6 +19,7 @@ progress:
 **Current state:** Phase 28 fully planned, ready to execute. 9 plans across 8 waves committed at `06c802d` + `1bb831e` (D-08 user-id revision).
 
 **Read in this order after /clear:**
+
 1. `memory/MEMORY.md` (auto-loaded — index of every memory file)
 2. `memory/project_phase_28_planned_handoff.md` — THE handoff for Phase 28 with full state
 3. `.planning/phases/28-temporal-dispatch/28-CONTEXT.md` — 25 D-XX decisions (D-08 revised post-discussion to user-scoped workflow ID)
@@ -27,6 +28,7 @@ progress:
 6. `git log --oneline -15` — confirm HEAD is at `1bb831e` (D-08 user-id revision) or later
 
 **Next command:**
+
 ```
 /gsd-execute-phase 28 --auto
 ```
@@ -37,6 +39,7 @@ Wave 0 (28-01) is a spike checkpoint — execution will pause for user review be
 Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring MSV's `SendMessageWorkflow`. Solves intermittent `container_not_ready` failures (activity-internal `[1s, 2s, 4s]` retry), observability gaps (Temporal UI on :8088), and re-mounts the Phase 27 ticker with a Consumer-scoped pattern that survives screen tear-down. Big-bang migration, ~3 days focused work. Workflow ID = `msg-{user_id}-{message_uuid}` (D-08 user-scoped per user feedback). Worker runs in a separate `deploy-temporal-worker-1` container on `deploy_default` (D-04).
 
 **Backlog:**
+
 - `999.2` — Go API rewrite (deferred until v0.3 validates; 8-12 week effort if revisited)
 
 ---
@@ -48,14 +51,14 @@ Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring M
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 25 — mobile-screens
+**Current focus:** Phase 28 — temporal-dispatch
 
 ## Current Position
 
-Phase: 25 (mobile-screens) — EXECUTING
-Plan: 1 of 8
-Status: Executing Phase 25
-Last activity: 2026-05-03 -- Phase 25 execution started
+Phase: 28 (temporal-dispatch) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 28
+Last activity: 2026-05-05 -- Phase 28 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
