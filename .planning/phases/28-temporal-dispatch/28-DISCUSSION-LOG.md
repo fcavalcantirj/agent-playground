@@ -66,7 +66,9 @@
 | `msg-{user_id}-{unixMillis}` (MSV-shape) | New ID generated server-side | |
 | Mobile-side dedup token + workflow ID | Two-layer dedup | |
 
-**Selected:** `msg-{message_uuid}` + REJECT_DUPLICATE. **Rationale:** AP already has Idempotency-Key middleware on `POST /messages` (mobile-side dedup at API layer). Workflow ID handles dispatcher-side. Two layers, clean separation. Reusing the existing message UUID avoids generating a parallel ID.
+**Selected (initial auto):** `msg-{message_uuid}` + REJECT_DUPLICATE. **Rationale:** AP already has Idempotency-Key middleware on `POST /messages` (mobile-side dedup at API layer). Workflow ID handles dispatcher-side. Two layers, clean separation.
+
+**Revised 2026-05-05 after user feedback → `msg-{user_id}-{message_uuid}` + REJECT_DUPLICATE.** User scoping in the workflow ID itself (matching MSV's `msg-{telegramID}-{unixMillis}` pattern) gives: (a) **observability** — Temporal UI prefix-search `msg-{user_id}-*` shows all of one user's workflows; (b) **defense-in-depth** — if a bug ever lets a workflow start for the wrong user, the workflow_id encodes the audited user_id and detection is instant. ~30 extra bytes per ID, trivial cost. CONTEXT D-08 + Plans 28-03, 28-06, 28-07, 28-09 updated.
 
 ---
 
