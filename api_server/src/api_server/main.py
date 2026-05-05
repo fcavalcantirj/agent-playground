@@ -97,7 +97,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.event_poll_locks = {}        # agent_container_id -> asyncio.Lock
 
     # ====================================================================
-    # Phase 22c.3-09 — inapp chat channel: Redis + httpx + 3 background tasks
+    # Phase 22c.3-09 — inapp chat channel: Redis + httpx + background tasks
+    #               + Phase 28 — Temporal client for start_workflow calls
     # ====================================================================
     #
     # Ordering rationale (must come BEFORE the 22b watcher re-attach
@@ -112,11 +113,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #   2. Shared httpx.AsyncClient (D-40 — 600s read timeout per
     #      single bot call; 5s connect; max_connections=50).
     #   3. Restart sweep (D-31) — re-queue rows stuck in 'forwarded'
-    #      past 15 minutes BEFORE the dispatcher pump starts, so the
-    #      first dispatcher tick has a clean state machine.
-    #   4. Background tasks: dispatcher_loop (250ms), reaper_loop (15s),
-    #      outbox_pump_loop (100ms). Each is named so operators can
-    #      grep ``asyncio.all_tasks()`` output.
+    #      past 15 minutes BEFORE any pump starts, so the first
+    #      dispatch has a clean state machine.
+    #   4. Phase 28 (D-06): Temporal client connect (5×5s retry budget).
+    #   5. Background tasks: reaper_loop (15s), outbox_pump_loop (100ms).
+    #      Phase 28 DELETED dispatcher_loop — DispatchMessageWorkflow
+    #      replaces the asyncpg pump (D-06). Each task is named so
+    #      operators can grep ``asyncio.all_tasks()`` output.
 
     # 1. Redis client — fail-loud at boot.
     app.state.redis = redis_async.from_url(
@@ -189,20 +192,61 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         network_name=settings.docker_network_name,
     )
 
-    # 4. Background tasks — cancellable via inapp_stop event.
-    from .services.inapp_dispatcher import dispatcher_loop
+    # 4. Phase 28 — Temporal client for ``start_workflow`` calls from
+    #    POST /v1/agents/:id/messages. Lifespan owns the client; routes
+    #    read it via ``request.app.state.temporal_client`` (D-06).
+    #
+    #    Outer 5×5s retry loop (RESEARCH §7 R5 — mirrors worker.py).
+    #    Even with ``depends_on.condition: service_healthy`` the
+    #    Temporal frontend may still be finishing namespace bootstrap
+    #    when the api_server boots; the budget covers it.
+    from .temporal.client import make_client
+
+    app.state.temporal_client = None
+    _last_temporal_error: Exception | None = None
+    for _attempt in range(5):
+        try:
+            app.state.temporal_client = await make_client(settings)
+            break
+        except Exception as _e:  # noqa: BLE001 — broad on purpose
+            _last_temporal_error = _e
+            _log.warning(
+                "phase28.lifespan.temporal_client_connect_retry",
+                extra={"attempt": _attempt + 1, "error": str(_e)},
+            )
+            if _attempt < 4:
+                await asyncio.sleep(5.0)
+    if app.state.temporal_client is None:
+        _log.error(
+            "phase28.lifespan.temporal_client_connect_exhausted",
+            extra={
+                "error": (
+                    str(_last_temporal_error)
+                    if _last_temporal_error is not None
+                    else "unknown"
+                ),
+            },
+        )
+        raise RuntimeError(
+            "temporal client connect retries exhausted"
+        ) from _last_temporal_error
+    _log.info(
+        "phase28.lifespan.temporal_client_connected",
+        extra={
+            "host": settings.temporal_host,
+            "namespace": settings.temporal_namespace,
+            "task_queue": settings.temporal_task_queue,
+        },
+    )
+
+    # Phase 28 — dispatcher_loop is DELETED (D-06). DispatchMessageWorkflow
+    # replaces the asyncpg pump. Reaper stays for legacy stuck rows during
+    # the transition window (RESEARCH §7 R1); outbox pump unchanged (R7).
     from .services.inapp_outbox import outbox_pump_loop
     from .services.inapp_reaper import reaper_loop
 
     app.state.inapp_stop = asyncio.Event()
-    # Wire the stop_event onto state so dispatcher_loop (which takes
-    # only ``state``) can read it via ``state.inapp_stop`` per the
-    # source-of-truth ``getattr(state, "inapp_stop", ...)`` lookup.
     app.state.inapp_tasks = [
-        asyncio.create_task(
-            dispatcher_loop(app.state),
-            name="inapp_dispatcher",
-        ),
         asyncio.create_task(
             reaper_loop(app.state, app.state.inapp_stop),
             name="inapp_reaper",

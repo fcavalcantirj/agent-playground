@@ -40,11 +40,30 @@ process-owned ``ReadinessActivities`` instance.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
+
+
+def _coerce_inp(inp: Any) -> Any:
+    """Normalize ``inp`` so attribute access works.
+
+    Temporal's default JSON converter deserializes the
+    ``DispatchMessageInput`` dataclass into a plain dict because the
+    activity's runtime type-hint is ``Any`` (the activity-stub
+    discipline that sidesteps the workflows ↔ activities circular import
+    at @activity.defn decoration time). For the activity body we want
+    attribute access (``inp.container_row_id`` etc.) — convert dict to
+    a ``SimpleNamespace`` so the rest of the function reads naturally.
+    Already-namespaced inputs (e.g. tests passing dataclasses or
+    SimpleNamespace) pass through untouched.
+    """
+    if isinstance(inp, dict):
+        return SimpleNamespace(**inp)
+    return inp
 
 
 class ReadinessActivities:
@@ -65,6 +84,7 @@ class ReadinessActivities:
         ``ApplicationError('container_dead', non_retryable=True)`` if
         the row was DELETED entirely.
         """
+        inp = _coerce_inp(inp)
         container_row_id = UUID(inp.container_row_id)
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(

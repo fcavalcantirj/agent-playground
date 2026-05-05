@@ -42,6 +42,7 @@ runtime because ``types.py`` is dependency-free.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -51,6 +52,22 @@ from temporalio.exceptions import ApplicationError
 
 from ...services.inapp_dispatcher import _dispatch_http_localhost
 from ..workflows.types import ForwardResult
+
+
+def _coerce_inp(inp: Any) -> Any:
+    """Normalize ``inp`` so attribute access works.
+
+    Mirror of ``check_container_ready._coerce_inp``. Temporal's default
+    JSON converter deserializes the ``DispatchMessageInput`` dataclass
+    into a plain dict because the activity's runtime type-hint is
+    ``Any`` (the activity-stub discipline that sidesteps the workflows
+    ↔ activities circular import at @activity.defn decoration time).
+    Wrap dicts in a ``SimpleNamespace`` so the rest of the function
+    reads naturally; dataclass / namespace inputs pass through.
+    """
+    if isinstance(inp, dict):
+        return SimpleNamespace(**inp)
+    return inp
 
 
 class ForwardActivities:
@@ -78,6 +95,7 @@ class ForwardActivities:
         """Forward the message; return ForwardResult on success or
         raise ApplicationError(non_retryable=True) on terminal failure.
         """
+        inp = _coerce_inp(inp)
         attempt = activity.info().attempt
         activity.logger.info(
             "phase28.forward_to_agent.attempt",
