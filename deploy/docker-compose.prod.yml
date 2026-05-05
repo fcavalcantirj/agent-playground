@@ -56,6 +56,96 @@ services:
       timeout: 3s
       retries: 5
 
+  temporal:
+    # Phase 28 (D-01, D-02, D-03): self-hosted Temporal cluster, single
+    # namespace `default`, Postgres backend pointing at the existing
+    # `postgres` service. auto-setup bootstraps `temporal` and
+    # `temporal_visibility` databases inside the same Postgres on first boot.
+    # NO host-bound port for 7233 — internal-only. UI exposes 8088 below.
+    #
+    # Wave 0 finding (28-01-SPIKE-EVIDENCE.md): the temporalio/auto-setup:1.29.2
+    # image only ships `config/dynamicconfig/docker.yaml` at runtime;
+    # pointing DYNAMIC_CONFIG_FILE_PATH at `development-sql.yaml` (the path
+    # quoted in upstream temporalio/docker-compose for older tags) crashes
+    # the server at boot with "unable to validate dynamic config: stat ...:
+    # no such file or directory". The correct path for 1.29.2 is `docker.yaml`.
+    image: temporalio/auto-setup:1.29.2
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: ap
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  temporal-ui:
+    # Phase 28 (D-03, D-16): web UI on 127.0.0.1:8088 (loopback only — never
+    # publicly bind; ops access via SSH tunnel to the Hetzner box).
+    image: temporalio/ui:2.40.0
+    restart: always
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8088:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8088
+
+  temporal-worker:
+    # Phase 28 (D-04): worker process for the `ap-messages` task queue.
+    # Same image as api_server — shared deps, separate `command` invoking
+    # the worker entrypoint that lands in Plan 28-04. Inherits the same
+    # env_file so DB pool + Redis + recipe dir are available.
+    #
+    # NOTE: until Plan 28-04 lands the `api_server.temporal.worker` module,
+    # this container will restart-loop. That is EXPECTED for Wave 1 — the
+    # cluster + UI come up green, the worker shell exists for Wave 2 to
+    # consume.
+    build:
+      context: ..
+      dockerfile: tools/Dockerfile.api
+      args:
+        DOCKER_GID: ${DOCKER_GID:-999}
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    command: ["python", "-m", "api_server.temporal.worker"]
+    environment:
+      AP_ENV: prod
+      AP_RECIPES_DIR: /app/recipes
+      AP_REDIS_URL: "redis://redis:6379/0"
+      AP_DOCKER_NETWORK: "deploy_default"
+      AP_TEMPORAL_HOST: "temporal:7233"
+      AP_TEMPORAL_NAMESPACE: "default"
+      AP_TEMPORAL_TASK_QUEUE: "ap-messages"
+      DATABASE_URL: postgresql+asyncpg://ap:${POSTGRES_PASSWORD}@postgres:5432/agent_playground_api
+      AP_CHANNEL_MASTER_KEY: ${AP_CHANNEL_MASTER_KEY}
+    env_file:
+      - .env.prod
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../recipes:/app/recipes:ro
+
   api_server:
     build:
       context: ..
@@ -67,6 +157,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      temporal:
         condition: service_healthy
     environment:
       AP_ENV: prod
