@@ -30,6 +30,7 @@ import 'package:agent_playground/features/chat/input_bar.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
 import 'package:agent_playground/features/chat/timestamp_divider.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
+import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/failed_bubble.dart';
 import 'package:agent_playground/shared/restart_banner.dart';
 import 'package:agent_playground/shared/retry_banner.dart';
@@ -156,6 +157,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           fallbackId: widget.agentInstanceId,
         ),
         actions: [
+          const UsageTickerWidget(),
           if (showStopMenu)
             PopupMenuButton<String>(
               key: const Key('chat-overflow-menu'),

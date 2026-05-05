@@ -22,6 +22,7 @@ import 'package:agent_playground/features/new_agent/deploy_step.dart';
 import 'package:agent_playground/features/new_agent/model_picker_screen.dart';
 import 'package:agent_playground/features/new_agent/model_step.dart';
 import 'package:agent_playground/features/retry_bootstrap/retry_bootstrap_screen.dart';
+import 'package:agent_playground/features/usage/agent_usage_screen.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -83,6 +84,13 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
           path: '/chat/:agentInstanceId',
           builder: (_, state) => ChatScreen(
             agentInstanceId: state.pathParameters['agentInstanceId']!,
+          ),
+        ),
+        // Phase 27 Change 3b — per-agent BYOK usage breakdown.
+        GoRoute(
+          path: '/agents/:id/usage',
+          builder: (_, state) => AgentUsageScreen(
+            agentId: state.pathParameters['id']!,
           ),
         ),
       ],

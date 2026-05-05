@@ -37,6 +37,7 @@ import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/dashboard/agent_row.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
+import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/ascii_agent_banner.dart';
 import 'package:agent_playground/shared/confirm_dialog.dart';
 import 'package:agent_playground/shared/empty_state_scaffold.dart';
@@ -92,6 +93,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
         ),
         actions: [
+          const UsageTickerWidget(),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             tooltip: 'More',
