@@ -1357,16 +1357,11 @@ def run_cell_persistent(
         # applies only to the persistent container's ready-poll budget, NOT
         # to the pre_start loop total).
         # AP_DOCKER_NETWORK: pin the spawned container onto the same docker
-        # network as api_server. Default 'deploy_default' matches
-        # api_server/config.py::docker_network_name so the dispatcher's
-        # Networks[<name>].IPAddress lookup resolves out of the box.
-        # Without alignment the container lands on the host's default bridge
-        # (172.17.x) and inapp_dispatcher.ip_lookup_failed fires.
-        # Set AP_DOCKER_NETWORK="" explicitly to opt out (e.g. CI where
-        # the network doesn't exist yet).
-        docker_network = os.environ.get(
-            "AP_DOCKER_NETWORK", "deploy_default"
-        ).strip()
+        # network as api_server (default deploy_default). Without this the
+        # container lands on the host's default bridge (172.17.x) and the
+        # api_server's inapp_dispatcher cannot resolve its IP for HTTP
+        # forwarding (Networks[<docker_network_name>].IPAddress is empty).
+        docker_network = os.environ.get("AP_DOCKER_NETWORK", "").strip()
         docker_cmd = [
             "docker", "run", "-d",
             "--name", container_name,
@@ -1433,10 +1428,7 @@ def run_cell_persistent(
         )
 
         # AP_DOCKER_NETWORK: same fix as the channel-aware path above.
-        # Default 'deploy_default' aligns with api_server/config.py.
-        docker_network = os.environ.get(
-            "AP_DOCKER_NETWORK", "deploy_default"
-        ).strip()
+        docker_network = os.environ.get("AP_DOCKER_NETWORK", "").strip()
         docker_cmd = [
             "docker", "run", "-d",
             "--name", container_name,
