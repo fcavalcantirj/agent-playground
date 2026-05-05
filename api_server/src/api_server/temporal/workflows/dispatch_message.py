@@ -27,7 +27,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 from .types import ForwardResult  # noqa: F401  (re-exported for downstream)
 
@@ -150,7 +150,13 @@ class DispatchMessageWorkflow:
                 ),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
-        except ApplicationError as e:
+        except (ActivityError, ApplicationError) as e:
+            # Plan 28-07 Rule-1 fix: when an activity raises
+            # ApplicationError, the workflow receives ``ActivityError``
+            # whose ``.cause`` is the original ApplicationError. Catching
+            # only ApplicationError leaves the bot_timeout / bot_5xx /
+            # container_dead / recipe_lacks_inapp_channel branches as
+            # dead code. Catch both and unwrap inside the classifier.
             err = _classify_forward_failure(e)
             await self._fail(inp, err)
             return DispatchMessageResult(success=False, error_type=err)
@@ -163,6 +169,8 @@ class DispatchMessageWorkflow:
 
         # ---- Step 3a: record_usage (best-effort per D-15) ----
         # Failure is logged + swallowed; does NOT fail the workflow.
+        # Plan 28-07 Rule-1 fix: catch ActivityError too — see the
+        # forward_to_agent block above for the rationale.
         try:
             await workflow.execute_activity(
                 record_usage.record_usage,
@@ -173,7 +181,7 @@ class DispatchMessageWorkflow:
                     initial_interval=timedelta(seconds=1),
                 ),
             )
-        except ApplicationError as e:
+        except (ActivityError, ApplicationError) as e:
             workflow.logger.warning(
                 "phase28.record_usage.swallowed",
                 extra={"error": str(e), "message_id": inp.message_id},
@@ -190,7 +198,7 @@ class DispatchMessageWorkflow:
                 start_to_close_timeout=timedelta(seconds=5),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
-        except ApplicationError as e:
+        except (ActivityError, ApplicationError) as e:
             workflow.logger.warning(
                 "phase28.debit_balance.swallowed",
                 extra={"error": str(e), "message_id": inp.message_id},
@@ -204,7 +212,7 @@ class DispatchMessageWorkflow:
                 start_to_close_timeout=timedelta(seconds=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except ApplicationError as e:
+        except (ActivityError, ApplicationError) as e:
             workflow.logger.warning(
                 "phase28.emit_inapp_outbound.swallowed",
                 extra={"error": str(e), "message_id": inp.message_id},
@@ -248,24 +256,51 @@ class DispatchMessageWorkflow:
         )
 
 
-def _classify_forward_failure(e: ApplicationError) -> str:
-    """Map ``ApplicationError`` back to the AP error_type taxonomy.
+def _classify_forward_failure(e: BaseException) -> str:
+    """Map an activity-side failure back to the AP error_type taxonomy.
 
-    The forward_to_agent activity raises:
-        ``ApplicationError(message=<error_type>, type=<error_type>,
-        non_retryable=True)``
+    The ``forward_to_agent`` activity raises::
+
+        ApplicationError(message=<error_type>, type=<error_type>,
+                         non_retryable=True)
+
     where ``<error_type>`` is one of ``_KNOWN_ERROR_TYPES`` from
-    ``services/inapp_dispatcher.py:325-335``. The workflow recovers
-    the type string and forwards it to ``_fail`` + the workflow result.
+    ``services/inapp_dispatcher.py``. The workflow's ``except`` clause
+    catches the exception in one of two shapes:
+
+    * The raw ``ApplicationError`` (rare — would only fire if the
+      workflow body itself raised one).
+    * An ``ActivityError`` wrapping the ``ApplicationError`` as its
+      ``.cause`` (the normal case — the SDK wraps every exception
+      raised inside an activity execution).
 
     Resolution order (most specific to least):
-    1. ``e.type`` attribute (set by the activity).
-    2. ``e.args[0]`` (set by the ``ApplicationError(message=...)`` ctor).
-    3. ``"internal_error"`` fallback for unclassified bugs.
+      1. Walk the ``__cause__`` / ``cause`` chain to find an
+         ``ApplicationError`` and read its ``.type`` attribute.
+      2. Fall back to the outermost exception's ``.type`` attribute.
+      3. Fall back to the outermost exception's ``args[0]``.
+      4. ``"internal_error"`` fallback for unclassified bugs.
     """
+    # Walk the cause chain looking for an ApplicationError with a .type.
+    cur: BaseException | None = e
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, ApplicationError):
+            t = getattr(cur, "type", None)
+            if t:
+                return str(t)
+            if cur.args:
+                return str(cur.args[0])
+        # ActivityError exposes ``.cause`` (Temporal SDK property);
+        # generic Python exceptions chain via ``__cause__``. Try both.
+        nxt = getattr(cur, "cause", None) or cur.__cause__
+        cur = nxt
+
+    # Last-resort: outermost type / args.
     t = getattr(e, "type", None)
     if t:
         return str(t)
-    if e.args:
+    if getattr(e, "args", None):
         return str(e.args[0])
     return "internal_error"
