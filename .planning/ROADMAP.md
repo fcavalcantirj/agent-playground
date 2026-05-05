@@ -569,9 +569,7 @@ Plans:
 **UI hint:** medium (AppBar USD ticker on web + mobile + per-agent breakdown view)
 **Status:** queued; opens after `/clear`
 
-## Backlog
-
-### Phase 999.1: Temporal-backed message dispatch + dispatcher hardening (BACKLOG)
+### Phase 28: Temporal-backed message dispatch + dispatcher hardening
 
 **Goal:** Replace asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring MSV's `SendMessageWorkflow` pattern. Solves intermittent `container_not_ready` failures, observability gaps, defunct-element rendering races on chat reply, and unblocks Phase B (Stripe billing) by making debit + reply atomic-and-retryable. Also re-mounts the Phase 27 `UsageTickerWidget` (yanked at `27d3c79` due to Riverpod 3.x listener race) using a Consumer-scoped or post-frame-callback subscription.
 **Requirements:** TBD
@@ -603,9 +601,11 @@ Wins specific to AP:
 Reverses earlier "Don't Mirror MSV Temporal" decision in `PROJECT.md`. That decision was framed as "session loop is short-lived; an in-process supervisor is enough" — correct for session-create, **wrong for per-message dispatch** (which is exactly what MSV uses Temporal for).
 
 Plans:
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+- [ ] (to be planned via /gsd-discuss-phase 28)
 
-**Status:** backlog; opens when ready for hardening + Phase B prep
+**Status:** active; promoted from backlog 2026-05-05
+
+## Backlog
 
 ### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)
 
@@ -624,7 +624,7 @@ DO NOT START until:
 - Phase B (Stripe billing) ships in current Python stack
 - A specific reason emerges (perf wall, team growth, Go ergonomics matter more)
 
-Mitigation today: Phase 999.1 (Temporal-backed dispatch) writes workflow code in Go-portable style (pure functions, explicit state, no Python idioms in workflow logic) so the eventual Go port has a 1:1 template from MSV's Go workflows.
+Mitigation today: Phase 28 (Temporal-backed dispatch) writes workflow code in Go-portable style (pure functions, explicit state, no Python idioms in workflow logic) so the eventual Go port has a 1:1 template from MSV's Go workflows.
 
 Plans:
 - [ ] TBD (revisit after v0.3 ships)
