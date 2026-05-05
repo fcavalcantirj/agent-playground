@@ -71,6 +71,31 @@ class Settings(BaseSettings):
         "deploy_default", validation_alias="AP_DOCKER_NETWORK"
     )
 
+    # Phase 28 — Temporal client/worker config (D-01..D-05).
+    # The worker container reads these to dial the cluster on boot.
+    # api_server reads `temporal_host` + `temporal_namespace` to mint
+    # the Client used for `start_workflow` calls from POST /messages.
+    temporal_host: str = Field(
+        "temporal:7233",
+        validation_alias="AP_TEMPORAL_HOST",
+        description="Temporal frontend host:port (Docker DNS in compose; localhost:7233 if running outside compose).",
+    )
+    temporal_namespace: str = Field(
+        "default",
+        validation_alias="AP_TEMPORAL_NAMESPACE",
+        description="Temporal namespace. Single namespace per CONTEXT D-03.",
+    )
+    temporal_task_queue: str = Field(
+        "ap-messages",
+        validation_alias="AP_TEMPORAL_TASK_QUEUE",
+        description="Workflow task queue name. Single queue per CONTEXT D-05.",
+    )
+    bot_timeout_seconds: float = Field(
+        60.0,
+        validation_alias="AP_BOT_TIMEOUT_SECONDS",
+        description="Per-call bot HTTP timeout. Phase 28 D-12: forward_to_agent activity start_to_close = this + 30s buffer.",
+    )
+
     # --- OAuth (Phase 22c) ---
     # Google OAuth2 (OIDC). Test-users mode in dev; confidential client creds
     # required in prod. Fail-loud happens in ``auth/oauth.py::get_oauth()`` —
