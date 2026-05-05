@@ -573,7 +573,7 @@ Plans:
 
 **Goal:** Replace asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring MSV's `SendMessageWorkflow` pattern. Solves intermittent `container_not_ready` failures, observability gaps, defunct-element rendering races on chat reply, and unblocks Phase B (Stripe billing) by making debit + reply atomic-and-retryable. Also re-mounts the Phase 27 `UsageTickerWidget` (yanked at `27d3c79` due to Riverpod 3.x listener race) using a Consumer-scoped or post-frame-callback subscription.
 **Requirements:** D-01..D-25 (locked decisions in 28-CONTEXT.md)
-**Plans:** 3/9 plans executed
+**Plans:** 4/9 plans executed
 
 Key MSV patterns to copy (verbatim file paths in `/Users/fcavalcanti/dev/meusecretariovirtual/messaging/`):
 1. `activities/forward_to_agent.go:64-196` — activity-internal connection-error retry with exponential backoff `[1s, 2s, 4s]`. **This is the bullseye fix for the `container_not_ready` intermittent symptom.**
@@ -604,7 +604,7 @@ Plans:
 - [x] 28-01-PLAN.md — Wave 0 spike gate (Temporal/PG17 boot, workflow sandbox, worker bridge-IP routing)
 - [x] 28-02-PLAN.md — Compose recipe (temporal + temporal-ui + temporal-worker) + temporalio SDK pin + 4 Settings fields
 - [x] 28-03-PLAN.md — Workflow + types + client factory + activity stub modules (deterministic, MSV-Go-portable)
-- [ ] 28-04-PLAN.md — Activity bodies (readiness/forward/record_usage/emit/mark) + worker entry point + atomic mark+emit dual-write
+- [x] 28-04-PLAN.md — Activity bodies (readiness/forward/record_usage/emit/mark) + worker entry point + atomic mark+emit dual-write
 - [ ] 28-05-PLAN.md — Alembic 011 (workflow_id column + idempotency UNIQUE index) + cutover sweep script
 - [ ] 28-06-PLAN.md — CUTOVER (lifespan wiring + POST /messages start_workflow + delete _handle_row + dispatcher_loop)
 - [ ] 28-07-PLAN.md — Workflow + activity + route tests via WorkflowEnvironment + testcontainers + respx
