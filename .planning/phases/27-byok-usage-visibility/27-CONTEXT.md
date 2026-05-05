@@ -116,8 +116,9 @@ Surface **what is this agent costing me?** to BYOK users. Captures upstream LLM 
 - 403: agent owned by a different user — `{"error": {"code": "forbidden", ...}}`
 - 404: agent not found — `{"error": {"code": "agent_not_found", ...}}`
 
-**Implementation file:** `api_server/src/api_server/api/v1/usage.py` (new)
+**Implementation file:** `api_server/src/api_server/routes/usage.py` (new — confirmed by recon: api_server uses `routes/` not `api/v1/`)
 **Service file:** `api_server/src/api_server/services/usage_query.py` (new — read-side query helpers; the `usage_recorder.py` is write-side only)
+**Test file:** `api_server/tests/routes/test_usage_endpoints.py`
 
 </endpoint_contract>
 
@@ -129,8 +130,9 @@ Surface **what is this agent costing me?** to BYOK users. Captures upstream LLM 
 | 1 | Migration 010 (`usage_logs` + `cost_weights`) + 6 seed rows | ✅ SHIPPED | `eb406da` | Live round-trip + EXPLAIN proves Index Only Scan |
 | 2 | `UsageRecorder` service + `inapp_dispatcher` hook + 12 tests | ✅ SHIPPED | `475e11e` | 32/32 services tests pass; SAVEPOINT isolation |
 | — | CLAUDE.md golden rule #2 strengthened (any client) | ✅ SHIPPED | `202900c` | Mobile/web/CLI/SDK all dumb |
-| 3a | Backend `GET /v1/usage/summary` + `GET /v1/agents/:id/usage` + tests | 🔜 NEXT | — | TDD: write tests first |
-| 3b | Mobile AppBar ticker + per-agent breakdown screen | queued | — | Pure client; no logic |
+| — | CONTEXT.md (this file) — phase plan + state tracker | ✅ SHIPPED | `a1f76e5` | TDD methodology locked |
+| 3a | `GET /v1/usage/summary` + `GET /v1/agents/:id/usage` + 9 tests | ✅ SHIPPED | `0cc7470` | TDD RED→GREEN; 113 routes+services tests pass |
+| 3b | Mobile AppBar ticker + per-agent breakdown screen | 🔜 NEXT | — | Pure client; no logic. Consumes 3a endpoints |
 | 4 | Web AppBar ticker + per-agent breakdown view | queued | — | Reuses 3a endpoints |
 
 **Resume protocol after `/clear`:**
