@@ -91,6 +91,12 @@ class InappChannelConfig:
     auth_mode: Literal["none", "bearer", "token"] = "none"
     idempotency_header: str | None = None
     session_header: str | None = None
+    # Phase 27 — surfaced from the recipe's top-level ``runtime.provider``
+    # (NOT under channels.inapp). Used by the UsageRecorder to look up
+    # cost_weights rows. ``None`` for legacy recipes that pre-date the
+    # v0.2 runtime block — the recorder treats that as
+    # ``status='unknown'``.
+    provider: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +161,13 @@ def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
     req_env = inapp.get("request_envelope")
     resp_env = inapp.get("response_envelope")
 
+    # Phase 27 — pull the upstream LLM provider from the recipe's
+    # top-level ``runtime.provider`` (NOT under channels.inapp). All
+    # 5 v0.2 recipes set it; legacy one-shot recipes may lack it.
+    runtime = recipe_yaml.get("runtime")
+    provider_raw = runtime.get("provider") if isinstance(runtime, dict) else None
+    provider = str(provider_raw) if provider_raw else None
+
     return InappChannelConfig(
         transport="http_localhost",
         port=int(port),
@@ -178,6 +191,7 @@ def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
             if inapp.get("session_header") is not None
             else None
         ),
+        provider=provider,
     )
 
 

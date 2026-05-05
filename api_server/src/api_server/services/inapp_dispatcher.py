@@ -62,6 +62,7 @@ from typing import Any
 import asyncpg
 import httpx
 
+from . import usage_recorder
 from .event_store import insert_agent_event
 from .inapp_messages_store import (
     fetch_pending_for_dispatch,
@@ -106,8 +107,15 @@ async def _dispatch_http_localhost(
     container_ip: str,
     *,
     timeout_seconds: float = BOT_TIMEOUT_SECONDS,
-) -> str:
-    """Forward one message to the bot. Returns the reply text.
+) -> tuple[str, dict | None]:
+    """Forward one message to the bot. Returns ``(reply_text, raw_response_dict)``.
+
+    Phase 27 — the raw response dict is preserved so the
+    :mod:`usage_recorder` can extract the upstream ``usage`` block
+    (token counts) before the dict is dropped. ``None`` is returned for
+    contracts whose response shape carries no usable usage data
+    (a2a_jsonrpc / zeroclaw_native today); the recorder treats that
+    as ``status='unknown'``.
 
     The 3-way ``match inapp.contract:`` is the load-bearing core of
     this plan — adding a 4th contract later is a single new ``case``
@@ -119,15 +127,18 @@ async def _dispatch_http_localhost(
 
     * ``openai_compat``  — POST ``{url}{endpoint}`` with body
       ``{"model": <contract_model_name or "agent">, "messages": [{"role":"user","content": <content>}]}``;
-      parses ``data["choices"][0]["message"]["content"]``.
+      parses ``data["choices"][0]["message"]["content"]``. Returns
+      the full ``data`` dict so the recorder can read ``data["usage"]``.
     * ``a2a_jsonrpc``    — POST ``{url}/a2a`` (the recipe declares
       ``/a2a`` as ``endpoint``) with the JSON-RPC 2.0 envelope
       ``message/send``; parses
-      ``data["result"]["artifacts"][0]["parts"][0]["text"]``.
+      ``data["result"]["artifacts"][0]["parts"][0]["text"]``. Returns
+      ``None`` for the dict — the protocol strips usage.
     * ``zeroclaw_native``— POST ``{url}/webhook`` with body
       ``{"message": <content>}``; sends ``X-Session-Id`` header
       (always) + ``X-Idempotency-Key`` header (when present on the
-      row). Parses ``data["response"]``.
+      row). Parses ``data["response"]``. Returns ``None`` — native
+      shape has no usage.
 
     Raises:
 
@@ -178,7 +189,7 @@ async def _dispatch_http_localhost(
             resp.raise_for_status()
             data = resp.json()
             try:
-                return data["choices"][0]["message"]["content"]
+                return data["choices"][0]["message"]["content"], data
             except (KeyError, IndexError, TypeError) as e:
                 raise RuntimeError(f"openai_compat_parse_error:{e}") from e
 
@@ -205,7 +216,10 @@ async def _dispatch_http_localhost(
                 msg = err.get("message", "unknown") if isinstance(err, dict) else "unknown"
                 raise RuntimeError(f"a2a_error:{msg}")
             try:
-                return data["result"]["artifacts"][0]["parts"][0]["text"]
+                # a2a_jsonrpc strips usage at the protocol layer (Phase 27);
+                # return None as the response dict so the recorder marks
+                # the row status='unknown'.
+                return data["result"]["artifacts"][0]["parts"][0]["text"], None
             except (KeyError, IndexError, TypeError) as e:
                 raise RuntimeError(f"a2a_parse_error:{e}") from e
 
@@ -232,7 +246,9 @@ async def _dispatch_http_localhost(
             resp.raise_for_status()
             data = resp.json()
             try:
-                return data["response"]
+                # zeroclaw_native has no usage block; return None for the
+                # response dict so the recorder marks status='unknown'.
+                return data["response"], None
             except (KeyError, TypeError) as e:
                 raise RuntimeError(f"zeroclaw_parse_error:{e}") from e
 
@@ -390,13 +406,14 @@ async def _handle_row(state: Any, row: asyncpg.Record) -> None:
 
     # ---- Step 4: persist forwarded BEFORE the call (D-28) -------------
     pool = state.db
+    forwarded_at = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         await mark_forwarded(conn, [row["id"]])
 
     # ---- Step 5: the single bot call (no retry — D-40) ----------------
     timeout_seconds = getattr(state, "bot_timeout_seconds", BOT_TIMEOUT_SECONDS)
     try:
-        reply = await _dispatch_http_localhost(
+        reply, response_dict = await _dispatch_http_localhost(
             state.bot_http_client,
             row,
             inapp,
@@ -440,8 +457,10 @@ async def _handle_row(state: Any, row: asyncpg.Record) -> None:
         await _terminal_failure(state, row, "bot_empty")
         return
 
-    # ---- Step 6: success path — mark_done + agent_events -------------
-    captured_at = datetime.now(timezone.utc).isoformat()
+    # ---- Step 6: success path — mark_done + agent_events + usage_logs -
+    completed_at = datetime.now(timezone.utc)
+    captured_at = completed_at.isoformat()
+    latency_ms = int((completed_at - forwarded_at).total_seconds() * 1000)
     payload = {
         "content": reply,
         "source": "agent",
@@ -455,6 +474,22 @@ async def _handle_row(state: Any, row: asyncpg.Record) -> None:
                 row["container_row_id"],
                 "inapp_outbound",
                 payload,
+            )
+            # Phase 27 — record one usage_logs row per upstream call.
+            # Same transaction as mark_done so the row is atomic with the
+            # message it describes. record_usage swallows its own errors;
+            # a recorder failure must never roll back the chat reply.
+            await usage_recorder.record_usage(
+                conn,
+                user_id=row["user_id"],
+                agent_instance_id=row["agent_id"],
+                message_id=row["id"],
+                contract=inapp.contract,
+                provider=inapp.provider,
+                model=row["agent_model"],
+                response=response_dict,
+                latency_ms=latency_ms,
+                source="inapp",
             )
 
 

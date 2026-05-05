@@ -260,9 +260,11 @@ async def _fetch_dispatcher_row(
             SELECT m.id, m.agent_id, m.user_id, m.content, m.attempts,
                    c.id AS container_row_id, c.container_id, c.container_status,
                    c.ready_at, c.stopped_at, c.recipe_name, c.channel_type,
-                   c.inapp_auth_token
+                   c.inapp_auth_token,
+                   i.model AS agent_model
             FROM inapp_messages m
             JOIN agent_containers c ON c.agent_instance_id = m.agent_id
+            JOIN agent_instances i ON i.id = m.agent_id
             WHERE m.id=$1
             """,
             message_id,
