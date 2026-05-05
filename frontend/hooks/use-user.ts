@@ -30,22 +30,7 @@ export function useUser(): SessionUser | null {
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
-          // Phase 26: backend returns error.code='SESSION_REVOKED' on
-          // 401 when this device's session was killed by another
-          // device's logout-all (or admin revoke). Forward as a
-          // ?reason=session_revoked query param so /login can render
-          // a "Your session was ended on another device" banner
-          // instead of the generic "Signed out" copy.
-          let reason: string | null = null;
-          try {
-            const body = JSON.parse(err.body ?? "");
-            if (body?.error?.code === "SESSION_REVOKED") {
-              reason = "session_revoked";
-            }
-          } catch {
-            // Body wasn't JSON or was empty — fall through to bare /login.
-          }
-          router.push(reason ? `/login?reason=${reason}` : "/login");
+          router.push("/login");
           return;
         }
         // Non-401 error — leave user as null. The UI will continue to

@@ -1,23 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { apiPost } from "@/lib/api"
 import {
   Shield,
   Bell,
@@ -25,11 +11,9 @@ import {
   Moon,
   Trash2,
   AlertTriangle,
-  LogOut,
 } from "lucide-react"
 
 export default function SettingsPage() {
-  const router = useRouter()
   const [settings, setSettings] = useState({
     emailNotifications: true,
     pushNotifications: false,
@@ -38,23 +22,6 @@ export default function SettingsPage() {
     publicProfile: false,
     twoFactorAuth: false,
   })
-  const [isLoggingOutAll, setIsLoggingOutAll] = useState(false)
-
-  // Phase 26 H2 — POST /v1/auth/logout-all. Backend revokes every
-  // sessions row for the calling user (this device too, per CONTEXT
-  // D-04) and writes an auth_events audit row. Cookie is cleared on
-  // the response; navigate to /login on success.
-  const handleLogoutAll = async () => {
-    setIsLoggingOutAll(true)
-    try {
-      await apiPost("/api/v1/auth/logout-all", {})
-      router.push("/login")
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Couldn't log out everywhere"
-      toast.error(msg)
-      setIsLoggingOutAll(false)
-    }
-  }
 
   return (
     <div>
@@ -172,42 +139,6 @@ export default function SettingsPage() {
                 <Input type="password" placeholder="New password" className="flex-1 bg-background/50" />
                 <Button variant="outline">Update</Button>
               </div>
-            </div>
-
-            {/* Phase 26 H2 — log out of every device for this user. */}
-            <div className="border-t border-border/50 pt-4">
-              <p className="mb-2 text-sm font-medium text-foreground">Sign out everywhere</p>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Revoke every active session for your account, including this one.
-                Useful if you suspect a device was compromised. Running agents keep running.
-              </p>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" className="gap-2" disabled={isLoggingOutAll}>
-                    <LogOut className="h-4 w-4" />
-                    Log out everywhere
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Log out everywhere?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      You will be signed out on every device, including this one.
-                      Running agents keep running.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={isLoggingOutAll}>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleLogoutAll}
-                      disabled={isLoggingOutAll}
-                      className="bg-destructive text-white hover:bg-destructive/90"
-                    >
-                      {isLoggingOutAll ? "Signing out…" : "Log out everywhere"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
             </div>
           </div>
         </div>
