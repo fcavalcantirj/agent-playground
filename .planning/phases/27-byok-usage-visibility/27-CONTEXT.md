@@ -132,8 +132,17 @@ Surface **what is this agent costing me?** to BYOK users. Captures upstream LLM 
 | — | CLAUDE.md golden rule #2 strengthened (any client) | ✅ SHIPPED | `202900c` | Mobile/web/CLI/SDK all dumb |
 | — | CONTEXT.md (this file) — phase plan + state tracker | ✅ SHIPPED | `a1f76e5` | TDD methodology locked |
 | 3a | `GET /v1/usage/summary` + `GET /v1/agents/:id/usage` + 9 tests | ✅ SHIPPED | `0cc7470` | TDD RED→GREEN; 113 routes+services tests pass |
-| 3b | Mobile AppBar ticker + per-agent breakdown screen | 🔜 NEXT | — | Pure client; no logic. Consumes 3a endpoints |
-| 4 | Web AppBar ticker + per-agent breakdown view | queued | — | Reuses 3a endpoints |
+| 3b | Mobile AppBar ticker + per-agent breakdown screen | 🔜 NEXT | — | Pure client; no logic. Consumes 3a endpoints. **TDD + 4-agent recon required before write** |
+| 4 | ~~Web AppBar ticker~~ DEFERRED | out-of-phase | — | Web has separate look&feel + brand identity (not "Agent Playground" — different name TBD). Will land as its own phase. Annotated below. |
+
+### Web — deferred (out of Phase 27 scope, 2026-05-04 evening)
+
+The web frontend is going through a brand re-skin and will not share Phase 27's UI. Annotated here so the work isn't lost when its phase opens:
+
+- The 3a endpoints (`GET /v1/usage/summary` + `GET /v1/agents/:id/usage`) are already shipped + tested and remain ready for any future client (web included)
+- Web's eventual implementation will: (a) add a USD ticker beside profile in top nav, (b) add a per-agent breakdown view, (c) reuse the same JSON contract the mobile client consumes
+- The unit-of-account decision (BYOK = USD per D-22..D-27) applies to web identically when its phase opens
+- New phase will own the brand-aligned styling; nothing in `frontend/` is touched in Phase 27
 
 **Resume protocol after `/clear`:**
 1. Read `memory/MEMORY.md` (auto-loaded — index of everything)
