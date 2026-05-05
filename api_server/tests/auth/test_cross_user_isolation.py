@@ -62,6 +62,9 @@ async def test_two_users_see_only_their_own_agents(async_client, migrated_pg):
             "006_purge_anonymous",
             "007_inapp_messages",
             "008_idempotency_relax_run_fk",
+            "009_auth_events_revoked_reason",
+            "010_usage_logs_cost_weights",
+            "011_phase28_workflow_id_idem",
         }
         assert version in ALLOWED_HEADS, (
             f"expected HEAD in ALLOWED_HEADS (proving migration 006 ran "
