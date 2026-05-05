@@ -165,23 +165,4 @@ class AuthServiceReal implements AuthService {
     await storage.clearSessionId();
     // BYOK keys NOT cleared — D-25/D-33.
   }
-
-  @override
-  Future<Result<int>> signOutEverywhere() async {
-    // Phase 26 H2 — POST /v1/auth/logout-all. Backend revokes every
-    // sessions row for the calling user_id (this device too, per D-04)
-    // and writes an auth_events row. We then clear local session_id +
-    // best-effort GoogleSignIn signout; the BYOK keys stay (D-25/D-33).
-    final res = await apiClient.authLogoutAll();
-    // Always clear local state on best-effort basis so a transient
-    // backend hiccup doesn't leave the device in a half-logged-out
-    // limbo. The next request will 401 anyway (the cookie is gone).
-    try {
-      await GoogleSignIn.instance.signOut();
-    } on Object catch (_) {
-      // best-effort
-    }
-    await storage.clearSessionId();
-    return res;
-  }
 }

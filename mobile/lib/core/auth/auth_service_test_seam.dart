@@ -40,14 +40,4 @@ class AuthServiceTestSeam implements AuthService {
     await storage.clearSessionId();
     // BYOK keys NOT cleared per D-25/D-33.
   }
-
-  @override
-  Future<Result<int>> signOutEverywhere() async {
-    // Test seam — no real backend call. The integration test that drives
-    // logout-all should override authServiceProvider with a custom seam
-    // OR mock the api directly. Returning a stable Result.ok(0) keeps
-    // unit tests deterministic.
-    await storage.clearSessionId();
-    return const Result.ok(0);
-  }
 }

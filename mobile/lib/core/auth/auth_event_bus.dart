@@ -10,15 +10,7 @@
 import 'dart:async';
 
 class AuthRequired {
-  const AuthRequired({this.reason});
-
-  /// Optional revocation reason carried from the api_server's 401 envelope.
-  /// Phase 26: when the api returns `error.code == 'SESSION_REVOKED'`, the
-  /// AuthInterceptor extracts it and forwards as `reason: 'session_revoked'`
-  /// so the login screen can render a "session ended elsewhere" banner.
-  /// Null on the existing generic-401 path (cookie expired / never signed
-  /// in / self-logout) — login shows the standard "Signed out" copy.
-  final String? reason;
+  const AuthRequired();
 }
 
 class AuthEventBus {
@@ -29,8 +21,7 @@ class AuthEventBus {
 
   Stream<AuthRequired> get events => _controller.stream;
 
-  void emit({String? reason}) =>
-      _controller.add(AuthRequired(reason: reason));
+  void emit() => _controller.add(const AuthRequired());
 
   Future<void> dispose() => _controller.close();
 }

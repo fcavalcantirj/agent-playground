@@ -15,11 +15,4 @@ abstract interface class AuthService {
   Future<Result<SessionUser>> signInWithGoogle();
   Future<Result<SessionUser>> signInWithGithub();
   Future<void> signOut();
-
-  /// Phase 26 H2 — log out of every device for this user (including
-  /// this one). Backend revokes every `sessions` row + writes an
-  /// `auth_events` audit row. The user re-logs in on this device too
-  /// per CONTEXT D-04 (most defensive against the compromised-device
-  /// threat). Returns the count of devices revoked or an error.
-  Future<Result<int>> signOutEverywhere();
 }

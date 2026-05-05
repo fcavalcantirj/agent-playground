@@ -37,13 +37,9 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
   void initState() {
     super.initState();
     // D-03 — any 401 mid-session: clear session_id (AuthInterceptor already
-    // does), set the signed-out banner, route to /login. Phase 26: forward
-    // the optional revocation reason ('session_revoked' for logout-all
-    // from another device) so the login banner picks the right copy.
-    _authSub = ref.read(authEventBusProvider).events.listen((event) {
+    // does), set the signed-out banner, route to /login.
+    _authSub = ref.read(authEventBusProvider).events.listen((_) {
       ref.read(showSignedOutBannerProvider.notifier).state = true;
-      ref.read(sessionRevocationReasonProvider.notifier).state =
-          event.reason;
       _router.go('/login');
     });
   }

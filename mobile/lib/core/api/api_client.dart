@@ -395,24 +395,4 @@ class ApiClient {
     }
   }
 
-  /// Phase 26 H2 — POST /v1/auth/logout-all.
-  ///
-  /// Revokes every sessions row for the calling user (this device too,
-  /// per CONTEXT D-04). The api_server clears the cookie on the response,
-  /// but this client also clears `session_id` from secure storage via
-  /// the AuthService caller so subsequent requests don't replay it.
-  /// Returns the count of devices revoked, primarily useful for
-  /// "logged you out of N other devices" UX flourishes.
-  Future<Result<int>> authLogoutAll({CancelToken? cancelToken}) async {
-    try {
-      final res = await _dio.post<Map<String, dynamic>>(
-        ApiEndpoints.authLogoutAll,
-        cancelToken: cancelToken,
-      );
-      final count = (res.data?['revoked'] as int?) ?? 0;
-      return Result.ok(count);
-    } on DioException catch (e) {
-      return Result.err(ApiError.fromDioException(e));
-    }
-  }
 }

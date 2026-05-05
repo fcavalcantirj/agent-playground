@@ -16,11 +16,4 @@ final loginErrorProvider = StateProvider<String?>((ref) => null);
 
 final showSignedOutBannerProvider = StateProvider<bool>((ref) => false);
 
-/// Phase 26: optional reason carried from the AuthRequired event so the
-/// login screen can branch its banner copy. ``'session_revoked'`` →
-/// "Your session was ended on another device." Null → existing
-/// "Signed out" copy (cookie expired / never signed in / self-logout).
-final sessionRevocationReasonProvider =
-    StateProvider<String?>((ref) => null);
-
 final loginSuccessProvider = StateProvider<SessionUser?>((ref) => null);
