@@ -101,4 +101,5 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
   "api_integration: spawn real Postgres + run real recipe; opt-in via pytest -m api_integration",
+  "spike: Phase 28 Wave 0 empirical spike against real infra (Temporal/Docker); opt-in via pytest -m spike",
 ]
