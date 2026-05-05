@@ -50,6 +50,7 @@ async def insert_pending(
     agent_id: UUID,
     user_id: UUID,
     content: str,
+    idempotency_key: str | None = None,
 ) -> UUID:
     """INSERT a new row with ``status='pending'`` and ``attempts=0``.
 
@@ -58,20 +59,77 @@ async def insert_pending(
     explicitly so a future migration that changes the default can be
     rolled out without touching this function.
 
+    Phase 28 (D-14, defense-in-depth): when ``idempotency_key`` is
+    provided, the INSERT uses ``ON CONFLICT (user_id, idempotency_key)
+    DO UPDATE SET content = inapp_messages.content`` so a duplicate
+    request transparently surfaces the existing row's id (no-op UPDATE
+    with RETURNING). This pairs with the column-level UNIQUE partial
+    index ``ix_inapp_messages_idempotency_key_unique`` from migration
+    011 (Plan 28-05) and the request-layer ``IdempotencyMiddleware``
+    24h TTL ("AND" not "OR" — both layers active simultaneously).
+
     The caller (Plan 22c.3-08 ``POST /v1/agents/:id/messages``) is
     responsible for asserting ``content != ""`` per D-41 BEFORE calling
     here; the store does NOT re-validate (single seam discipline + no
     duplicated invariants).
     """
-    row = await conn.fetchrow(
-        """
-        INSERT INTO inapp_messages (agent_id, user_id, content)
-        VALUES ($1, $2, $3)
-        RETURNING id
-        """,
-        agent_id, user_id, content,
-    )
+    if idempotency_key is None:
+        # Pre-Phase-28 path preserved verbatim so callers that don't
+        # carry an Idempotency-Key (none today, but defense-in-depth
+        # against future call sites) keep the old INSERT shape.
+        row = await conn.fetchrow(
+            """
+            INSERT INTO inapp_messages (agent_id, user_id, content)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            """,
+            agent_id, user_id, content,
+        )
+    else:
+        # Phase 28: idempotent insert. The ``DO UPDATE SET content =
+        # inapp_messages.content`` is the canonical Postgres idiom for
+        # "give me back the existing row's id without changing it" —
+        # RETURNING then surfaces the (possibly pre-existing) message_id.
+        # The partial UNIQUE index covers exactly this conflict tuple
+        # ``(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL``
+        # so the ON CONFLICT clause matches the index predicate.
+        row = await conn.fetchrow(
+            """
+            INSERT INTO inapp_messages
+                (agent_id, user_id, content, idempotency_key)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                DO UPDATE SET content = inapp_messages.content
+            RETURNING id
+            """,
+            agent_id, user_id, content, idempotency_key,
+        )
     return row["id"]
+
+
+async def set_workflow_id(
+    conn: asyncpg.Connection,
+    *,
+    message_id: UUID,
+    workflow_id: str,
+) -> None:
+    """Phase 28 — back-fill the ``workflow_id`` column for ops correlation.
+
+    Called by the route handler AFTER ``Client.start_workflow`` returns
+    so operators can correlate a row in ``inapp_messages`` to a
+    workflow execution in the Temporal UI. The column was added by
+    migration 011 (Plan 28-05) — partial-indexed for cheap lookups.
+
+    Best-effort: if the UPDATE finds no row (the row was deleted between
+    insert and start_workflow — extremely rare), it's a no-op. The
+    workflow itself doesn't depend on this back-fill; activities key on
+    ``message_id`` directly.
+    """
+    await conn.execute(
+        "UPDATE inapp_messages SET workflow_id = $2 WHERE id = $1",
+        message_id, workflow_id,
+    )
 
 
 async def fetch_by_id(

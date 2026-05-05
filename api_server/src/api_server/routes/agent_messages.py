@@ -28,18 +28,24 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+from temporalio.client import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from ..auth.deps import require_user
 from ..models.errors import ErrorCode, make_error_envelope
 from ..services import inapp_messages_store as ims
 from ..services.run_store import fetch_agent_instance
+from ..temporal.workflows.dispatch_message import (
+    DispatchMessageInput,
+    DispatchMessageWorkflow,
+)
 
 
 router = APIRouter()
@@ -123,22 +129,40 @@ async def post_message(
     body: PostMessageRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """D-07 + D-29: fast-ack 202 with ``{message_id}``. Dispatcher picks the row.
+    """D-07 + D-29 + Phase 28 D-06: fast-ack 202; DispatchMessageWorkflow runs.
 
-    9-step flow:
+    Phase 28 cutover flow (replaces the legacy ``dispatcher_loop``
+    asyncpg pump per D-06):
 
-      1. Session cookie → ``user_id`` via ``require_user`` (D-18).
-      2. Ownership at SQL — ``fetch_agent_instance`` filters by user_id;
+      1. Idempotency-Key required (D-09 — runs BEFORE require_user).
+      2. Session cookie → ``user_id`` via ``require_user`` (D-18).
+      3. Ownership at SQL — ``fetch_agent_instance`` filters by user_id;
          404 AGENT_NOT_FOUND if missing (NOT 403, to avoid existence leak).
-      3. BYOK leak defense — refuse to persist content that looks like
+      4. BYOK leak defense — refuse to persist content that looks like
          it carries an API key.
-      4. ``insert_pending`` writes the row in 'pending' state.
-      5. Return 202 with ``{message_id, status, queued_at}`` within ~50ms.
+      5. Resolve the most-recent ``agent_containers`` row (running
+         preferred; fall back to most-recently-created). 404 if none.
+         The container_row_id, container_id, channel auth_token, and
+         channel_type are read here so the workflow inputs are sealed
+         at start time.
+      6. ``insert_pending`` writes the inapp_messages row in 'pending'
+         state. ON CONFLICT (user_id, idempotency_key) returns the
+         pre-existing row (defense-in-depth on top of the request-layer
+         ``IdempotencyMiddleware`` 24h TTL).
+      7. ``Client.start_workflow(DispatchMessageWorkflow.run, ...)``
+         with workflow id ``msg-{user_id}-{message_id}`` (D-08 —
+         user-scoped so Temporal UI can filter by ``msg-{user_id}-*``)
+         and ``execution_timeout=timedelta(minutes=5)`` (D-13).
+         WorkflowAlreadyStartedError (REJECT_DUPLICATE policy fires)
+         is treated as a successful idempotent replay.
+      8. Best-effort back-fill ``inapp_messages.workflow_id`` for ops
+         correlation between the row and the Temporal UI execution.
+      9. Return 202 with ``{message_id, status, queued_at}`` within
+         ~50ms.
 
-    The dispatcher loop (Plan 22c.3-05) picks up the row in <1s and
-    forwards to the bot. Per D-46 this endpoint does NOT bump
-    ``agent_instances.total_runs`` — that counter is reserved for
-    ``/v1/runs`` (one-shot) and ``/v1/agents/:id/start`` (persistent).
+    Per D-46 this endpoint does NOT bump ``agent_instances.total_runs``
+    — that counter is reserved for ``/v1/runs`` (one-shot) and
+    ``/v1/agents/:id/start`` (persistent).
     """
     # --- D-09: Idempotency-Key REQUIRED enforcement ---
     # Runs BEFORE require_user so a missing header is a request-shape
@@ -151,6 +175,7 @@ async def post_message(
             "Idempotency-Key header is required",
             param="Idempotency-Key",
         )
+    idem_key = idempotency_key.strip()
 
     # --- Step 1: require_user (D-18) ---
     sess = require_user(request)
@@ -176,13 +201,115 @@ async def post_message(
             param="content",
         )
 
-    # --- Step 4: INSERT pending (Plan 22c.3-04 store seam) ---
+    # --- Step 4: resolve most-recent agent_containers row ---
+    # The workflow input must carry container_row_id + container_id +
+    # inapp_auth_token at start time so the activities don't have to
+    # re-resolve them per attempt. Prefer running > most-recent stopped
+    # so a just-restarted container is picked up immediately. The
+    # readiness gate (check_container_ready activity) runs against the
+    # row we hand it — if the container is mid-boot, that activity's
+    # internal retry budget [250ms..4s] covers the window per D-10.
     async with pool.acquire() as conn:
-        message_id = await ims.insert_pending(
-            conn, agent_id=agent_id, user_id=user_id, content=body.content,
+        container_row = await conn.fetchrow(
+            """
+            SELECT id AS container_row_id,
+                   container_id,
+                   inapp_auth_token
+              FROM agent_containers
+             WHERE agent_instance_id = $1
+             ORDER BY (stopped_at IS NULL) DESC, created_at DESC
+             LIMIT 1
+            """,
+            agent_id,
+        )
+    if container_row is None or not container_row["container_id"]:
+        return _err(
+            404, ErrorCode.AGENT_NOT_FOUND,
+            f"agent {agent_id} has no container", param="agent_id",
         )
 
-    # --- Step 5: 202 with message_id (D-29 fast-ack) ---
+    # --- Step 5: INSERT pending (Plan 22c.3-04 store seam) ---
+    # Phase 28 D-14 defense-in-depth: pass the Idempotency-Key into
+    # insert_pending so the column-level UNIQUE partial index returns
+    # the pre-existing row on duplicate-key replay (no UniqueViolation
+    # surface). Pairs with the request-layer IdempotencyMiddleware.
+    async with pool.acquire() as conn:
+        message_id = await ims.insert_pending(
+            conn,
+            agent_id=agent_id,
+            user_id=user_id,
+            content=body.content,
+            idempotency_key=idem_key,
+        )
+
+    # --- Step 6: start the DispatchMessageWorkflow (D-06, D-08, D-13) ---
+    settings = request.app.state.settings
+    temporal_client = request.app.state.temporal_client
+    # D-08 revised — user-scoped so Temporal UI search ``msg-{user_id}-*``
+    # lists every workflow for that user; defense-in-depth against
+    # cross-user mis-dispatch.
+    workflow_id = f"msg-{user_id}-{message_id}"
+    try:
+        await temporal_client.start_workflow(
+            DispatchMessageWorkflow.run,
+            DispatchMessageInput(
+                message_id=str(message_id),
+                user_id=str(user_id),
+                agent_id=str(agent_id),
+                container_row_id=str(container_row["container_row_id"]),
+                container_id=container_row["container_id"],
+                recipe_name=agent["recipe_name"],
+                agent_model=agent["model"],
+                content=body.content,
+                inapp_auth_token=container_row["inapp_auth_token"],
+                bot_timeout_seconds=settings.bot_timeout_seconds,
+            ),
+            id=workflow_id,
+            task_queue=settings.temporal_task_queue,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            execution_timeout=timedelta(minutes=5),  # D-13
+        )
+        _log.info(
+            "phase28.start_workflow",
+            extra={
+                "workflow_id": workflow_id,
+                "message_id": str(message_id),
+                "agent_id": str(agent_id),
+                "task_queue": settings.temporal_task_queue,
+            },
+        )
+    except WorkflowAlreadyStartedError:
+        # Same client + same Idempotency-Key replay path. The workflow
+        # is already running (or completed); return the same 202 the
+        # original request produced. The IdempotencyMiddleware should
+        # have already short-circuited here, but defense-in-depth: a
+        # client retry that bypasses the middleware (e.g. different
+        # IP, middleware cache evicted) still receives a stable 202.
+        _log.info(
+            "phase28.start_workflow.duplicate",
+            extra={"workflow_id": workflow_id, "message_id": str(message_id)},
+        )
+
+    # --- Step 7: best-effort back-fill workflow_id for ops correlation ---
+    # The column was added by migration 011 (Plan 28-05) so operators
+    # can join an inapp_messages row to the Temporal UI execution by
+    # ``workflow_id`` rather than guessing from timestamps.
+    try:
+        async with pool.acquire() as bf_conn:
+            await ims.set_workflow_id(
+                bf_conn, message_id=message_id, workflow_id=workflow_id,
+            )
+    except Exception:
+        # Best-effort — never fail the request because the back-fill
+        # raced (DELETE between insert and UPDATE) or the column is
+        # somehow unavailable. The workflow itself doesn't depend on
+        # this back-fill being successful.
+        _log.exception(
+            "phase28.set_workflow_id.failed",
+            extra={"workflow_id": workflow_id, "message_id": str(message_id)},
+        )
+
+    # --- Step 8: 202 with message_id (D-29 fast-ack) ---
     return JSONResponse(
         status_code=202,
         content={
