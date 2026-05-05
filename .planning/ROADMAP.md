@@ -606,3 +606,27 @@ Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
 **Status:** backlog; opens when ready for hardening + Phase B prep
+
+### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)
+
+**Goal:** Port `api_server/` (Python/FastAPI) and `tools/run_recipe.py` (Python) to Go (Echo v4 + moby/moby/client + golang-migrate). Restores the original PROJECT.md "Go API + Next.js — mirror MSV" stack decision that was abandoned during the 2026-04-15 recon pivot. The current Python stack landed as a consequence of `tools/run_recipe.py` being Python — the api_server reuses the runner via `importlib`, so cross-language would mean reimplementing the runner OR shelling out per agent action (worse than importlib).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Effort estimate: 8-12 focused weeks
+- api_server FastAPI → Echo v4: 4-6 weeks
+- tools/run_recipe.py reimplementation in Go: 2-3 weeks
+- Tests rewrite (pytest + testcontainers → go test + testcontainers-go): 1-2 weeks
+- Alembic → golang-migrate: 1 week
+
+DO NOT START until:
+- Milestone v0.3 (Solvr Labs mobile MVP) ships and product shape is validated
+- Phase B (Stripe billing) ships in current Python stack
+- A specific reason emerges (perf wall, team growth, Go ergonomics matter more)
+
+Mitigation today: Phase 999.1 (Temporal-backed dispatch) writes workflow code in Go-portable style (pure functions, explicit state, no Python idioms in workflow logic) so the eventual Go port has a 1:1 template from MSV's Go workflows.
+
+Plans:
+- [ ] TBD (revisit after v0.3 ships)
+
+**Status:** backlog; deferred indefinitely
