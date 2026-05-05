@@ -51,6 +51,7 @@ from .routes import models as models_route
 from .routes import recipes as recipes_route
 from .routes import runs as runs_route
 from .routes import schemas as schemas_route
+from .routes import usage as usage_route
 from .routes import users as users_route
 from .services.recipes_loader import load_all_recipes
 
@@ -487,6 +488,7 @@ def create_app() -> FastAPI:
     # state + ApSessionMiddleware for request.state.user_id resolution).
     app.include_router(auth_route.router, prefix="/v1", tags=["auth"])
     app.include_router(users_route.router, prefix="/v1", tags=["users"])
+    app.include_router(usage_route.router, prefix="/v1", tags=["usage"])
     return app
 
 
