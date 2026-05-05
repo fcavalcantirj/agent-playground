@@ -1,20 +1,47 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.2
-milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
-stopped_at: Phase 26 SHIPPED — clearing context to start Phase 27 fresh (2026-05-04)
-last_updated: "2026-05-04T22:55:00.000Z"
-last_activity: 2026-05-04 -- Phase 26 (logout-everywhere/H2) shipped 5 atomic commits; Phase 27 (BYOK Usage Visibility/Phase A) queued, CONTEXT pending
+milestone: v0.3
+milestone_name: "Mobile MVP / Solvr Labs — Phase 22-28"
+status: ready_to_execute
+stopped_at: "2026-05-05 — Phase 28 planned (verifier PASS iter 2/3); Wave 0 spike checkpoint awaits user-approved kickoff"
+last_updated: "2026-05-05T17:30:00.000Z"
+last_activity: "2026-05-05 — Phase 28 (Temporal-backed message dispatch + dispatcher hardening) planned; ready for /gsd-execute-phase 28 --auto"
 progress:
-  total_phases: 19
-  completed_phases: 5
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_phases: 29
+  completed_phases: 27
+  total_plans: 100+
+  completed_plans: ~95
+  percent: 93
 ---
 
-# Project State
+## Resume after /clear (2026-05-05)
+
+**Current state:** Phase 28 fully planned, ready to execute. 9 plans across 8 waves committed at `06c802d` + `1bb831e` (D-08 user-id revision).
+
+**Read in this order after /clear:**
+1. `memory/MEMORY.md` (auto-loaded — index of every memory file)
+2. `memory/project_phase_28_planned_handoff.md` — THE handoff for Phase 28 with full state
+3. `.planning/phases/28-temporal-dispatch/28-CONTEXT.md` — 25 D-XX decisions (D-08 revised post-discussion to user-scoped workflow ID)
+4. `.planning/phases/28-temporal-dispatch/28-RESEARCH.md` — SDK pin + compose recipe + 7 migration risks + code skeletons
+5. `.planning/phases/28-temporal-dispatch/28-{01..09}-PLAN.md` — execution plans
+6. `git log --oneline -15` — confirm HEAD is at `1bb831e` (D-08 user-id revision) or later
+
+**Next command:**
+```
+/gsd-execute-phase 28 --auto
+```
+
+Wave 0 (28-01) is a spike checkpoint — execution will pause for user review before later waves run.
+
+**Phase 28 in one paragraph:**
+Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring MSV's `SendMessageWorkflow`. Solves intermittent `container_not_ready` failures (activity-internal `[1s, 2s, 4s]` retry), observability gaps (Temporal UI on :8088), and re-mounts the Phase 27 ticker with a Consumer-scoped pattern that survives screen tear-down. Big-bang migration, ~3 days focused work. Workflow ID = `msg-{user_id}-{message_uuid}` (D-08 user-scoped per user feedback). Worker runs in a separate `deploy-temporal-worker-1` container on `deploy_default` (D-04).
+
+**Backlog:**
+- `999.2` — Go API rewrite (deferred until v0.3 validates; 8-12 week effort if revisited)
+
+---
+
+# Project State (historical body — pre-Phase 28; preserved for audit trail)
 
 ## Project Reference
 
@@ -582,9 +609,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-03T22:48:05.652Z
+Last session: 2026-05-05T20:06:04.986Z
 
-Stopped at: context exhaustion at 90% (2026-05-03)
+Stopped at: context exhaustion at 90% (2026-05-05)
 
 **Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
 
