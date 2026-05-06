@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-06T17:37:42Z"
-last_activity: 2026-05-06 -- Phase 29 Plan 03 SHIPPED (proxy_dispatcher provider table)
+last_updated: "2026-05-06T17:50:00Z"
+last_activity: 2026-05-06 -- Phase 29 Plan 02 SHIPPED (alembic migration 013 — proxy columns + idempotency status + AMD-03 verdict_json NULLABLE; live deploy-postgres-1 at rev 013; 11 unknown rows wiped)
 progress:
   total_phases: 19
   completed_phases: 5
@@ -56,9 +56,9 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Phase: 29 (llm-egress-proxy) — EXECUTING
-Plan: 29-03 SHIPPED (Wave 1, no checkpoint); 29-02 (alembic migration) still pending in Wave 1
+Plan: 29-02 + 29-03 SHIPPED (Wave 1 COMPLETE — both no-checkpoint plans done)
 Status: Executing Phase 29
-Last activity: 2026-05-06 -- Phase 29 Plan 03 SHIPPED (proxy_dispatcher provider table; 10 tests / 14 items GREEN; commits 4e1924a + 3f7e3fe)
+Last activity: 2026-05-06 -- Phase 29 Plan 02 SHIPPED (alembic migration 013_phase29_proxy_columns; commits a854b94 + dfcdc0d + f944137; live deploy-postgres-1 at rev 013; 11 usage_logs.status='unknown' rows wiped via D-06; AMD-03 verdict_json relaxed to NULLABLE per PROBE-VAL-09)
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)

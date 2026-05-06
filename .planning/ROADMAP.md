@@ -623,7 +623,7 @@ Plans:
 
 **Plans:** 9 plans across 6 waves
 - [ ] 29-01-PLAN.md — Wave 0 spike gate (15 PROBE-VAL artifacts; checkpoint at end)
-- [ ] 29-02-PLAN.md — Migration 013 (5 columns + ck widen + unknown wipe + idempotency status) + [BLOCKING] live schema push
+- [x] 29-02-PLAN.md — Migration 013 (5 columns + ck widen + unknown wipe + idempotency status + AMD-03 verdict_json NULLABLE) + [BLOCKING] live schema push (SHIPPED 2026-05-06; commits a854b94 + dfcdc0d + f944137; 11 'unknown' rows wiped on deploy-postgres-1)
 - [ ] 29-03-PLAN.md — proxy_dispatcher.PROVIDERS table (D-09 + D-17)
 - [ ] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05)
 - [ ] 29-05-PLAN.md — ProxyBYOKCache + byok_validator (D-02 + D-02b) + start_agent integration
