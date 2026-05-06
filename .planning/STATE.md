@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-06T18:15:00Z"
-last_activity: 2026-05-06 -- Phase 29 Plan 05 SHIPPED (BYOK custody: ProxyBYOKCache + byok_validator + start_agent via_proxy gate + lifespan rehydrate; 26 new tests GREEN — 8 cache + 10 validator + 8 integration including 2 GATE-7 legacy-bypass invariants; commits 8788b70 + 6f4ec31 + b2c4cda)
+last_updated: "2026-05-06T21:30:00Z"
+last_activity: 2026-05-06 -- Phase 29 SHIPPED end-to-end (9/9 plans + 6 hotfixes 7a04177→e6040d7 + mobile usage-screen polish 66cac99). e2e verified by orchestrator at 21:12: real chat round-trip writes usage_logs row status=success, input_tokens=5047, output_tokens=2, cost_usd=$0.00112305, upstream_request_id=gen-1778101919. Manual gates 3/5/6 (mobile ticker / kill-injection / BYOK no-leak grep) deferred to user verification
 progress:
   total_phases: 19
   completed_phases: 5

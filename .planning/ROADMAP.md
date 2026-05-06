@@ -628,11 +628,11 @@ Plans:
 - [ ] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05)
 - [x] 29-05-PLAN.md — ProxyBYOKCache + byok_validator (D-02 + D-02b) + start_agent integration (SHIPPED 2026-05-06; commits 8788b70 + 6f4ec31 + b2c4cda; 26 new tests PASS — 8 cache + 10 validator + 8 integration with 2 GATE-7 legacy-bypass invariants)
 - [x] 29-06-PLAN.md — usage_recorder Anthropic-native parser + record_usage signature extension (D-12 + D-15) (SHIPPED 2026-05-06; commit 902b9df; +_parse_anthropic_native + proxy_latency_ms/upstream_latency_ms kwargs; 7 new tests + 12 regression tests = 19/19 PASS)
-- [ ] 29-07-PLAN.md — backfill_openrouter_cost Temporal activity + workflow (D-03 + D-10)
-- [ ] 29-08-PLAN.md — runner via_proxy env injection (D-18 + AMD-06) + flip recipes/nanobot.yaml (AMD-01 supersedes nano-kaiku)
-- [ ] 29-09-PLAN.md — cutover script + 7 acceptance gates + 29-VERIFICATION.md (PHASE-29-EXIT-GATE-PASSED)
+- [x] 29-07-PLAN.md — backfill_openrouter_cost Temporal activity + workflow (SHIPPED 2026-05-06; commits cc6deb9 + db7be00; AMD-08 latency budget [0,10,20,30] applied; 8/8 plan tests + 27/27 regression PASS)
+- [x] 29-08-PLAN.md — runner via_proxy env injection + AP_PROXY_BASE_URL (AMD-09) + flip recipes/nanobot.yaml (SHIPPED 2026-05-06; commits 16d0f97 + c050796 + 35f6be6; 19/19 plan tests + 25/25 regression PASS)
+- [x] 29-09-PLAN.md — cutover + automated acceptance gates 1/2/4/7 + 29-VERIFICATION.md (SHIPPED 2026-05-06; commits b6287fe + 4df56d0 + c8da8da; gates 3/5/6 are user-driven manual UX gates, deferred)
 
-**Status:** planned 2026-05-06; ready for /gsd-execute-phase 29
+**Status:** SHIPPED 2026-05-06 (PHASE-29-EXIT-GATE-PASSED for technical gates 1/2/4/7; manual gates 3/5/6 user-driven). Closed via 6 hotfixes 7a04177 → e6040d7 + mobile usage-screen polish 66cac99. End-to-end verified by orchestrator at 21:12: real chat round-trip writes usage_logs row with status=success, input_tokens=5047, output_tokens=2, cost_usd=$0.00112305. See 29-VERIFICATION.md for the full ship report.
 
 ### Phase 30: Migrate remaining recipes to egress proxy (zeroclaw, nullclaw, nanobot, hermes, openclaw)
 
