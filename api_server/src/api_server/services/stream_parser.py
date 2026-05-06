@@ -49,7 +49,13 @@ import json
 import logging
 from typing import Any
 
-from .usage_recorder import ParsedUsage
+from dataclasses import replace
+
+from .usage_recorder import (
+    ParsedUsage,
+    _parse_anthropic_native,
+    _parse_openai_compat,
+)
 
 _log = logging.getLogger("api_server.stream_parser")
 
@@ -75,6 +81,9 @@ class StreamUsageParser:
         "_anthropic_output",
         # Completion sentinel
         "_was_complete",
+        # Phase 29 hotfix — non-streaming JSON fallback
+        "_saw_sse_line",
+        "_raw_body",
     )
 
     def __init__(self, provider: str, sse_format: str) -> None:
@@ -94,6 +103,12 @@ class StreamUsageParser:
         self._anthropic_output: int = 0
         # True when [DONE] (OpenAI) or message_stop (Anthropic) was seen.
         self._was_complete: bool = False
+        # Phase 29 hotfix — non-streaming JSON fallback. ``_saw_sse_line``
+        # flips True the first time a ``data: ...`` line is encountered.
+        # ``_raw_body`` accumulates EVERY chunk so finalize() can parse
+        # the complete body as a single JSON object when no SSE was seen.
+        self._saw_sse_line: bool = False
+        self._raw_body = bytearray()
 
     def feed(self, chunk: bytes) -> None:
         """Append + scan complete ``\\n``-terminated lines.
@@ -105,6 +120,10 @@ class StreamUsageParser:
         if not chunk:
             return
         self._buf.extend(chunk)
+        # Phase 29: also accumulate the raw body for the non-streaming
+        # JSON fallback in finalize(). Bounded by upstream Content-Length;
+        # a chat-completion body is < 50 KB in practice.
+        self._raw_body.extend(chunk)
         # Drain every complete line out of the buffer; whatever remains
         # after the last \n stays for the next feed.
         while b"\n" in self._buf:
@@ -116,6 +135,9 @@ class StreamUsageParser:
         """Inspect one ``data: ...`` line, dispatch on ``sse_format``."""
         if not line.startswith(b"data: "):
             return
+        # Phase 29: any ``data: `` line confirms an SSE stream — disables
+        # the non-streaming JSON fallback in finalize().
+        self._saw_sse_line = True
         payload = line[6:].strip()
         if payload == b"[DONE]":
             # OpenAI / OpenRouter completion sentinel. Do NOT break the
@@ -184,6 +206,35 @@ class StreamUsageParser:
 
     def finalize(self) -> ParsedUsage:
         """Return the captured ParsedUsage. No more feed() calls after this."""
+        # Phase 29 hotfix — when no ``data: `` lines were ever observed,
+        # the upstream returned a non-streaming single JSON body (e.g.
+        # nanobot's openai_compat_provider posts ``stream=false`` to
+        # OpenRouter / OpenAI; or any future Anthropic non-streaming
+        # ``POST /v1/messages`` call). aiter_raw() yielded the body as
+        # one or more chunks; ``_raw_body`` accumulated all of them.
+        # Parse it as a single JSON object and dispatch to the
+        # provider-specific dict-mode helper.
+        if not self._saw_sse_line and self._raw_body:
+            try:
+                body = json.loads(bytes(self._raw_body))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Either malformed JSON OR upstream returned non-UTF-8
+                # bytes (e.g. gzip-magic 1f 8b — defensive: the proxy
+                # forces Accept-Encoding: identity outbound, but if
+                # upstream ignores that we must NOT crash here).
+                body = None
+            if isinstance(body, dict):
+                if self._sse_format == "anthropic":
+                    return _parse_anthropic_native(body)
+                if self._sse_format == "openai":
+                    parsed = _parse_openai_compat(body, self._provider)
+                    # Map legacy ``unknown`` (bot stripped usage) to Phase
+                    # 29 widened-enum ``failed`` per D-15 — the proxy's
+                    # cost-capture path should treat both as the same
+                    # signal: capture failed, no tokens recorded.
+                    if parsed.status == "unknown":
+                        parsed = replace(parsed, status="failed")
+                    return parsed
         if self._sse_format == "openai":
             usage = self._final_usage
             if usage is None:

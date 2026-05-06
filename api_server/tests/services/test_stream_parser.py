@@ -268,3 +268,122 @@ def test_anthropic_explicit_no_cache_hit_case() -> None:
     assert out.cache_creation_tokens == 0
     assert out.output_tokens == 23
     assert out.status == "success"
+
+
+# ===========================================================================
+# Phase 29 hotfix — non-streaming JSON body (stream=False) parse path
+# ===========================================================================
+
+
+def test_openai_non_streaming_json_body_extracts_usage() -> None:
+    """Non-streaming chat/completions returns a single JSON body (no `data: `
+    prefix, no SSE framing). The parser MUST still extract the top-level
+    `usage` field on finalize().
+
+    Surfaced 2026-05-06 by nanobot's mobile chat path: nanobot's
+    openai_compat_provider sends ``stream=False``, OpenRouter returns
+    a single JSON object, the proxy yields the bytes via aiter_raw and
+    the parser saw zero `data: ` lines → finalize returned status='failed'
+    with zero tokens. Cost capture (Phase 29's whole point) was broken
+    even though the chat replied.
+
+    Mirrors Plan 29-06's _parse_anthropic_native (non-streaming dict mode)
+    for the OpenAI/OpenRouter shape.
+    """
+    body = {
+        "id": "chatcmpl-non-stream",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "pong"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+    }
+    parser = StreamUsageParser(provider="openrouter", sse_format="openai")
+    parser.feed(json.dumps(body).encode())
+
+    out = parser.finalize()
+    assert out.input_tokens == 5
+    assert out.output_tokens == 1
+    assert out.upstream_request_id == "chatcmpl-non-stream"
+    assert out.status == "success", (
+        f"non-streaming body should parse to status=success, got {out.status!r}. "
+        "If finalize() never tried to parse the buffer as a single JSON object, "
+        "this test fails — that's the Phase 29 hotfix gate."
+    )
+
+
+def test_openai_non_streaming_handles_chunked_body() -> None:
+    """Same JSON body but split across two feed() calls (the proxy's
+    aiter_raw yields chunks regardless of streaming-ness)."""
+    body_bytes = (
+        b'{"id":"chatcmpl-chunk","choices":[{"message":{"content":"x"}}],'
+        b'"usage":{"prompt_tokens":7,"completion_tokens":3}}'
+    )
+    parser = StreamUsageParser(provider="openrouter", sse_format="openai")
+    # Split mid-JSON
+    parser.feed(body_bytes[:30])
+    parser.feed(body_bytes[30:])
+
+    out = parser.finalize()
+    assert out.input_tokens == 7
+    assert out.output_tokens == 3
+    assert out.upstream_request_id == "chatcmpl-chunk"
+    assert out.status == "success"
+
+
+def test_openai_non_streaming_no_usage_field_returns_failed() -> None:
+    """A non-streaming body lacking a top-level usage block stays failed
+    (matches existing failed-capture semantics — the parser only commits
+    success when usage is observed)."""
+    body = {"id": "chatcmpl-x", "choices": [{"message": {"content": "x"}}]}
+    parser = StreamUsageParser(provider="openrouter", sse_format="openai")
+    parser.feed(json.dumps(body).encode())
+
+    out = parser.finalize()
+    assert out.status == "failed"
+    assert out.input_tokens == 0
+    assert out.output_tokens == 0
+
+
+def test_anthropic_non_streaming_json_body_extracts_usage() -> None:
+    """Anthropic non-streaming POST /v1/messages returns a single JSON dict
+    (no message_start / message_delta SSE events). The parser MUST fall back
+    to the dict-mode path (mirrors Plan 29-06's _parse_anthropic_native).
+
+    Phase 30 forward-compat: when an Anthropic-native recipe (e.g. hermes)
+    flips to via_proxy=true, the proxy will route stream=false bodies of
+    this exact shape through the same parser.
+    """
+    body = {
+        "id": "msg_anthropic_nonstream",
+        "model": "claude-haiku-4-5",
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 7,
+            "output_tokens": 23,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        },
+    }
+    parser = StreamUsageParser(provider="anthropic", sse_format="anthropic")
+    parser.feed(json.dumps(body).encode())
+
+    out = parser.finalize()
+    assert out.input_tokens == 7
+    assert out.output_tokens == 23
+    assert out.cache_read_tokens == 0
+    assert out.cache_creation_tokens == 0
+    assert out.upstream_request_id == "msg_anthropic_nonstream"
+    assert out.status == "success"
+
+
+def test_anthropic_non_streaming_no_usage_returns_failed() -> None:
+    """Anthropic non-streaming body lacking the usage block stays failed
+    (mirrors Plan 29-06 D-15 widened-enum semantics in _parse_anthropic_native)."""
+    body = {"id": "msg_no_usage", "stop_reason": "end_turn"}
+    parser = StreamUsageParser(provider="anthropic", sse_format="anthropic")
+    parser.feed(json.dumps(body).encode())
+
+    out = parser.finalize()
+    assert out.status == "failed"
+    assert out.input_tokens == 0
+    assert out.output_tokens == 0
+    assert out.upstream_request_id == "msg_no_usage"
