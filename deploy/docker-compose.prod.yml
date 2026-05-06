@@ -130,6 +130,12 @@ services:
       temporal:
         condition: service_healthy
     command: ["python", "-m", "api_server.temporal.worker"]
+    # The Dockerfile.api inherited HEALTHCHECK curls localhost:8000/healthz —
+    # correct for api_server but bogus here (the worker is a Temporal SDK
+    # process, no HTTP listener). Disable the inherited probe; worker health
+    # surfaces via Temporal's own task-queue heartbeats.
+    healthcheck:
+      disable: true
     environment:
       AP_ENV: prod
       AP_RECIPES_DIR: /app/recipes
