@@ -333,6 +333,7 @@ async def write_agent_container_running(
     boot_wall_s: float,
     ready_at: datetime,
     inapp_auth_token: str | None = None,
+    bridge_ip: str | None = None,
 ) -> None:
     """Flip a pending container row 'starting' -> 'running'.
 
@@ -360,7 +361,8 @@ async def write_agent_container_running(
                container_status = 'running',
                boot_wall_s = $3,
                ready_at = $4,
-               inapp_auth_token = $5
+               inapp_auth_token = $5,
+               bridge_ip = $6
          WHERE id = $1
            AND container_status = 'starting'
         """,
@@ -369,6 +371,7 @@ async def write_agent_container_running(
         boot_wall_s,
         ready_at,
         inapp_auth_token,
+        bridge_ip,
     )
 
 

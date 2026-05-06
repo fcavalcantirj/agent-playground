@@ -569,6 +569,24 @@ async def start_agent(
     ready_at = datetime.now(timezone.utc)
     container_id = details["container_id"]
     boot_wall_s = float(details.get("boot_wall_s") or 0.0)
+    # Phase 29 (AMD-04): resolve the bridge IP NOW so the proxy router
+    # (routes/llm_proxy.py via app.state.proxy_ip_map) can identify the
+    # caller on its very first chat round-trip. The container is ready
+    # at this point — get_container_ip walks the Docker SDK's NetworkSettings
+    # and returns the IP on the runner's network. Failure here is non-fatal
+    # (e.g. macOS Docker Desktop edge case) — bridge_ip stays NULL and the
+    # proxy will 401 until the operator wires the IP some other way; this
+    # only matters for via_proxy=true recipes (nanobot in Phase 29).
+    bridge_ip: str | None = None
+    try:
+        bridge_ip = request.app.state.inapp_recipe_index.get_container_ip(
+            container_id
+        )
+    except Exception:
+        _log.exception(
+            "phase29.bridge_ip_lookup_failed",
+            extra={"agent_id": str(agent_id), "container_id": container_id},
+        )
     async with pool.acquire() as conn:
         try:
             await write_agent_container_running(
@@ -578,6 +596,7 @@ async def start_agent(
                 boot_wall_s=boot_wall_s,
                 ready_at=ready_at,
                 inapp_auth_token=inapp_auth_token,
+                bridge_ip=bridge_ip,
             )
         except asyncpg.UniqueViolationError:
             # Race: two /start requests both passed pending-insert
@@ -642,6 +661,22 @@ async def start_agent(
         except Exception:
             _log.exception(
                 "phase29.proxy_byok_cache.set_failed",
+                extra={"agent_id": str(agent_id)},
+            )
+
+    # --- Step 8a-ter (Phase 29 AMD-04) — refresh proxy_ip_map ----------
+    # Plan 29-04's ProxyIPMap rebuilds every 60s from agent_containers,
+    # but the very first chat round-trip after deploy must succeed within
+    # seconds. Trigger an immediate refresh so the freshly-written
+    # ``bridge_ip`` is in the in-process map before the response returns.
+    # Best-effort: failure is logged but non-fatal — the next 60s tick
+    # will repair the gap.
+    if bridge_ip is not None:
+        try:
+            await request.app.state.proxy_ip_map.refresh()
+        except Exception:
+            _log.exception(
+                "phase29.proxy_ip_map.refresh_failed",
                 extra={"agent_id": str(agent_id)},
             )
 
