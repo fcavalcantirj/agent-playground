@@ -621,9 +621,18 @@ Plans:
 
 **Depends on:** Phase 28 (Temporal dispatch — proxy hooks into `record_usage` activity). No blocker for parallel work on Phase 27 follow-ups.
 
-**Plans:** TBD (run `/gsd-discuss-phase 29` then `/gsd-plan-phase 29`)
+**Plans:** 9 plans across 6 waves
+- [ ] 29-01-PLAN.md — Wave 0 spike gate (15 PROBE-VAL artifacts; checkpoint at end)
+- [ ] 29-02-PLAN.md — Migration 013 (5 columns + ck widen + unknown wipe + idempotency status) + [BLOCKING] live schema push
+- [ ] 29-03-PLAN.md — proxy_dispatcher.PROVIDERS table (D-09 + D-17)
+- [ ] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05)
+- [ ] 29-05-PLAN.md — ProxyBYOKCache + byok_validator (D-02 + D-02b) + start_agent integration
+- [ ] 29-06-PLAN.md — usage_recorder Anthropic-native parser + record_usage signature extension (D-12 + D-15)
+- [ ] 29-07-PLAN.md — backfill_openrouter_cost Temporal activity + workflow (D-03 + D-10)
+- [ ] 29-08-PLAN.md — runner via_proxy env injection (D-18 + AMD-06) + flip recipes/nanobot.yaml (AMD-01 supersedes nano-kaiku)
+- [ ] 29-09-PLAN.md — cutover script + 7 acceptance gates + 29-VERIFICATION.md (PHASE-29-EXIT-GATE-PASSED)
 
-**Status:** active; queued 2026-05-05
+**Status:** planned 2026-05-06; ready for /gsd-execute-phase 29
 
 ### Phase 30: Migrate remaining recipes to egress proxy (zeroclaw, nullclaw, nanobot, hermes, openclaw)
 
