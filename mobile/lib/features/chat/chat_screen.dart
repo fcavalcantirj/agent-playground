@@ -30,6 +30,7 @@ import 'package:agent_playground/features/chat/input_bar.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
 import 'package:agent_playground/features/chat/timestamp_divider.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
+import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/failed_bubble.dart';
 import 'package:agent_playground/shared/restart_banner.dart';
 import 'package:agent_playground/shared/retry_banner.dart';
@@ -156,6 +157,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           fallbackId: widget.agentInstanceId,
         ),
         actions: [
+          // Phase 28 Plan 08 / D-18 — Consumer-scoped subscription. Same
+          // pattern as the Dashboard AppBar: the Consumer Element binds
+          // the usageSummaryProvider subscription to the AppBar's
+          // tear-down lifetime, avoiding the defunct-element race that
+          // yanked the ticker in Phase 27.
+          Consumer(
+            builder: (context, ref, _) => const UsageTickerWidget(),
+          ),
           if (showStopMenu)
             PopupMenuButton<String>(
               key: const Key('chat-overflow-menu'),
