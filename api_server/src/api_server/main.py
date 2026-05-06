@@ -47,12 +47,15 @@ from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
 from .routes import health
+from .routes import llm_proxy as llm_proxy_route
 from .routes import models as models_route
 from .routes import recipes as recipes_route
 from .routes import runs as runs_route
 from .routes import schemas as schemas_route
 from .routes import usage as usage_route
 from .routes import users as users_route
+from .services.proxy_ip_map import ProxyIPMap
+from .services.proxy_ip_map import refresh_loop as proxy_ip_refresh_loop
 from .services.recipes_loader import load_all_recipes
 
 # Phase 22b-04: dedicated logger for lifespan-time re-attach + drain telemetry.
@@ -239,6 +242,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
 
+    # ====================================================================
+    # Phase 29-04 — LLM egress proxy resources (lifespan-managed)
+    # ====================================================================
+    #
+    # ProxyIPMap (AMD-04 hot-path lookup) is created + initially populated
+    # BEFORE inapp_tasks so the proxy router can serve traffic from the
+    # very first request after lifespan completes. The 60s refresh task
+    # joins inapp_tasks (drained by the existing 5s budget at shutdown).
+    #
+    # proxy_upstream_client (AMD-05) is a SEPARATE httpx instance from
+    # bot_http_client — LLM streaming runs 10-600s; sharing the bot
+    # client's 10s timeout would starve every LLM call. Closed in the
+    # finally block AFTER inapp_tasks drain so an in-flight stream
+    # generator's record-usage tail doesn't fault on a closed transport.
+    #
+    # proxy_byok_cache is wired by Plan 29-05; this plan leaves the
+    # attribute unset so callers fail loudly if Plan 05 hasn't shipped
+    # yet (the proxy route returns 500 BYOK-not-in-cache).
+    app.state.proxy_ip_map = ProxyIPMap(db_pool=app.state.db)
+    await app.state.proxy_ip_map.refresh()  # initial population
+    app.state.proxy_upstream_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(600.0, connect=5.0),
+        limits=httpx.Limits(
+            max_connections=100, max_keepalive_connections=20,
+        ),
+    )
+    # Plan 29-05 wires proxy_byok_cache here.
+
     # Phase 28 — dispatcher_loop is DELETED (D-06). DispatchMessageWorkflow
     # replaces the asyncpg pump. Reaper stays for legacy stuck rows during
     # the transition window (RESEARCH §7 R1); outbox pump unchanged (R7).
@@ -254,6 +285,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(
             outbox_pump_loop(app.state, app.state.inapp_stop),
             name="inapp_outbox",
+        ),
+        # Phase 29-04 — proxy IP-map refresh: 60s polling per CONTEXT D-07.
+        asyncio.create_task(
+            proxy_ip_refresh_loop(
+                app.state.proxy_ip_map, app.state.inapp_stop,
+            ),
+            name="proxy_ip_refresh",
         ),
     ]
     _log.info(
@@ -375,6 +413,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await app.state.bot_http_client.aclose()
         except Exception:
             _log.exception("phase22c3.lifespan.http_client_close_failed")
+        # Phase 29-04 — close the proxy upstream client. Ordered AFTER
+        # inapp_tasks drain (the StreamingResponse generator's _gen()
+        # finally block records usage; if its conn is still in flight
+        # we let it finish before tearing the transport down).
+        try:
+            if getattr(app.state, "proxy_upstream_client", None) is not None:
+                await app.state.proxy_upstream_client.aclose()
+        except Exception:
+            _log.exception("phase29.lifespan.proxy_upstream_client_close_failed")
         # Phase 23 — close the OpenRouter passthrough client. Mirrors the
         # bot_http_client teardown above; ordered before redis + DB close
         # so an in-flight catalog fetch doesn't fault on a half-torn pool.
@@ -533,6 +580,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_route.router, prefix="/v1", tags=["auth"])
     app.include_router(users_route.router, prefix="/v1", tags=["users"])
     app.include_router(usage_route.router, prefix="/v1", tags=["usage"])
+    # Phase 29-04 — POST /v1/llm/forward/{path:path} egress proxy.
+    app.include_router(llm_proxy_route.router, prefix="/v1", tags=["llm"])
     return app
 
 
