@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-06T03:56:40.031Z"
-last_activity: 2026-05-06 -- Phase 29 execution started
+last_updated: "2026-05-06T17:37:42Z"
+last_activity: 2026-05-06 -- Phase 29 Plan 03 SHIPPED (proxy_dispatcher provider table)
 progress:
   total_phases: 19
   completed_phases: 5
@@ -56,9 +56,9 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Phase: 29 (llm-egress-proxy) — EXECUTING
-Plan: 1 of 9
+Plan: 29-03 SHIPPED (Wave 1, no checkpoint); 29-02 (alembic migration) still pending in Wave 1
 Status: Executing Phase 29
-Last activity: 2026-05-06 -- Phase 29 execution started
+Last activity: 2026-05-06 -- Phase 29 Plan 03 SHIPPED (proxy_dispatcher provider table; 10 tests / 14 items GREEN; commits 4e1924a + 3f7e3fe)
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
