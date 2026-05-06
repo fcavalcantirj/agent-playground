@@ -627,7 +627,7 @@ Plans:
 - [ ] 29-03-PLAN.md — proxy_dispatcher.PROVIDERS table (D-09 + D-17)
 - [ ] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05)
 - [ ] 29-05-PLAN.md — ProxyBYOKCache + byok_validator (D-02 + D-02b) + start_agent integration
-- [ ] 29-06-PLAN.md — usage_recorder Anthropic-native parser + record_usage signature extension (D-12 + D-15)
+- [x] 29-06-PLAN.md — usage_recorder Anthropic-native parser + record_usage signature extension (D-12 + D-15) (SHIPPED 2026-05-06; commit 902b9df; +_parse_anthropic_native + proxy_latency_ms/upstream_latency_ms kwargs; 7 new tests + 12 regression tests = 19/19 PASS)
 - [ ] 29-07-PLAN.md — backfill_openrouter_cost Temporal activity + workflow (D-03 + D-10)
 - [ ] 29-08-PLAN.md — runner via_proxy env injection (D-18 + AMD-06) + flip recipes/nanobot.yaml (AMD-01 supersedes nano-kaiku)
 - [ ] 29-09-PLAN.md — cutover script + 7 acceptance gates + 29-VERIFICATION.md (PHASE-29-EXIT-GATE-PASSED)
