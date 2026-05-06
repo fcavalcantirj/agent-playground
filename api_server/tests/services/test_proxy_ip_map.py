@@ -156,6 +156,66 @@ async def test_refresh_skips_non_running_rows(db_pool: asyncpg.Pool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 2b — Phase 29 hotfix: multi-instance fan-out (uvicorn workers > 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_two_independent_ip_maps_do_not_share_cache(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Two ProxyIPMap instances on the same DB simulate uvicorn --workers >= 2.
+
+    Each in-process cache is independent. ``routes/agent_lifecycle.py``'s
+    deploy path calls ``request.app.state.proxy_ip_map.refresh()`` on the
+    worker that handled the deploy — sibling workers' caches stay empty
+    until their own 60s tick fires. The bot's outbound LLM call is round-
+    robined by uvicorn; when it lands on the unrefreshed worker, the proxy
+    returns 401 ``unknown caller`` (``routes/llm_proxy.py:264``) and the
+    bot renders the JSON envelope as its reply.
+
+    Empirically reproduced 2026-05-06 with --workers 2 in tools/Dockerfile.api:
+    deploy wrote bridge_ip correctly to PG; an in-process probe inside the
+    container showed ProxyIPMap.refresh returns the right tuple; but the
+    bot's chat at +14s landed on the sibling worker and 401'd.
+
+    Fix: tools/Dockerfile.api pinned to --workers 1. This test documents
+    the multi-worker stale-cache class so the boundary is visible; if
+    proxy_ip_map state ever moves out of process (Redis / PG LISTEN-NOTIFY)
+    the assertion below would correctly start failing and the worker cap
+    can be lifted in lockstep.
+    """
+    from api_server.services.proxy_ip_map import ProxyIPMap
+
+    u, a = await _seed_user_and_agent(db_pool)
+    await _seed_running_container(
+        db_pool, user_id=u, agent_instance_id=a,
+        bridge_ip="172.18.0.99", inapp_auth_token="tok-multi",
+    )
+
+    worker_a = ProxyIPMap(db_pool)
+    worker_b = ProxyIPMap(db_pool)
+
+    # Deploy lands on worker_a → worker_a refreshes immediately.
+    n_a = await worker_a.refresh()
+    assert n_a == 1
+    assert (await worker_a.get("172.18.0.99")) is not None
+
+    # Bot's outbound LLM call hits sibling worker_b — its cache was
+    # never populated by the deploy path. Documents the bug.
+    cached_b = await worker_b.get("172.18.0.99")
+    assert cached_b is None, (
+        "If this assertion fails, proxy_ip_map state is now shared across "
+        "instances — the --workers > 1 limitation in tools/Dockerfile.api "
+        "can be lifted."
+    )
+
+    # The 60s refresh tick (or any subsequent refresh) heals worker_b.
+    n_b = await worker_b.refresh()
+    assert n_b == 1
+    assert (await worker_b.get("172.18.0.99")) is not None
+
+
+# ---------------------------------------------------------------------------
 # Test 3 — NULL bridge_ip filter
 # ---------------------------------------------------------------------------
 

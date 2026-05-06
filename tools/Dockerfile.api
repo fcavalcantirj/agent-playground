@@ -62,4 +62,13 @@ USER apiuser
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=10s \
     CMD curl -fsS http://localhost:8000/healthz || exit 1
-CMD ["uvicorn", "api_server.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Phase 29: --workers 1 because app.state.proxy_ip_map and
+# app.state.proxy_byok_cache are in-process dict state. Multi-worker
+# means each uvicorn worker is a separate Python process with its
+# own caches; the deploy path's refresh() / set() only updates the
+# worker that handled the request, leaving sibling workers' caches
+# stale and producing 401 'unknown caller' on the bot's outbound
+# LLM call (round-robined). When proxy state moves out of process
+# (Redis or Postgres LISTEN/NOTIFY), this can revert to >=2.
+# Documented by tests/services/test_proxy_ip_map.py::test_two_independent_ip_maps_do_not_share_cache.
+CMD ["uvicorn", "api_server.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
