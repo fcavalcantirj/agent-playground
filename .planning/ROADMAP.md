@@ -625,6 +625,18 @@ Plans:
 
 **Status:** active; queued 2026-05-05
 
+### Phase 30: Migrate remaining recipes to egress proxy (zeroclaw, nullclaw, nanobot, hermes, openclaw)
+
+**Goal:** Flip `runtime.via_proxy: true` on the 4 (or 5) recipes Phase 29 didn't cover. Phase 29 ships proxy + nano-kaiku only (D-04 scope decision 2026-05-06). Each subsequent recipe is a 1-line YAML change + a smoke test PR. Fixes the `$0 / 0 tokens / unknown` rows for every contract Phase 27's `_parse_stripped` was breaking.
+
+**Why a separate phase:** isolates "did the proxy survive its first real production traffic?" risk (Phase 29) from "does each individual bot tolerate `OPENAI_BASE_URL` redirection?" risk (Phase 30). Each bot has a different stack (zeroclaw=Rust, nullclaw=different, openclaw has documented quirks per `agent_lifecycle.py:310-311`); per-recipe verification is required.
+
+**Depends on:** Phase 29 (proxy must be live + nano-kaiku must have proven the path).
+
+**Plans:** TBD (run `/gsd-discuss-phase 30` after Phase 29 ships)
+
+**Status:** queued; opens after Phase 29 verification
+
 ## Backlog
 
 ### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)

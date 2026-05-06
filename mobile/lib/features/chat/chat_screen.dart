@@ -98,12 +98,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _scrollCtl.removeListener(_onScroll);
     _scrollCtl.dispose();
     _restartTick?.cancel();
-    // Phase 25 Wave 5: when the user pops back from chat to dashboard,
-    // refresh the agents list so newly-deployed agents and updated
-    // last_activity timestamps land without requiring a pull-to-refresh.
-    // (D-12 lifecycle resume fires only on cold-start; route-pop is
-    // a different signal.)
-    ref.invalidate(agentsListProvider);
     super.dispose();
   }
 
