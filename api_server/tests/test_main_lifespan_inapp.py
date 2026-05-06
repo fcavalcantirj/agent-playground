@@ -4,10 +4,13 @@
 (testcontainers). The lifespan is exercised end-to-end via
 ``app.router.lifespan_context(app)``:
 
-  1. ``test_lifespan_attaches_three_inapp_tasks`` — after startup,
-     ``app.state.inapp_tasks`` is a list of 3 named tasks
-     ({inapp_dispatcher, inapp_reaper, inapp_outbox}); each appears in
-     ``asyncio.all_tasks()``.
+  1. ``test_lifespan_attaches_two_inapp_tasks`` — after startup,
+     ``app.state.inapp_tasks`` is a list of 2 named tasks
+     ({inapp_reaper, inapp_outbox}); each appears in
+     ``asyncio.all_tasks()``. Phase 28-06 D-06 deleted the third
+     ``inapp_dispatcher`` task at cutover (the asyncpg pump was
+     replaced by ``DispatchMessageWorkflow``); reaper + outbox
+     preserved. Plan 28-07 Task 5 reflects the new shape here.
 
   2. ``test_lifespan_attaches_redis_and_http_client`` — after startup,
      ``app.state.redis.ping()`` returns True; ``app.state.bot_http_client``
@@ -74,7 +77,17 @@ def _redis_url_for(redis_container) -> str:
 
 
 def _wire_env(monkeypatch, migrated_pg, redis_url: str, tmp_path: Path) -> None:
-    """Wire the AP_*/DATABASE_URL env so create_app() resolves correctly."""
+    """Wire the AP_*/DATABASE_URL env so create_app() resolves correctly.
+
+    Phase 28-07 Task 5 also short-circuits the lifespan's Temporal connect
+    (Plan 28-06 added a 5×5s retry against ``localhost:7233`` that fails
+    when no cluster is reachable); the route-layer ``start_workflow``
+    contract is covered by ``tests/temporal/test_route_starts_workflow.py``
+    and the workflow body by ``tests/temporal/test_dispatch_message_workflow.py``
+    against a real ``WorkflowEnvironment``.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+
     from tests.conftest import _normalize_testcontainers_dsn
 
     dsn = _normalize_testcontainers_dsn(migrated_pg.get_connection_url())
@@ -88,20 +101,33 @@ def _wire_env(monkeypatch, migrated_pg, redis_url: str, tmp_path: Path) -> None:
     # succeeds without touching the OAuth path.
     monkeypatch.setenv("AP_OAUTH_STATE_SECRET", "x" * 32)
 
+    # Phase 28-07 Task 5 — short-circuit lifespan Temporal connect.
+    async def _fake_make_client(_settings):  # noqa: ARG001 — sig-compat
+        return _AsyncMock(name="fake_temporal_client_lifespan_inapp")
+
+    monkeypatch.setattr(
+        "api_server.temporal.client.make_client", _fake_make_client,
+    )
+
 
 # ---------------------------------------------------------------------------
 # 1. 3 named tasks attached after startup
 # ---------------------------------------------------------------------------
 
 
-async def test_lifespan_attaches_three_inapp_tasks(
+async def test_lifespan_attaches_two_inapp_tasks(
     migrated_pg, redis_container, monkeypatch, tmp_path,
 ):
-    """Confirms the 3 lifespan asyncio tasks are CREATED + NAMED.
+    """Confirms the 2 lifespan asyncio tasks are CREATED + NAMED.
 
-    Names must be exactly ``inapp_dispatcher``, ``inapp_reaper``,
-    ``inapp_outbox`` (per must_haves.truths) so operators can grep them
-    out of ``asyncio.all_tasks()`` for diagnostics.
+    Names must be exactly ``inapp_reaper`` and ``inapp_outbox`` so
+    operators can grep them out of ``asyncio.all_tasks()`` for diagnostics.
+
+    Phase 28-06 D-06 deleted the third ``inapp_dispatcher`` task at
+    cutover — the asyncpg pump it drove was replaced by
+    ``DispatchMessageWorkflow``. Reaper + outbox are preserved (the
+    reaper still flips stuck rows during the transition window per
+    RESEARCH §7 R1; the outbox pump fans agent_events to Redis).
     """
     _wire_env(monkeypatch, migrated_pg, _redis_url_for(redis_container), tmp_path)
 
@@ -112,20 +138,27 @@ async def test_lifespan_attaches_three_inapp_tasks(
         tasks = getattr(app.state, "inapp_tasks", None)
         assert tasks is not None, "lifespan did not attach app.state.inapp_tasks"
         assert isinstance(tasks, list), "inapp_tasks must be a list"
-        assert len(tasks) == 3, f"expected 3 tasks, got {len(tasks)}"
+        assert len(tasks) == 2, f"expected 2 tasks (reaper+outbox), got {len(tasks)}"
 
         names = {t.get_name() for t in tasks}
-        assert names == {"inapp_dispatcher", "inapp_reaper", "inapp_outbox"}, (
-            f"expected {{inapp_dispatcher, inapp_reaper, inapp_outbox}}, got {names}"
+        assert names == {"inapp_reaper", "inapp_outbox"}, (
+            f"expected {{inapp_reaper, inapp_outbox}}, got {names}"
         )
 
         # Each task must also be visible in asyncio.all_tasks() while
         # the lifespan is active.
         all_names = {t.get_name() for t in asyncio.all_tasks()}
-        for n in {"inapp_dispatcher", "inapp_reaper", "inapp_outbox"}:
+        for n in {"inapp_reaper", "inapp_outbox"}:
             assert n in all_names, (
                 f"task {n!r} not found in asyncio.all_tasks(): {all_names}"
             )
+
+        # The deleted dispatcher task must NOT come back — Phase 28-06
+        # cutover invariant.
+        assert "inapp_dispatcher" not in all_names, (
+            "inapp_dispatcher task was deleted at Phase 28-06 cutover; "
+            "DispatchMessageWorkflow owns orchestration now"
+        )
 
         # No task may be already-done at startup — they're long-running
         # loops and should still be alive.

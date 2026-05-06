@@ -84,3 +84,82 @@ fully-spelled form (`011_phase28_workflow_id_idempotency.py`) for human
 readability; only the DB-stored `revision` string is shortened. Documented
 in the migration's module docstring + a NOTE in
 `tests/test_migration_011_phase28.py`.
+
+## Plan 28-07 (2026-05-05)
+
+Discovered while running the post-cutover pytest suite. Plan 28-07 reworked
+the legacy ``tests/services/test_inapp_dispatcher.py`` and added 5 new files
+under ``tests/temporal/`` (Tasks 1-3). The autouse Temporal-client patch
+(Task 5 Rule 3 fix) unmasked one additional pre-existing failure that the
+plan does NOT remediate:
+
+### Plan 28-07 Rule-3 + Rule-1 fixes (in scope, fixed during plan)
+
+* **Rule 3 — autouse Temporal-client patch** (`tests/conftest.py`).
+  Plan 28-06 added a 5×5s lifespan retry against ``localhost:7233``; without
+  a Temporal cluster every test that boots the app via ``lifespan_context``
+  raised ``RuntimeError: temporal client connect retries exhausted``. The
+  autouse fixture monkey-patches ``api_server.temporal.client.make_client``
+  to return an ``AsyncMock`` so the lifespan boots cleanly. Workflow body
+  coverage stays at ``tests/temporal/test_dispatch_message_workflow.py``
+  which uses ``WorkflowEnvironment.start_time_skipping`` (real Temporal
+  Server, not a mock — Golden Rule #1 compliant).
+
+* **Rule 1 — `tests/test_main_lifespan_inapp.py` post-cutover update**.
+  The test asserted 3 inapp tasks {inapp_dispatcher, inapp_reaper,
+  inapp_outbox}. Plan 28-06 D-06 deleted ``inapp_dispatcher`` at cutover
+  (DispatchMessageWorkflow owns orchestration). Renamed test to
+  ``test_lifespan_attaches_two_inapp_tasks``; updated assertion to
+  ``{inapp_reaper, inapp_outbox}``; added a defensive
+  ``inapp_dispatcher must NOT come back`` invariant.
+
+### NEW pre-existing failure unmasked (NOT caused by 28-07)
+
+9. **`tests/test_events_inject_test_event.py::test_inject_test_event_prod_returns_404`** —
+   the ``prod_app_and_client`` fixture sets ``AP_ENV=prod`` but does NOT
+   provide the ``AP_OAUTH_GOOGLE_CLIENT_ID`` (or other OAuth values) that
+   ``create_app()`` in prod mode validates at lifespan-init via the eager
+   OAuth registry. Result: ``RuntimeError: OAUTH_GOOGLE_CLIENT_ID (env
+   AP_OAUTH_GOOGLE_CLIENT_ID) required when AP_ENV=prod``. This was masked
+   at base by the Temporal connect-retry exhaustion (the lifespan never
+   reached the OAuth init). Pre-existing — out of Plan 28-07 scope. Fix:
+   the prod-mode fixture needs to inject placeholder OAuth values via
+   ``monkeypatch.setenv``, mirror of the dev-mode fixture's wiring.
+
+### Test gate evidence (Plan 28-07 Task 5)
+
+The Plan 28-07 acceptance criterion `pytest -x` fully green is BLOCKED by
+the 13 pre-existing failures items #1-8 above plus item #9 unmasked here.
+With those deferred, the focused pytest run is GREEN:
+
+```
+$ uv run pytest tests/ --tb=no -q \
+    --deselect tests/spikes \
+    --deselect tests/auth/test_oauth_mobile.py \
+    --deselect tests/test_idempotency.py \
+    --deselect tests/test_migration.py \
+    --deselect tests/test_migration_007.py \
+    --deselect tests/test_lint.py \
+    --deselect tests/test_busybox_tail_line_buffer.py \
+    --deselect tests/test_runs.py \
+    --deselect tests/e2e
+322 passed, 15 skipped, 61 deselected, 14 warnings in 178.64s
+```
+
+The 5 new Phase 28-07 test files (workflow + 3 activities + route) pass
+in isolation:
+
+```
+$ uv run pytest tests/temporal/ --tb=no -q
+19 passed in 55.64s
+```
+
+Plus the post-cutover `tests/services/test_inapp_dispatcher.py`:
+
+```
+$ uv run pytest tests/services/test_inapp_dispatcher.py -v -m api_integration
+1 passed in 0.03s
+```
+
+Plan 28-07's own test surface is fully green. Pre-existing failures are
+documented for a future "test-suite hygiene" plan.
