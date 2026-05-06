@@ -65,14 +65,19 @@ def _normalize(raw: str) -> str:
 def _alembic(container: PostgresContainer, *args: str) -> None:
     dsn = _normalize(container.get_connection_url())
     env = {**os.environ, "DATABASE_URL": dsn}
-    subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=API_SERVER_DIR,
         env=env,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"alembic {args} exited {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
 
 
 @pytest.fixture(scope="module")
@@ -398,6 +403,26 @@ async def test_round_trip_clean(pg):
         )
         before = await conn.fetch(additive_columns_query)
         before_set = {(r["table_name"], r["column_name"]) for r in before}
+
+        # Clean up state placed by sibling tests that uses values which
+        # the downgrade's narrower constraints don't accept. In a
+        # production downgrade the operator would purge equivalent rows
+        # first (the watchdog already does this for in-flight idempotency
+        # reservations, and 'failed' usage_logs rows would be migrated to
+        # 'error' or deleted depending on intent — see migration 013
+        # downgrade() docstring).
+        #
+        # 1. NULL-verdict_json idempotency rows (in-flight reservations)
+        #    would violate the post-downgrade NOT NULL on verdict_json.
+        await conn.execute(
+            "DELETE FROM idempotency_keys WHERE verdict_json IS NULL"
+        )
+        # 2. usage_logs rows with status='failed' (introduced by 013's
+        #    widened check) would violate the post-downgrade narrower
+        #    check `status IN ('success','error','unknown')`.
+        await conn.execute(
+            "DELETE FROM usage_logs WHERE status = 'failed'"
+        )
     finally:
         await conn.close()
 
