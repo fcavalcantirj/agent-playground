@@ -172,8 +172,67 @@ def _parse_stripped(response: dict | None) -> ParsedUsage:
     We still record a row so message_count + last_activity stay
     queryable. Phase 27 marks this as a deliberate observability
     gap; a future post-hoc OpenRouter fetch will backfill.
+
+    Phase 30 cleanup deletes this once the proxy lands and the legacy
+    contract paths are retired (D-12). Until then it remains as the
+    shape callers without a usable response dict get.
     """
     return ParsedUsage(status="unknown")
+
+
+def _parse_anthropic_native(response: dict) -> ParsedUsage:
+    """Parse a non-streaming Anthropic ``POST /v1/messages`` JSON dict.
+
+    Shape (verbatim from Anthropic's API + RESEARCH.md, lines 247-285)::
+
+        {
+          "id": "msg_...",
+          "model": "claude-haiku-4-5",
+          "stop_reason": "end_turn",
+          "usage": {
+            "input_tokens": 5,
+            "output_tokens": 17,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+          }
+        }
+
+    For the **streaming** path see ``services/stream_parser.py``
+    :class:`StreamUsageParser` with ``sse_format='anthropic'``;
+    AMD-07 last-wins on ``output_tokens`` lives there. AMD-10 keeps
+    that branch correct under hypothetical multi-delta inputs even
+    though claude-haiku-4-5 emits exactly one ``message_delta`` in
+    practice.
+
+    This parser handles the **non-streaming** dict shape only —
+    distinct from ``_parse_openai_compat``'s Anthropic-passthrough
+    fallback which handles the OpenAI-envelope-wrapping-Anthropic-keys
+    shape some bots emit. Phase 29 D-12 calls for the native path
+    explicitly so future non-streaming Anthropic calls (e.g. retry
+    paths, replay) parse via the canonical native shape.
+
+    Status semantics (Phase 29 D-15): missing ``usage`` block →
+    ``status='failed'`` (the new Phase 29 widened-enum value reserved
+    for proxy-side capture failures), NOT ``'unknown'`` (which is
+    reserved for legacy stripped contracts).
+    """
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return ParsedUsage(
+            status="failed",
+            upstream_request_id=_str_or_none(response.get("id")),
+        )
+    return ParsedUsage(
+        input_tokens=_int_or_zero(usage.get("input_tokens")),
+        output_tokens=_int_or_zero(usage.get("output_tokens")),
+        cache_read_tokens=_int_or_zero(usage.get("cache_read_input_tokens")),
+        cache_creation_tokens=_int_or_zero(
+            usage.get("cache_creation_input_tokens")
+        ),
+        upstream_request_id=_str_or_none(response.get("id")),
+        stop_reason=_str_or_none(response.get("stop_reason")),
+        status="success",
+    )
 
 
 def _first_choice_finish_reason(response: dict) -> str | None:
@@ -273,6 +332,8 @@ async def record_usage(
     model: str,
     response: dict | None,
     latency_ms: int | None = None,
+    proxy_latency_ms: int | None = None,
+    upstream_latency_ms: int | None = None,
     source: str = "inapp",
 ) -> UUID | None:
     """INSERT one row into ``usage_logs`` for an upstream LLM call.
@@ -289,6 +350,14 @@ async def record_usage(
     and the user still sees their reply. Without this, an aborted
     asyncpg transaction would force the outer txn into a failed state
     and roll the chat reply back too.
+
+    Phase 29 D-11 + AMD-04 add ``proxy_latency_ms`` (wall-clock spent
+    inside the proxy router) and ``upstream_latency_ms`` (wall-clock
+    the upstream LLM took). Both default to ``None`` so pre-Phase-29
+    callers (Temporal record_usage activity, dispatcher paths) keep
+    working without code changes; the columns store NULL in that case.
+    The proxy route handler (``routes/llm_proxy.py``) populates them
+    from its time-monotonic measurements.
 
     Returns the new row id, or ``None`` if the recorder fails. A
     failure is LOGGED but never raised — the chat path's correctness
@@ -318,20 +387,23 @@ async def record_usage(
                    provider, model, upstream_request_id,
                    input_tokens, output_tokens,
                    cache_read_tokens, cache_creation_tokens,
-                   cost_usd, latency_ms, status, stop_reason, source)
+                   cost_usd, latency_ms, proxy_latency_ms, upstream_latency_ms,
+                   status, stop_reason, source)
                 VALUES
                   ($1, $2, $3,
                    $4, $5, $6,
                    $7, $8,
                    $9, $10,
-                   $11, $12, $13, $14, $15)
+                   $11, $12, $13, $14,
+                   $15, $16, $17)
                 RETURNING id
                 """,
                 user_id, agent_instance_id, message_id,
                 provider or "unknown", model, parsed.upstream_request_id,
                 parsed.input_tokens, parsed.output_tokens,
                 parsed.cache_read_tokens, parsed.cache_creation_tokens,
-                cost_usd, latency_ms, parsed.status, parsed.stop_reason, source,
+                cost_usd, latency_ms, proxy_latency_ms, upstream_latency_ms,
+                parsed.status, parsed.stop_reason, source,
             )
             return row["id"]
     except Exception:
