@@ -580,7 +580,7 @@ async def start_agent(
     # only matters for via_proxy=true recipes (nanobot in Phase 29).
     bridge_ip: str | None = None
     try:
-        bridge_ip = request.app.state.inapp_recipe_index.get_container_ip(
+        bridge_ip = request.app.state.recipe_index.get_container_ip(
             container_id
         )
     except Exception:
