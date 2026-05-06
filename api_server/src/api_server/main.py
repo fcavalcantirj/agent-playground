@@ -268,7 +268,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             max_connections=100, max_keepalive_connections=20,
         ),
     )
-    # Plan 29-05 wires proxy_byok_cache here.
+    # Phase 29 Plan 05 — proxy_byok_cache: in-process custody of decrypted
+    # BYOK keys keyed by (user_id, agent_instance_id). Lifespan rehydrates
+    # from agent_containers WHERE container_status='running' AND
+    # provider_key_enc IS NOT NULL — restart resilience per CONTEXT D-02.
+    # Logged count is the operational signal; legacy recipes (provider_
+    # key_enc=NULL) are filtered by the WHERE clause and contribute zero
+    # to the count.
+    from .services.proxy_byok_cache import ProxyBYOKCache
+    app.state.proxy_byok_cache = ProxyBYOKCache(db_pool=app.state.db)
+    _byok_loaded = await app.state.proxy_byok_cache.rehydrate_from_db()
+    _log.info(
+        "phase29.lifespan.proxy_byok_cache_rehydrated",
+        extra={"count": _byok_loaded},
+    )
 
     # Phase 28 — dispatcher_loop is DELETED (D-06). DispatchMessageWorkflow
     # replaces the asyncpg pump. Reaper stays for legacy stuck rows during

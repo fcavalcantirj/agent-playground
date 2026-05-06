@@ -280,6 +280,9 @@ async def insert_pending_agent_container(
     recipe_name: str,
     channel_type: str,
     channel_config_enc: bytes,
+    *,
+    upstream_provider: str | None = None,
+    provider_key_enc: bytes | None = None,
 ) -> UUID:
     """Insert a pending agent_containers row with status='starting'.
 
@@ -293,14 +296,22 @@ async def insert_pending_agent_container(
     step, not here — a row in 'starting' state is fine alongside
     another agent's running row. The route serializes by attempting
     the UPDATE-to-'running' and treating UniqueViolation as 409.
+
+    Phase 29 Plan 05 (D-02 / D-02b): ``upstream_provider`` and
+    ``provider_key_enc`` are populated ONLY when the recipe declares
+    ``runtime.via_proxy=true`` (proxy custody path). Legacy recipes
+    pass both as ``None`` and the columns stay NULL — Plan 09 Gate 7
+    asserts the legacy 4 recipes deploy with ``provider_key_enc IS
+    NULL`` mechanically, by virtue of this defaulting.
     """
     row = await conn.fetchrow(
         """
         INSERT INTO agent_containers
             (id, agent_instance_id, user_id, recipe_name, deploy_mode,
-             container_status, channel_type, channel_config_enc)
+             container_status, channel_type, channel_config_enc,
+             upstream_provider, provider_key_enc)
         VALUES (gen_random_uuid(), $1, $2, $3, 'persistent',
-                'starting', $4, $5)
+                'starting', $4, $5, $6, $7)
         RETURNING id
         """,
         agent_instance_id,
@@ -308,6 +319,8 @@ async def insert_pending_agent_container(
         recipe_name,
         channel_type,
         channel_config_enc,
+        upstream_provider,
+        provider_key_enc,
     )
     return row["id"]
 

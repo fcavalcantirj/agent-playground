@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import asyncpg
+import httpx
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -320,6 +321,113 @@ async def start_agent(
             "recipe missing runtime.process_env.api_key",
         )
 
+    # --- Step 2c (Phase 29 D-02b) — BYOK custody gated on recipe.runtime.via_proxy ---
+    #
+    # When recipe.runtime.via_proxy is true, validate the BYOK key
+    # against the upstream provider BEFORE persisting anything. On
+    # success, encrypt the key + persist provider_key_enc +
+    # upstream_provider into agent_containers and populate the
+    # proxy_byok_cache so the proxy router can serve traffic
+    # immediately after start_agent returns.
+    #
+    # Legacy recipes (via_proxy=False/missing) skip this entire block:
+    #   - no validator probe (no 50-300ms latency)
+    #   - no age-cipher encrypt of the BYOK key
+    #   - no agent_containers.provider_key_enc / upstream_provider write
+    #   - no proxy_byok_cache.set
+    # Plan 09 Gate 7 verifies hermes/openclaw/zeroclaw/nullclaw deploys
+    # produce provider_key_enc IS NULL — mechanically true by virtue
+    # of the gate below short-circuiting all four columns.
+    upstream_provider: str | None = None
+    provider_key_enc: bytes | None = None
+    proxy_validated_provider: str | None = None
+    proxy_validated_key: str | None = None
+
+    runtime_block = recipe.get("runtime") or {}
+    via_proxy_flag = bool(runtime_block.get("via_proxy", False))
+    if via_proxy_flag:
+        from ..services.byok_validator import PROVIDER_VALIDATORS
+        from ..services.proxy_dispatcher import derive_provider
+
+        provider_env_var = (
+            (runtime_block.get("process_env") or {}).get("api_key")
+        )
+        if not provider_env_var:
+            return _err(
+                500,
+                ErrorCode.INTERNAL,
+                "recipe missing runtime.process_env.api_key",
+            )
+        try:
+            proxy_provider = derive_provider(provider_env_var)
+        except ValueError:
+            _log.warning(
+                "agent_lifecycle.unknown_api_key_env_var",
+                extra={
+                    "recipe_name": agent["recipe_name"],
+                    "env_var": provider_env_var,
+                },
+            )
+            return _err(
+                400,
+                ErrorCode.INVALID_REQUEST,
+                f"recipe declares unsupported api_key env var: {provider_env_var}",
+                param="recipe",
+            )
+
+        validator = PROVIDER_VALIDATORS[proxy_provider]
+        try:
+            ok = await validator(
+                request.app.state.proxy_upstream_client, provider_key,
+            )
+        except httpx.HTTPError as exc:
+            _log.error(
+                "byok_validator.network_failure",
+                extra={
+                    "provider": proxy_provider,
+                    "error_text": str(exc).replace(provider_key, "<REDACTED>"),
+                },
+            )
+            return _err(
+                503,
+                ErrorCode.INFRA_UNAVAILABLE,
+                f"BYOK validation upstream unreachable for {proxy_provider}",
+                param="Authorization",
+                category="INFRA_FAIL",
+            )
+        if not ok:
+            return _err(
+                401,
+                ErrorCode.UNAUTHORIZED,
+                f"BYOK key rejected by upstream ({proxy_provider})",
+                param="Authorization",
+            )
+
+        # Encrypt the validated key for at-rest storage; cache the
+        # plaintext for the proxy hot path. Both paths fail-loud if
+        # the master key + KEK derivation primitive is broken.
+        try:
+            provider_key_enc = encrypt_channel_config(
+                user_id, {"key": provider_key},
+            )
+        except Exception:
+            _log.error(
+                "byok_validator.encrypt_failed",
+                extra={"agent_id": str(agent_id)},
+            )
+            return _err(
+                500,
+                ErrorCode.INTERNAL,
+                "BYOK key encryption failed",
+            )
+        upstream_provider = proxy_provider
+        proxy_validated_provider = proxy_provider
+        proxy_validated_key = provider_key
+    # else: legacy path — provider_key_enc + upstream_provider stay None,
+    # proxy_byok_cache is not populated; the BYOK key flows to the
+    # container env via the existing process_env.api_key plumbing
+    # (UNCHANGED — Plan 09 Gate 7 invariant).
+
     # --- Step 3 + 4: age-encrypt channel config + insert pending row ---
     # DB scope 1: opens + closes BEFORE the long await.
     config_plain = {
@@ -349,6 +457,8 @@ async def start_agent(
                     agent["recipe_name"],
                     body.channel,
                     config_enc,
+                    upstream_provider=upstream_provider,
+                    provider_key_enc=provider_key_enc,
                 )
             except asyncpg.UniqueViolationError:
                 # Partial unique index fired at pending-insert time —
@@ -511,6 +621,28 @@ async def start_agent(
                 409,
                 ErrorCode.AGENT_ALREADY_RUNNING,
                 f"agent {agent_id} already has a running container",
+            )
+
+    # --- Step 8a-bis (Phase 29 Plan 05) — populate proxy_byok_cache ---
+    # Only fires for via_proxy=true recipes. Order: AFTER the successful
+    # UPDATE-to-running so the cache mirrors the DB; BEFORE the response
+    # so the proxy router can serve the very first chat round-trip
+    # without waiting on the 60s ProxyIPMap refresh window.
+    # Failure here is logged but non-fatal: lifespan rehydrate will
+    # repopulate from agent_containers.provider_key_enc on the next
+    # api_server restart (D-02 restart-resilience).
+    if proxy_validated_key is not None and proxy_validated_provider is not None:
+        try:
+            await request.app.state.proxy_byok_cache.set(
+                user_id,
+                agent_id,
+                proxy_validated_provider,
+                proxy_validated_key,
+            )
+        except Exception:
+            _log.exception(
+                "phase29.proxy_byok_cache.set_failed",
+                extra={"agent_id": str(agent_id)},
             )
 
     # --- Step 8b (Phase 22b-04): spawn log-watcher task (fire-and-forget) ---
