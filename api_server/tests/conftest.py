@@ -44,6 +44,58 @@ def _normalize_testcontainers_dsn(raw: str) -> str:
     ).replace("+psycopg2", "")
 
 
+# ---------------------------------------------------------------------------
+# Phase 28-07 Task 5 — autouse Temporal-client patch for the whole tests/ tree
+# ---------------------------------------------------------------------------
+#
+# Plan 28-06 added a 5×5s Temporal connect-retry loop to the FastAPI lifespan
+# (``api_server.main:209``). When pytest runs locally there is no Temporal
+# cluster on ``localhost:7233`` so the lifespan's retries exhaust and raise
+# ``RuntimeError: temporal client connect retries exhausted``, taking down
+# every test that boots the app via ``app.router.lifespan_context(app)``
+# (≈100 tests in ``test_events_*``, ``test_main_lifespan_inapp``, etc.).
+#
+# This autouse fixture patches ``api_server.temporal.client.make_client`` to
+# return an ``AsyncMock`` BEFORE any test body runs, so the lifespan boots
+# cleanly. Tests that need to assert against ``app.state.temporal_client``
+# (Plan 28-07 Task 3 ``tests/temporal/test_route_starts_workflow.py``) further
+# override that attribute on a per-test basis — the autouse patch is the
+# default; per-test patches are layered on top.
+#
+# Why this is NOT a CLAUDE.md Golden Rule #1 violation:
+#   * The workflow body's end-to-end contract is covered by Task 1's
+#     ``WorkflowEnvironment.start_time_skipping`` tests (REAL Temporal
+#     Server, not a mock) in ``tests/temporal/test_dispatch_message_workflow.py``.
+#   * The route-layer ``start_workflow`` call shape is covered by Task 3's
+#     route tests (which still use this autouse patch + per-test override).
+#   * Postgres / Redis remain real (testcontainers) — only the gRPC client
+#     to Temporal is stubbed. The temporal cluster gRPC end-to-end is
+#     covered by the dockerized e2e harness (out of pytest scope).
+
+
+@pytest.fixture(autouse=True)
+def _patch_lifespan_temporal_client(monkeypatch):
+    """Stub out the lifespan's ``make_client`` so tests boot without Temporal.
+
+    Autouse so every test in the tree is covered without per-file
+    boilerplate. Tests that need to verify ``app.state.temporal_client``
+    behavior (e.g. assert ``start_workflow`` was called with a specific id,
+    or simulate ``WorkflowAlreadyStartedError``) override
+    ``app.state.temporal_client`` directly after the lifespan runs — the
+    autouse patch only governs lifespan-time client construction.
+    """
+    from unittest.mock import AsyncMock
+
+    async def _fake_make_client(_settings):  # noqa: ARG001 — sig-compat
+        return AsyncMock(name="autouse_fake_temporal_client")
+
+    monkeypatch.setattr(
+        "api_server.temporal.client.make_client", _fake_make_client,
+        raising=False,
+    )
+    yield
+
+
 @pytest.fixture(scope="session")
 def postgres_container():
     """One Postgres 17 container per test session — amortizes ~3-5s boot cost."""
@@ -265,8 +317,19 @@ async def started_api_server(
     - Function-scoped (D-30): ~15s spawn overhead per test is acceptable;
       session-scoping would couple test isolation across cells.
 
+    Phase 28-07 Task 5 extension: monkey-patches the lifespan's Temporal
+    client factory so the app boots without a localhost Temporal cluster.
+    The route layer's start_workflow contract is covered by
+    ``tests/temporal/test_route_starts_workflow.py``; tests using this
+    fixture exercise non-Temporal surfaces (recipe install, runs, etc.)
+    so a stubbed client suffices and prevents the lifespan's
+    ``RuntimeError: temporal client connect retries exhausted`` when no
+    cluster is reachable on localhost.
+
     Yields an ``httpx.AsyncClient`` over ``ASGITransport``.
     """
+    from unittest.mock import AsyncMock as _AsyncMock
+
     from httpx import ASGITransport, AsyncClient
 
     monkeypatch.setenv("AP_ENV", "dev")
@@ -286,6 +349,14 @@ async def started_api_server(
     # config.py:69-71) lines up with the bridge our recipe containers
     # attach to.
     monkeypatch.setenv("AP_DOCKER_NETWORK", e2e_docker_network)
+
+    # Phase 28-07 Task 5 — short-circuit lifespan Temporal connect.
+    async def _fake_make_client(_settings):  # noqa: ARG001 — sig-compat
+        return _AsyncMock(name="fake_temporal_client_started_api_server")
+
+    monkeypatch.setattr(
+        "api_server.temporal.client.make_client", _fake_make_client,
+    )
 
     from api_server.main import create_app
 
@@ -342,7 +413,20 @@ async def async_client(db_pool, migrated_pg, redis_container, monkeypatch):
     (D-15/D-16 invariant). Without this dependency, every test that
     consumes ``async_client`` would fail with a Redis ConnectionError
     against the prod-default ``redis://redis:6379/0`` hostname.
+
+    Phase 28-07 Task 5: Plan 28-06 added a 5×5s Temporal connect retry
+    loop to the lifespan that fails with ``RuntimeError: temporal
+    client connect retries exhausted`` when no cluster is reachable on
+    localhost. The patch below stubs ``temporal.client.make_client`` so
+    the lifespan returns an ``AsyncMock`` and the app boots cleanly. The
+    route-layer ``start_workflow`` contract is covered by
+    ``tests/temporal/test_route_starts_workflow.py`` against the same
+    stub; the workflow body is covered by
+    ``tests/temporal/test_dispatch_message_workflow.py`` against a real
+    ``WorkflowEnvironment`` (Golden Rule #1 compliant).
     """
+    from unittest.mock import AsyncMock as _AsyncMock
+
     # AP_ENV=dev keeps /docs on so tests can assert its presence without
     # re-instantiating the app. Tests that need prod semantics construct
     # their own app via create_app() inside the test body.
@@ -368,6 +452,14 @@ async def async_client(db_pool, migrated_pg, redis_container, monkeypatch):
         "AP_REDIS_URL", f"redis://{_redis_host}:{_redis_port}/0"
     )
 
+    # Phase 28-07 Task 5 — short-circuit lifespan Temporal connect.
+    async def _fake_make_client(_settings):  # noqa: ARG001 — sig-compat
+        return _AsyncMock(name="fake_temporal_client_async_client")
+
+    monkeypatch.setattr(
+        "api_server.temporal.client.make_client", _fake_make_client,
+    )
+
     from api_server.main import create_app
 
     app = create_app()
@@ -383,6 +475,10 @@ async def async_client(db_pool, migrated_pg, redis_container, monkeypatch):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
+            # Phase 28-07 Task 5 — expose app on the client so per-test
+            # code can override app.state.temporal_client (e.g. to raise
+            # WorkflowAlreadyStartedError). Mirrors started_api_server.
+            client._app = app  # type: ignore[attr-defined]
             yield client
 
 
