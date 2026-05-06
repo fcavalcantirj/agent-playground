@@ -10,7 +10,7 @@ Phase 30 flips `runtime.via_proxy: true` on the **5 recipes** Phase 29 didn't co
 
 A small proxy enhancement ships first (Plan 30-00) so the proxy reads OpenRouter's inline `usage.cost` field directly. **Note (post-verification 2026-05-06):** the proxy's existing `cost_weights` computation IS empirically accurate today for typical traffic (matches `/v1/generation` to the cent when `ap_multiplier=1.0` and cache_read tokens are captured). D-09 is therefore source-of-truth simplification + Phase B prep, not an active-bug fix — see `<verification_evidence>` below.
 
-**In scope:** 5 YAML flips, 5 per-recipe spikes (real-money, ~$0.05 total), 1 anthropic-shape proxy spike (real-money <$0.01), 1 proxy enhancement (read OpenRouter inline cost), per-flip regression-guard updates, a final cutover-verification plan.
+**In scope (REVISED 2026-05-06):** 5 YAML flips (2 mechanical heredoc edits, 2 config/CLI inspections, 1 SDK env-var trust), 1 anthropic-shape proxy spike (Plan 30-01, real-money <$0.01), 1 proxy enhancement (Plan 30-00, read OpenRouter inline cost), per-flip e2e smokes (~$0.01 each, ~$0.05 total), per-flip regression-guard updates, a final cutover-verification plan. **The original "5 pre-flip real-money spikes" framing was wrong** — recipes already make successful HTTP calls; the proxy just changes the URL the recipe writes. See `<verification_evidence>` and D-05 (REVISED).
 
 **Out of scope (deferred):** Phase 29 follow-ups (transient `status='unknown'` row dedup from inapp_dispatcher's parallel write; mobile `bot_timeout` chip rendering from Phase 29 Gate 5); OpenRouter `user` field pass-through (Phase B prerequisite); --workers 1 cap removal (Phase 29 follow-up). **NOT** out of scope despite earlier framing: cost_weights schema extension — verified the schema **already** has `cache_read_per_1m_usd` + `cache_creation_per_1m_usd`. No migration needed.
 
@@ -29,24 +29,36 @@ A small proxy enhancement ships first (Plan 30-00) so the proxy reads OpenRouter
 - **D-03:** **openclaw flips first** (anthropic-shape — fail-fast on the proxy's only un-tested provider path). Then 4 openrouter recipes in this order: **nullclaw → zeroclaw → picoclaw → hermes** (ascending complexity within the proven shape).
 - **D-04:** **Plan 30-01 = dedicated PROBE-VAL-ANTHROPIC spike** before openclaw YAML flip. Real-money streaming `POST /v1/messages` to anthropic/claude-haiku-4.5 through the proxy, asserts: (a) `usage_logs` row with `status='success'`; (b) AMD-07 cumulative-tokens last-wins applied (assert `[5,12,17] → 17` regression); (c) `cost_usd > 0` from cost_weights. Real cost <$0.01.
 
-### Spike depth
+### Spike depth — REFRAMED 2026-05-06 post-empirical-recipe-inspection
 
-- **D-05:** **One pre-flip spike per openrouter recipe** (4 spikes, ~$0.04 real-money total). Each spike: `docker run` with `AP_PROXY_BASE_URL` injected, real OpenRouter call, assert `usage_logs` row + non-zero cost_usd. Catches stack-specific env-var quirks early — Rust (zeroclaw) and Zig (nullclaw) are the highest risk for not honoring `OPENAI_BASE_URL` semantics.
-- **D-06:** Order within openrouter group: **nullclaw → zeroclaw → picoclaw → hermes**. Rationale: Zig 8 MB → Rust → Python+config-json variant → Python heaviest. Smallest/fastest first to surface env-var quirks; biggest last (hermes 5.2 GB image, slowest iteration).
+**Original framing (D-05, now superseded):** "Each agent might not honor OPENAI_BASE_URL — spike to verify per recipe." This framing was **wrong**. Every recipe ALREADY makes successful HTTP calls to its provider today (proven by `verified_cells[]` PASS state). The proxy doesn't change agent env-var-reading behavior; it changes the URL the **recipe** writes into the agent's config (heredoc) or CLI flag.
+
+**Correct per-recipe work classification:**
+
+| Recipe | Where base URL lives today | Phase 30 work | Spike needed? |
+|---|---|---|---|
+| **nullclaw** | `recipes/nullclaw.yaml:468` config heredoc hardcodes `"base_url":"https://openrouter.ai/api/v1"` | Mechanical edit to `"${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"`. Identical pattern to nanobot. | **No.** E2E smoke after flip is sufficient. |
+| **picoclaw** | `recipes/picoclaw.yaml:105/213` two JSON heredocs hardcode `"api_base":"https://openrouter.ai/api/v1"` | Same mechanical substitution. nanobot already proves heredoc-eval works on alpine `/bin/sh`. | **No.** E2E smoke after flip is sufficient. |
+| **hermes** | `process_env.base_url: null` — hermes defaults internally to `openrouter.ai/api/v1` | Inspect hermes CLI for `--base-url` flag OR config-file knob; add to `invoke.spec.argv` or `runtime.process_env.base_url`. | **No real-money spike** — local CLI inspection (`docker run hermes:latest hermes chat --help`) is sufficient. |
+| **zeroclaw** | `process_env.base_url: null` — `zeroclaw onboard --provider openrouter` sets default at runtime | Inspect zeroclaw config writer for the base_url field; either pass via flag in invoke argv OR pre-write the config like picoclaw does. | **No real-money spike** — local config inspection (`zeroclaw onboard --help` + read upstream source if needed). |
+| **openclaw** | Anthropic SDK reads `ANTHROPIC_BASE_URL` env var (documented Anthropic SDK convention since launch) | `tools/run_recipe.py::_build_via_proxy_overrides` already injects `ANTHROPIC_BASE_URL` for `ANTHROPIC_API_KEY` recipes. **Mechanical YAML flip; no recipe-side substitution needed.** | **No** for openclaw itself, but **yes** for the proxy's anthropic-shape parser end-to-end (D-04 separate concern). |
+
+- **D-05 (REVISED):** **No real-money pre-flip spikes for openrouter recipes.** nullclaw + picoclaw are mechanical heredoc edits identical to nanobot. hermes + zeroclaw need local CLI/config inspection (no real upstream traffic). Per-recipe e2e smoke AFTER flip remains the validation gate (real-money but cheap, ~$0.01 per recipe; same shape as Phase 29 Gate 1).
+- **D-06:** Order within openrouter group: **nullclaw → picoclaw → zeroclaw → hermes**. Rationale: nullclaw + picoclaw are mechanical (fastest to ship); zeroclaw needs config inspection; hermes biggest image last. (Order reordered post-reframe — picoclaw moves up because it's also mechanical.)
 
 ### Phase shape
 
-- **D-07:** **Single Phase 30, one plan per recipe** (~7 plans total). Layout:
+- **D-07 (REVISED 2026-05-06):** **Single Phase 30, ~7 plans total.** Layout:
   - `30-00`: proxy enhancement — read OpenRouter inline `cost` (D-09)
-  - `30-01`: PROBE-VAL-ANTHROPIC spike (D-04)
-  - `30-02`: openclaw YAML flip + e2e smoke
-  - `30-03`: nullclaw spike + flip + smoke
-  - `30-04`: zeroclaw spike + flip + smoke
-  - `30-05`: picoclaw spike + flip + smoke (heredoc-eval substitution validation)
-  - `30-06`: hermes spike + flip + smoke
+  - `30-01`: PROBE-VAL-ANTHROPIC spike (D-04) — real-money <$0.01, validates proxy's anthropic SSE parser end-to-end
+  - `30-02`: openclaw flip — YAML `via_proxy: true`, openclaw uses Anthropic SDK + `ANTHROPIC_BASE_URL` (already injected by `tools/run_recipe.py`); plus e2e smoke
+  - `30-03`: nullclaw flip — mechanical heredoc edit (`recipes/nullclaw.yaml:468`); plus e2e smoke
+  - `30-04`: picoclaw flip — mechanical heredoc edits (`recipes/picoclaw.yaml:105 + :213`); plus e2e smoke
+  - `30-05`: zeroclaw flip — config inspection + flag/env edit + e2e smoke
+  - `30-06`: hermes flip — CLI inspection (`--base-url` flag?) + invoke.argv edit + e2e smoke
   - `30-07`: cutover verification + regression-guard rewrite (D-08)
 
-  Each plan ships atomically (own SUMMARY, own commit). Per-recipe rollback via `git revert <plan-tail>`.
+  Each plan ships atomically. Per-recipe rollback via `git revert <plan-tail>`. Plans 30-03 + 30-04 are the smallest (mechanical edits); 30-05 + 30-06 carry the per-recipe inspection burden.
 - **D-08:** **Regression guard updates per-flip.** Each plan's TDD update edits `test_only_nanobot_has_via_proxy` (or its successor) to add the flipped recipe to the asserted set. Plan 30-07 finalizes by replacing it with `test_all_recipes_have_via_proxy` asserting all 6 (nanobot + the 5 new) have `runtime.via_proxy: true`.
 
 ### Cost capture
@@ -203,13 +215,23 @@ This section documents what was checked AGAINST live state vs. assumed during th
 
 These are the legitimate unknowns the per-recipe spikes (D-04, D-05) exist to resolve. **Do NOT lock these decisions before research/plan phase.**
 
-| Item | Owns it | Why empirically unknown |
+### Reframe (post-empirical-recipe-inspection 2026-05-06 — supersedes earlier "OPENAI_BASE_URL honoring" framing)
+
+**The recipes already make working HTTP calls to their providers today** (verified_cells PASS in production for every recipe). The proxy doesn't change agent env-var-reading behavior — it changes the URL the **recipe** writes into the agent's config (heredoc) or CLI flag. So "does the agent honor OPENAI_BASE_URL?" was the wrong question.
+
+What's actually unknown for each recipe:
+
+| Recipe | Real unknown | How resolved |
 |---|---|---|
-| Does each of hermes/zeroclaw/nullclaw/picoclaw honor `OPENAI_BASE_URL` env? | D-05 spikes (Plans 30-03..30-06 Wave 0) | Each agent's stack reads env differently. Rust/Zig especially — no precedent. |
-| Does openclaw honor `ANTHROPIC_BASE_URL`? | D-04 spike (Plan 30-01) | Anthropic SDK does honor it; openclaw's wrapper might override. |
-| Does picoclaw's `${AP_PROXY_BASE_URL:-...}` actually shell-expand inside its `cat <<EOF ... EOF` JSON heredoc? | D-05 picoclaw spike (Plan 30-05 Wave 0) | nanobot uses the same pattern but its heredoc may have different quoting. picoclaw's alpine `/bin/sh` (busybox/ash) is also a different shell than nanobot's. |
-| AMD-07 anthropic cumulative-tokens parser, end-to-end through proxy with REAL Anthropic | D-04 spike (Plan 30-01) | Phase 29 Plan 04 unit-tests cover the parser shape with synthetic SSE. No real-traffic e2e to date. |
-| Does the dispatcher's parallel `usage_logs` write race produce a `status='unknown'` row when proxy writes `success`, OR does the proxy now win the write? | Out of scope per D-01 | Phase 29 Open follow-up. Cosmetic; defer. |
+| nullclaw | None — `recipes/nullclaw.yaml:468` hardcodes `"base_url":"https://openrouter.ai/api/v1"`; mechanical edit to substitution pattern. | YAML edit only; e2e smoke after flip validates. |
+| picoclaw | None — `recipes/picoclaw.yaml:105 + :213` hardcode `"api_base":"..."`; same mechanical edit. nanobot already proves heredoc-eval works on alpine `/bin/sh`. | YAML edit only; e2e smoke after flip validates. |
+| hermes | Does hermes's CLI accept `--base-url` flag, or does it require config-file override? | Local `docker run hermes:latest hermes chat --help` inspection (no real upstream traffic). |
+| zeroclaw | Does zeroclaw store base_url in config.json, an env var, or only via `zeroclaw onboard`? | Local `zeroclaw onboard --help` inspection + upstream source read if needed (no real upstream traffic). |
+| openclaw | Anthropic SDK reads `ANTHROPIC_BASE_URL` (documented since SDK launch). `tools/run_recipe.py::_build_via_proxy_overrides` already injects this env var. | YAML flip only; openclaw spike (D-04) validates the proxy side, not openclaw's. |
+| **proxy anthropic SSE parser** | Phase 29 unit-tests cover synthetic SSE; never hit real Anthropic traffic | **D-04 (Plan 30-01) — real-money <$0.01 spike. JUSTIFIED.** |
+| Dispatcher's parallel `usage_logs` write race (status='unknown' row) | Cosmetic Phase 29 follow-up | Out of scope per D-01. Defer. |
+
+**Net real-money commitment for Phase 30:** ~$0.06 ($0.01 anthropic spike + ~$0.01 per per-recipe e2e smoke × 5). NOT $0.05 of pre-flip openrouter spikes.
 
 </verification_evidence>
 

@@ -241,3 +241,31 @@ Honest answer at that point was **no** — multiple D-XX decisions had been lock
 | Dispatcher's parallel `usage_logs` race | Out of scope | Phase 29 follow-up; deferred per D-01 |
 
 These remaining unknowns are LEGITIMATE plan-time spike work — the per-recipe spikes (D-05) and openclaw spike (D-04) exist precisely to resolve them. They are NOT discuss-time gaps.
+
+---
+
+## Reframe Round — 2026-05-06 (post-verification follow-on)
+
+User pushed back a fourth time, this time on the framing of the spike work itself: *"all this time, all models, we used openrouter. why ask this now?? all this time we made it work how?"*
+
+The framing in the previous round was wrong. **The recipes already make successful HTTP calls** to their providers today (verified_cells PASS). The proxy doesn't change agent env-var-reading; it changes the URL the **recipe** writes into the agent's config (heredoc) or CLI flag.
+
+Empirical recipe inspection (`grep "api_base\|base_url\|openrouter.ai\|api.openai\|api.anthropic" recipes/*.yaml`) revealed:
+
+| Recipe | Where base URL hardcoded | Real Phase 30 work |
+|---|---|---|
+| nullclaw | `recipes/nullclaw.yaml:468` config heredoc | Mechanical edit — same as nanobot. NO SPIKE. |
+| picoclaw | `recipes/picoclaw.yaml:105 + :213` JSON heredocs | Mechanical edit — same as nanobot. NO SPIKE. |
+| hermes | `process_env.base_url: null` (defaults to openrouter.ai internally) | CLI inspection (`hermes chat --help`) — no real traffic. |
+| zeroclaw | `process_env.base_url: null` (set by `zeroclaw onboard`) | Config inspection — no real traffic. |
+| openclaw | Anthropic SDK reads `ANTHROPIC_BASE_URL` (already injected) | YAML flip only; proxy spike (D-04) validates proxy side. |
+
+**Corrections applied to CONTEXT.md:**
+
+1. D-05 reframed: "4 pre-flip real-money spikes" → "0 pre-flip real-money spikes for openrouter recipes" (mechanical edits + local inspection)
+2. D-06 order revised: nullclaw → picoclaw → zeroclaw → hermes (mechanical first)
+3. D-07 plan layout: 30-03/30-04 are mechanical (nullclaw/picoclaw); 30-05/30-06 carry inspection burden (zeroclaw/hermes); 30-02 is openclaw flip + smoke
+4. Phase 30 real-money commitment: $0.05 (4 openrouter spikes + 1 anthropic spike) → ~$0.06 (1 anthropic spike + 5 per-flip e2e smokes)
+5. `<verification_evidence>` "Genuine plan-time spike work" table replaced with the corrected per-recipe matrix above
+
+**Lesson for Claude (reinforcement of golden rule #5):** When a feature works in production today, the unknown for "modify it" is NOT "does the underlying mechanism work" — it's "does the modification preserve the working mechanism." Asking "does hermes honor OPENAI_BASE_URL" was a category error: hermes doesn't touch OPENAI_BASE_URL today, it touches its own configured base_url. The Phase 30 question is "where does each recipe configure base_url today, and how do I substitute it." That's an inspection question, not a probe question.
