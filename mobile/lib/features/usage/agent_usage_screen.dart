@@ -114,17 +114,37 @@ class _Body extends ConsumerWidget {
           _SeriesBlock(
             title: 'Last 7 days',
             entries: data.series7d,
+            slots: 7,
           ),
           const SizedBox(height: 24),
           _SeriesBlock(
             title: 'Last 30 days',
             entries: data.series30d,
+            slots: 30,
           ),
         ],
       ),
     );
   }
 }
+
+String? _formatLastActivity(String? iso) {
+  if (iso == null) return null;
+  final ts = DateTime.tryParse(iso)?.toLocal();
+  if (ts == null) return ' · last $iso';
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final tsDay = DateTime(ts.year, ts.month, ts.day);
+  String two(int v) => v.toString().padLeft(2, '0');
+  final hm = '${two(ts.hour)}:${two(ts.minute)}';
+  if (tsDay == today) return ' · last $hm';
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return ' · last ${months[ts.month - 1]} ${ts.day} $hm';
+}
+
 
 class _Headline extends StatelessWidget {
   const _Headline({required this.cumulative});
@@ -149,7 +169,7 @@ class _Headline extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           '$tokens tokens · ${cumulative.messageCount} messages'
-          '${lastActivity != null ? ' · last $lastActivity' : ''}',
+          '${_formatLastActivity(lastActivity) ?? ''}',
           style: const TextStyle(
             fontSize: 12,
             color: SolvrColors.mutedForeground,
@@ -161,10 +181,15 @@ class _Headline extends StatelessWidget {
 }
 
 class _SeriesBlock extends StatelessWidget {
-  const _SeriesBlock({required this.title, required this.entries});
+  const _SeriesBlock({
+    required this.title,
+    required this.entries,
+    required this.slots,
+  });
 
   final String title;
   final List<AgentSeriesEntry> entries;
+  final int slots;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +206,7 @@ class _SeriesBlock extends StatelessWidget {
         const SizedBox(height: 8),
         SizedBox(
           height: 80,
-          child: UsageChart(entries: entries),
+          child: UsageChart(entries: entries, slots: slots),
         ),
       ],
     );

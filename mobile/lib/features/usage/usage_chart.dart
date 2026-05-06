@@ -11,23 +11,62 @@ import 'package:agent_playground/features/usage/usage_models.dart';
 import 'package:flutter/material.dart';
 
 class UsageChart extends StatelessWidget {
-  const UsageChart({required this.entries, super.key});
+  const UsageChart({
+    required this.entries,
+    this.slots = 7,
+    super.key,
+  });
 
   final List<AgentSeriesEntry> entries;
 
+  /// Fixed slot count — the chart pads missing days so a single-day
+  /// dataset doesn't render as one full-width slab.
+  final int slots;
+
   @override
   Widget build(BuildContext context) {
+    final padded = _padToSlots(entries, slots);
+    final hasAny = padded.any((v) => v > 0);
+    if (!hasAny) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'No activity in last $slots days',
+          style: const TextStyle(
+            fontSize: 12,
+            color: SolvrColors.mutedForeground,
+          ),
+        ),
+      );
+    }
     return CustomPaint(
       size: Size.infinite,
-      painter: _UsageChartPainter(entries),
+      painter: _UsageChartPainter(padded),
     );
   }
 }
 
-class _UsageChartPainter extends CustomPainter {
-  _UsageChartPainter(this.entries);
+List<double> _padToSlots(List<AgentSeriesEntry> entries, int slots) {
+  // Index by day string for O(1) lookup; server returns ISO YYYY-MM-DD.
+  final byDay = <String, double>{
+    for (final e in entries) e.day: double.tryParse(e.costUsd) ?? 0,
+  };
+  final today = DateTime.now();
+  final todayDay = DateTime(today.year, today.month, today.day);
+  final out = List<double>.filled(slots, 0);
+  for (var i = 0; i < slots; i++) {
+    final d = todayDay.subtract(Duration(days: slots - 1 - i));
+    final key =
+        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    out[i] = byDay[key] ?? 0;
+  }
+  return out;
+}
 
-  final List<AgentSeriesEntry> entries;
+class _UsageChartPainter extends CustomPainter {
+  _UsageChartPainter(this.values);
+
+  final List<double> values;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -37,21 +76,19 @@ class _UsageChartPainter extends CustomPainter {
       track,
     );
 
-    if (entries.isEmpty) return;
+    if (values.isEmpty) return;
 
-    final values = entries
-        .map((e) => double.tryParse(e.costUsd) ?? 0)
-        .toList(growable: false);
     final maxValue = values.fold<double>(0, (a, b) => a > b ? a : b);
     if (maxValue <= 0) return;
 
-    final n = entries.length;
+    final n = values.length;
     final slotWidth = size.width / n;
     final barWidth = slotWidth * 0.7;
     final barPad = (slotWidth - barWidth) / 2;
     final bar = Paint()..color = SolvrColors.foreground;
 
     for (var i = 0; i < n; i++) {
+      if (values[i] <= 0) continue;
       final h = (values[i] / maxValue) * size.height;
       final x = (slotWidth * i) + barPad;
       final y = size.height - h;
@@ -61,5 +98,5 @@ class _UsageChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _UsageChartPainter old) =>
-      !identical(old.entries, entries);
+      !identical(old.values, values);
 }
