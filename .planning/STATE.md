@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-06T17:50:00Z"
-last_activity: 2026-05-06 -- Phase 29 Plan 02 SHIPPED (alembic migration 013 — proxy columns + idempotency status + AMD-03 verdict_json NULLABLE; live deploy-postgres-1 at rev 013; 11 unknown rows wiped)
+last_updated: "2026-05-06T18:15:00Z"
+last_activity: 2026-05-06 -- Phase 29 Plan 04 SHIPPED (LLM egress proxy core: ProxyIPMap + StreamUsageParser AMD-07 last-wins + AMD-03 reserved-row idempotency + POST /v1/llm/forward route + main.py lifespan wiring; 35 new tests GREEN; commits 99cff07 / 436722a / a145198 / 27379bb)
 progress:
   total_phases: 19
   completed_phases: 5
