@@ -47,6 +47,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from ..models.errors import ErrorCode, make_error_envelope
 from ..services.idempotency import (
@@ -57,6 +58,12 @@ from ..services.idempotency import (
 from ..services.proxy_dispatcher import PROVIDERS
 from ..services.stream_parser import StreamUsageParser
 from ..services.usage_recorder import ParsedUsage
+from ..temporal.activities.backfill_openrouter_cost import (
+    BackfillOpenRouterCostInput,
+)
+from ..temporal.workflows.backfill_openrouter_cost import (
+    BackfillOpenRouterCostWorkflow,
+)
 
 router = APIRouter()
 _log = logging.getLogger("api_server.llm_proxy")
@@ -126,7 +133,7 @@ async def _record_usage_from_parsed(
     proxy_latency_ms: int,
     upstream_latency_ms: int,
     idempotency_key: str | None,
-) -> None:
+) -> UUID | None:
     """Write one ``usage_logs`` row from a parsed-usage tuple.
 
     The legacy ``services.usage_recorder.record_usage`` takes a raw
@@ -141,6 +148,11 @@ async def _record_usage_from_parsed(
 
     Failures are logged + swallowed — a recorder failure must NEVER
     break the bot's reply path (mirrors the legacy recorder's contract).
+
+    Returns the inserted ``usage_logs.id`` UUID on success or ``None`` on
+    failure. Plan 29-07 consumes the returned id to launch the
+    OpenRouter post-hoc cost backfill workflow with a stable id of
+    ``backfill_or_<usage_log_id>``.
     """
     try:
         async with pool.acquire() as conn:
@@ -176,7 +188,10 @@ async def _record_usage_from_parsed(
 
             # Use the provided latency split; fall back to total =
             # upstream_latency_ms for the legacy ``latency_ms`` column.
-            await conn.execute(
+            # Plan 29-07: capture the inserted row id so the proxy can
+            # launch the OpenRouter post-hoc cost backfill workflow
+            # with a stable, idempotent workflow id.
+            inserted_id = await conn.fetchval(
                 """
                 INSERT INTO usage_logs (
                     user_id, agent_instance_id, message_id,
@@ -195,6 +210,7 @@ async def _record_usage_from_parsed(
                     $14, 'inapp',
                     $15, $16
                 )
+                RETURNING id
                 """,
                 user_id, agent_instance_id,
                 provider, model, upstream_request_id,
@@ -205,6 +221,7 @@ async def _record_usage_from_parsed(
                 parsed.status, status_code,
                 parsed.stop_reason, proxy_latency_ms, upstream_latency_ms,
             )
+            return inserted_id
     except Exception as exc:
         # No BYOK key in this scope to redact against; the recorder
         # SQL contains parameterized values only — but log via the
@@ -221,6 +238,7 @@ async def _record_usage_from_parsed(
                 "idempotency_key": idempotency_key,
             },
         )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +382,7 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
             parsed = parser.finalize()
             if status_code >= 400:
                 parsed = replace(parsed, status="failed")
-            await _record_usage_from_parsed(
+            usage_log_id = await _record_usage_from_parsed(
                 request.app.state.db,
                 user_id=user_id,
                 agent_instance_id=agent_instance_id,
@@ -377,6 +395,69 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
                 upstream_latency_ms=upstream_latency_ms,
                 idempotency_key=idem_key,
             )
+
+            # Plan 29-07 — Fire-and-forget the OpenRouter post-hoc
+            # cost backfill workflow. ONLY when:
+            #   * provider is openrouter (only OpenRouter exposes the
+            #     /api/v1/generation lookup; other providers return final
+            #     usage inline and need no backfill).
+            #   * upstream_request_id (X-Generation-Id) is non-empty —
+            #     without it the activity has no key to look up.
+            #   * status_code == 200 — no point backfilling a failed call.
+            #   * usage_log_id is not None — we have a row to UPDATE.
+            #
+            # Workflow id is stable + idempotent: ``backfill_or_<usage_log_id>``.
+            # WorkflowAlreadyStartedError is swallowed so a duplicate
+            # request (same usage_log_id, e.g. retry path) does NOT
+            # cascade into a 500 — Temporal's REJECT_DUPLICATE policy
+            # gives us at-most-once execution per row.
+            #
+            # The start_workflow call is NOT wrapped in a task — it's a
+            # fast gRPC RPC (the workflow body runs async on the worker).
+            # We await it inline so completion of _gen()'s finally is
+            # deterministic, but we swallow EVERY exception so a Temporal
+            # outage cannot break the user's chat reply.
+            if (
+                provider == "openrouter"
+                and upstream_request_id
+                and status_code == 200
+                and usage_log_id is not None
+            ):
+                temporal_client = getattr(
+                    request.app.state, "temporal_client", None,
+                )
+                settings = getattr(request.app.state, "settings", None)
+                if temporal_client is not None and settings is not None:
+                    try:
+                        await temporal_client.start_workflow(
+                            BackfillOpenRouterCostWorkflow.run,
+                            BackfillOpenRouterCostInput(
+                                usage_log_id=str(usage_log_id),
+                                generation_id=upstream_request_id,
+                                user_id=str(user_id),
+                                agent_instance_id=str(agent_instance_id),
+                            ),
+                            id=f"backfill_or_{usage_log_id}",
+                            task_queue=settings.temporal_task_queue,
+                        )
+                    except WorkflowAlreadyStartedError:
+                        # At-most-once: another caller already started
+                        # the same backfill. No-op is the right answer.
+                        _log.info(
+                            "proxy.backfill_workflow_duplicate",
+                            extra={"usage_log_id": str(usage_log_id)},
+                        )
+                    except Exception as exc:
+                        _log_exception_redacted(
+                            _log,
+                            f"proxy.backfill_workflow_start_failed: {str(exc)}",
+                            exc, key,
+                            extra={
+                                "usage_log_id": str(usage_log_id),
+                                "generation_id": upstream_request_id,
+                            },
+                        )
+
             if idem_key and we_own_in_flight_slot:
                 # Finalize the AMD-03 reserved row so a second concurrent
                 # caller's poll_for_completion can replay our verdict.

@@ -60,6 +60,8 @@ from ..config import get_settings
 from ..db import close_pool, create_pool
 from ..log import configure_logging
 from ..services.inapp_recipe_index import InappRecipeIndex
+from ..services.proxy_byok_cache import ProxyBYOKCache
+from .activities.backfill_openrouter_cost import BackfillOpenRouterCostActivities
 from .activities.check_container_ready import ReadinessActivities
 from .activities.debit_balance import debit_balance
 from .activities.emit_inapp_outbound import emit_inapp_outbound
@@ -68,6 +70,7 @@ from .activities.mark_message_done import MarkActivities
 from .activities.mark_message_failed import MarkFailedActivities
 from .activities.record_usage import RecordUsageActivities
 from .client import make_client
+from .workflows.backfill_openrouter_cost import BackfillOpenRouterCostWorkflow
 from .workflows.dispatch_message import DispatchMessageWorkflow
 
 
@@ -129,6 +132,31 @@ async def main() -> None:
         )
         stack.push_async_callback(bot_http.aclose)
 
+        # 3b. Phase 29 Plan 07 — proxy_upstream_client (AMD-05) for the
+        #     BackfillOpenRouterCostActivities GET to /api/v1/generation.
+        #     SEPARATE from bot_http above — this client targets upstream
+        #     LLM providers, not bots. Per-request 10s timeout in the
+        #     activity overrides the client default.
+        proxy_upstream_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=5.0),
+            limits=httpx.Limits(
+                max_connections=20, max_keepalive_connections=10
+            ),
+        )
+        stack.push_async_callback(proxy_upstream_http.aclose)
+
+        # 3c. Phase 29 Plan 05 — ProxyBYOKCache for the backfill activity
+        #     to look up the per-deploy BYOK key via
+        #     ``(user_id, agent_instance_id) -> (provider, decrypted_key)``.
+        #     Rehydrate from agent_containers WHERE container_status='running'
+        #     AND provider_key_enc IS NOT NULL — restart resilience per D-02.
+        byok_cache = ProxyBYOKCache(db_pool=db_pool)
+        _byok_loaded = await byok_cache.rehydrate_from_db()
+        log.info(
+            "phase29.worker.proxy_byok_cache_rehydrated",
+            extra={"count": _byok_loaded},
+        )
+
         # 4. Docker client + InappRecipeIndex (recipe lookup + container IP).
         #    docker.from_env() reads DOCKER_HOST / unix socket; the compose
         #    service mounts /var/run/docker.sock so this works inside the
@@ -153,6 +181,15 @@ async def main() -> None:
         usage_acts = RecordUsageActivities(db_pool=db_pool)
         mark_acts = MarkActivities(db_pool=db_pool)
         mark_failed_acts = MarkFailedActivities(db_pool=db_pool)
+        # Phase 29 Plan 07 — class-bound backfill activity. Uses the
+        # process-wide proxy_upstream_http (AMD-05) and the rehydrated
+        # ProxyBYOKCache so the activity can read the per-deploy BYOK
+        # key without re-decrypting per call.
+        backfill_acts = BackfillOpenRouterCostActivities(
+            db_pool=db_pool,
+            upstream_client=proxy_upstream_http,
+            byok_cache=byok_cache,
+        )
 
         # 6. Connect to Temporal with outer 5×5s retry (RESEARCH §7 R5).
         #    The compose ``depends_on: temporal: service_healthy`` gate
@@ -186,7 +223,10 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,
-            workflows=[DispatchMessageWorkflow],
+            workflows=[
+                DispatchMessageWorkflow,
+                BackfillOpenRouterCostWorkflow,    # Phase 29 Plan 07
+            ],
             activities=[
                 ready_acts.check_container_ready,
                 forward_acts.forward_to_agent,
@@ -195,6 +235,7 @@ async def main() -> None:
                 mark_acts.mark_message_done,
                 mark_failed_acts.mark_message_failed,
                 debit_balance,                  # standalone D-22 no-op
+                backfill_acts.backfill,         # Phase 29 Plan 07
             ],
             max_concurrent_activities=10,
             max_activities_per_second=5,
