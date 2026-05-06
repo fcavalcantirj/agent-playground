@@ -41,13 +41,42 @@ New FastAPI route family at `/v1/llm/{provider}/...` (or similar; researcher dec
 
 **Trade-off accepted:** api_server now serves both control and data plane. For v1 (sub-100 users) that's fine. Phase 999.2 (Go API rewrite) can split them if needed.
 
-### D-02 BYOK key custody — proxy holds keys
+### D-02 BYOK key custody — proxy holds keys; per-deploy, persisted encrypted in `agent_containers`
 
-Proxy decrypts the user's encrypted OpenRouter / Anthropic / OpenAI key at request time, swaps the `Authorization` header on the outbound request, forwards upstream. Bot never sees the key.
+**Storage location.** Add a new column `agent_containers.provider_key_enc bytea` (Phase 29 migration `013`). Encrypted via the SAME age-cipher infrastructure used for `channel_config_enc` (Phase 23 trust model — already audited). The deploy flow contract stays unchanged: `Authorization: Bearer <key>` header is REQUIRED on every `POST /v1/runs` / `POST /v1/agents/.../deploy`. The change is what api_server does with it: instead of "memory only, inject into bot env", it's now "encrypt + persist + populate proxy cache + still inject into bot env until D-04 migrates that recipe".
 
-**Reuse:** `agent_containers.channel_config_enc` already encrypts BYOK key material per Phase 23. Decrypt path exists.
+**Why per-deploy (not user-scoped):** simplicity wins for v1. User-scoped (MSV's `users.anthropic_oauth` pattern with Settings UI + `/v1/byok/*` endpoints + key validation flow) is the better long-term UX but adds ~3-4× the surface area to Phase 29. Per-deploy keeps the existing client contract intact (mobile + web don't change), survives both api_server and bot container restarts, and matches the existing `channel_config_enc` mental model. Phase 30+ can promote to user-scoped without breaking anything.
 
-**MSV reference:** `api/pkg/anthropicproxy/proxy.go` lines 116-117 (`tidToKey map[string]string`), 332-342 (`resolveKey`), 526-541 (header injection). Cache refreshed every 2 min via `KeyFunc` callback.
+**Restart resilience (the load-bearing requirement):**
+- **api_server restart:** lifespan startup queries `agent_containers WHERE container_status='running'`, decrypts each `provider_key_enc`, populates the proxy's in-memory cache `{(user_id, agent_instance_id) → decrypted_key}`. Live chats resume in seconds.
+- **Bot container restart:** no impact. Bot's `OPENAI_BASE_URL` still points at api_server's proxy route; proxy still has the key cached.
+- **api_server + bot both restart:** same as above — proxy rehydrates from DB, bot reconnects to proxy. No re-paste.
+
+**Bot side: still inject the key into the bot container until D-04 flips that recipe.** Phase 29 ships the proxy AND flips one recipe (nano-kaiku, per D-04). For nano-kaiku ONLY, the bot's env loses `OPENROUTER_API_KEY` and gains `OPENAI_BASE_URL=http://api_server:8000/v1/llm/forward` + `OPENAI_API_KEY=ap-proxy-<inapp_auth_token>`. Other recipes keep their current "key in env" path until they migrate.
+
+**Header injection by proxy → upstream:**
+- OpenRouter / OpenAI: `Authorization: Bearer <key>`
+- Anthropic native: `x-api-key: <key>` + `anthropic-version: 2023-06-01`
+
+Proxy dispatches per the resolved upstream provider (D-09).
+
+**MSV reference:** `api/pkg/anthropicproxy/proxy.go` lines 116-117 (`tidToKey map[string]string`), 296-298 (atomic cache swap), 332-342 (`resolveKey`), 354-360 (`SetDefaultKey` hot-rotation), 526-541 (header injection on outbound). AP equivalent: same shape but cache key is `(user_id, agent_instance_id)` instead of `telegramID`, and the cache source is `agent_containers.provider_key_enc` instead of `users.anthropic_oauth`.
+
+**Deferred to Phase 30+ (explicitly out of scope):** `users.byok_keys_enc` user-scoped table, Settings UI for key management, `POST /v1/byok/{provider}` REST endpoints, key reuse across deploys.
+
+### D-02b Validate the BYOK key on deploy — cheapest probe per provider
+
+Before persisting the key + creating the agent_container, validate it against the upstream provider with the cheapest possible call. Failure → 401 returned to client, no agent created, no encrypted blob written.
+
+| Provider | Validation call | Cost | Why |
+|---|---|---|---|
+| OpenRouter | `GET https://openrouter.ai/api/v1/key` with `Authorization: Bearer <key>` | $0 (no inference) | Returns key metadata + balance. 401 on invalid. |
+| Anthropic | `POST https://api.anthropic.com/v1/messages` body `{"model":"claude-haiku-4-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}` | ~$0.00001 | MSV's exact pattern (`api/internal/service/byok_service.go` line 28). 401 on invalid. |
+| OpenAI | `GET https://api.openai.com/v1/models` with `Authorization: Bearer <key>` | $0 | Returns 200 + model list. 401 on invalid. |
+
+**Implementation note:** validation runs synchronously in the deploy handler BEFORE any DB write. Adds 50-300ms to deploy latency — acceptable trade-off for catching typos/expired keys at the right moment instead of mid-chat.
+
+**MSV reference:** `api/internal/service/byok_service.go` lines 27-30 (anthropicValidateURL + validateRequestBody constants).
 
 ### D-03 Streaming usage capture — inline final chunk + post-hoc verify
 
@@ -122,6 +151,99 @@ Migration `013` adds these. Existing columns (`input_tokens`, `output_tokens`, `
 Add `_parse_anthropic_native(response: dict) -> ParsedUsage`. Same shape as `_parse_openai_compat` but reads `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`.
 
 `_parse_stripped` stays for now (called by the legacy non-proxy path until all recipes migrate). After D-04 completes (all recipes flipped), `_parse_stripped` is deleted in Phase 30 cleanup.
+
+### D-13 Rate limiting — none in v1
+
+Proxy does NOT enforce per-user rate limits in Phase 29. The user is paying their own provider (BYOK), provider already enforces rate limits, and AP isn't yet at scale where we need a defense.
+
+**Defer to Phase B** when platform-billed mode adds the 402-balance gate (also a natural rate-limit hook).
+
+**MSV has tier-based RPM** (`RateLimits.FreeRPM` / `StarterRPM` etc) — that pattern is the future migration path; we don't pre-build it.
+
+### D-14 Outbound request body mutation — minimal-mutation, recompute Content-Length
+
+Proxy must inject two fields into outbound chat-completion request bodies:
+
+- `user: "ap_<user_id>_<agent_instance_id>"` (D-08)
+- `stream_options: { include_usage: true }` when `stream: true` (D-03)
+
+**Mechanism:** read JSON body → mutate dict → re-serialize → set `Content-Length` to the new length. Bot's original body is ALSO logged at debug level (with the BYOK key field redacted if any leaks through) for diff debugging.
+
+**Anthropic's `/v1/messages` body** has no equivalent `user` field — Anthropic surfaces user attribution via OpenTelemetry headers, not body. Proxy adds `OpenTelemetry: ap_user=<user_id>` header instead of body mutation for that provider.
+
+**Streaming responses** flow back to the bot as SSE without buffering. Proxy splits the stream: forward each chunk to bot in real-time AND tee a copy to a parser goroutine that watches for the final `usage` chunk. FastAPI's `StreamingResponse` + `aiohttp` async client handles this idiom natively.
+
+### D-15 Error response handling — record `usage_logs` row with `status='failed'`
+
+When upstream returns 4xx/5xx, proxy:
+
+1. Forwards the response body verbatim to the bot (bot's error UX is its own concern)
+2. Writes a `usage_logs` row with `status='failed'`, `status_code=<upstream_status>`, `cost_usd=0`, tokens=0
+3. Logs a structured event for ops
+
+Reasoning: the message attempt happened (Temporal will retry per `forward_to_agent`'s budget), and we want it visible in usage analytics so cost-attribution audits show the gap clearly.
+
+`status` enum becomes `success | failed | unknown` (with `unknown` only on legacy non-proxy rows pre-Phase-30 cleanup).
+
+### D-16 Idempotency — proxy honors `Idempotency-Key` header from Temporal retries
+
+When `forward_to_agent` activity retries (per `[1s, 2s, 4s]` budget), it must NOT cause double charges. The Temporal-driven retry already has `attempt` exposed; bot's outbound LLM call should carry `Idempotency-Key: msg-<message_id>-<workflow_run_id>` in the request to api_server's proxy route.
+
+**Proxy behavior on duplicate Idempotency-Key:** look up the existing `usage_logs` row by `(idempotency_key, status='success')`. If found, replay that row's response — do NOT re-call upstream. If not found (still in-flight or last attempt failed), forward to upstream normally.
+
+This is closely modeled after the existing `IdempotencyMiddleware` (services/idempotency.py) which already handles `POST /messages` idempotency. Proxy reuses the same Redis-backed cache with a different namespace (`ap:proxy:idem:`).
+
+### D-17 Provider derivation — from recipe's `runtime.process_env.api_key`
+
+The recipe's existing `runtime.process_env.api_key` field already declares which env var name carries the BYOK key (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`). That same signal tells the proxy which upstream URL to forward to:
+
+| Recipe declares | Proxy forwards to | Auth header |
+|---|---|---|
+| `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `Authorization: Bearer <key>` |
+| `ANTHROPIC_API_KEY` | `https://api.anthropic.com` | `x-api-key: <key>` + `anthropic-version: 2023-06-01` |
+| `OPENAI_API_KEY` | `https://api.openai.com/v1` | `Authorization: Bearer <key>` |
+
+`agent_containers.upstream_provider` (D-11 schema add) is materialized at deploy time from this signal — the proxy reads it on every request, no recipe lookup at hot path.
+
+**Why not recipe-config-driven explicitly:** the existing `_ENV_TO_PROVIDER` map in `services/recipes_loader.py:58` already does this derivation for the BYOK label-swap UX. Proxy reuses the same source of truth — one place to change if a fourth provider is added.
+
+### D-18 Recipe field that turns on the proxy — `runtime.via_proxy: true`
+
+New optional recipe YAML field: `runtime.via_proxy: true`. When set, the runner:
+
+- Strips `OPENROUTER_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the bot container's env
+- Injects `OPENAI_BASE_URL=http://api_server:8000/v1/llm/forward` (or the equivalent for Anthropic-direct: `ANTHROPIC_BASE_URL=...`)
+- Injects `OPENAI_API_KEY=ap-proxy-<inapp_auth_token>` as a placeholder so OpenAI SDK clients don't barf on missing-key validation
+- The bot's outbound LLM call lands on api_server's proxy route, which holds the real key
+
+When unset (or `false`), the runner uses the legacy path: bot gets the real key in env, calls upstream directly, no proxy involvement.
+
+**Phase 29 sets `via_proxy: true` only on `recipes/nano-kaiku.yaml`.** Other recipes flip in subsequent PRs (D-04).
+
+### D-19 Live container migration at cutover — wipe nano-kaiku containers
+
+When the nano-kaiku recipe's `via_proxy: true` flag goes live, existing nano-kaiku containers (running with keys baked in env) become incompatible — they have a real `OPENROUTER_API_KEY` set, so the bot will keep calling OpenRouter directly, bypassing the proxy. Cutover script:
+
+```python
+# tools/migrate_phase29_nano_kaiku_cutover.py
+# 1. Find live nano-kaiku containers
+rows = await fetch("""
+    SELECT id, container_id FROM agent_containers
+    WHERE recipe_name='nano-kaiku' AND container_status IN ('running','starting')
+""")
+# 2. Stop the Docker containers (idempotent)
+for row in rows:
+    docker_client.containers.get(row.container_id).stop(timeout=10)
+# 3. Mark rows stopped (the reaper will GC them)
+await execute("""
+    UPDATE agent_containers SET container_status='stopped', stopped_at=NOW()
+    WHERE id = ANY($1)
+""", [r.id for r in rows])
+```
+
+Dev-OK per user decision: "wipe — it's dev, just kill them." User must redeploy nano-kaiku agents post-cutover. Mobile app's "deploy" UX is unchanged so re-deploy is one tap.
+
+**This script runs as part of Phase 29 Plan 09 (cutover). Plus a final invocation after `via_proxy: true` is committed but BEFORE merge to ensure no race with new deploys.**
 
 ## Out of scope (deferred / Phase 30+)
 
