@@ -1300,6 +1300,10 @@
             "annotations": {
               "type": "object",
               "additionalProperties": true
+            },
+            "via_proxy": {
+              "type": "boolean",
+              "description": "Phase 29 D-17 + D-18 + AMD-01 — when true the runner routes the bot's LLM traffic through the api_server's egress proxy (strips the BYOK key from the container env, injects AP_PROXY_BASE_URL + OPENAI_BASE_URL/ANTHROPIC_BASE_URL + ap-proxy-<inapp_auth_token> placeholder). Defaults to false. Only nanobot has this flag in Phase 29; Phase 30 flips the rest."
             }
           }
         },

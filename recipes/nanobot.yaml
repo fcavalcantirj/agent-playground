@@ -39,6 +39,15 @@ build:
 
 runtime:
   provider: openrouter
+  # Phase 29 D-17 + D-18 + AMD-01 — nanobot is the cutover recipe for the
+  # LLM egress proxy. When via_proxy is true the runner STRIPS the real
+  # BYOK key from the container env and injects the placeholder shape
+  # (AP_PROXY_BASE_URL + OPENAI_BASE_URL + ap-proxy-<inapp_auth_token>).
+  # The api_base substitution in the JSON heredocs below picks up
+  # AP_PROXY_BASE_URL via sh-expansion at container start time. Phase 30
+  # flips the remaining 4 recipes one PR at a time after per-recipe
+  # spike validation.
+  via_proxy: true
   process_env:
     api_key: OPENROUTER_API_KEY
     api_key_fallback: null
@@ -240,7 +249,7 @@ persistent:
           "providers": {
             "openrouter": {
               "api_key": "${OPENROUTER_API_KEY}",
-              "api_base": "https://openrouter.ai/api/v1"
+              "api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
             }
           },
           "channels": {
@@ -451,7 +460,7 @@ channels:
             "providers": {
               "openrouter": {
                 "api_key": "${OPENROUTER_API_KEY}",
-                "api_base": "https://openrouter.ai/api/v1"
+                "api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
               }
             }
           }
