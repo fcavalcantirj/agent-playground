@@ -163,3 +163,43 @@ $ uv run pytest tests/services/test_inapp_dispatcher.py -v -m api_integration
 
 Plan 28-07's own test surface is fully green. Pre-existing failures are
 documented for a future "test-suite hygiene" plan.
+
+## Plan 28-09 (2026-05-06)
+
+Discovered while running the exit-gate verification. None of these are
+Phase 28 code defects; all are out-of-scope per the SCOPE BOUNDARY rule.
+
+10. **`make e2e-inapp-docker` is stale post-Plan-06 cutover** — the harness's
+    `tests/e2e/_helpers.py::drive_dispatcher_once` imports
+    `from api_server.services.inapp_dispatcher import _handle_row`, a
+    function Plan 28-06 D-06 DELETED. All 5 cells (hermes, nanobot,
+    openclaw, nullclaw, zeroclaw) ERROR at fixture setup with
+    `ImportError: cannot import name '_handle_row'`. Fix: rewrite
+    `drive_dispatcher_once` to drive the workflow path
+    (POST `/v1/agents/:id/messages` → poll `inapp_messages.status`)
+    instead of importing the deleted helper. The Phase 22c.3 SC-03 surface
+    that the harness was originally written for is replaced by the new
+    `tests/temporal/` suite (19 tests). Owner: a future Phase 22c.3
+    hygiene / Phase 28 follow-up plan.
+
+11. **`tests/test_run_recipe_persistent_inapp.py::test_data_dir_hoisted_before_pre_start`**
+    — Phase 22c.3.1 D-34 test, fails on Docker container teardown timing
+    with `No such container: <id>` (the test container was force-removed
+    before the daemon-logs check ran). Authored at commit `ca9bb19`
+    (Phase 22c.3.1 wave 0). Pre-existing flake; NOT a Phase 28 regression.
+    Fix: add a small wait + `docker logs` retry loop OR snapshot the
+    daemon logs before the teardown call.
+
+12. **temporal-worker bind-mount can become stale after worktree cleanup**
+    — when an executor worktree gets deleted (each parallel agent runs in
+    `.claude/worktrees/agent-<hash>/`), any deploy-stack container that
+    started its lifetime under that worktree retains the now-defunct
+    bind-mount path. Symptom observed during Plan 28-09: `temporal-worker`
+    had `/Users/.../worktrees/agent-a53355f1/recipes` bound to
+    `/app/recipes`, but `agent-a53355f1` had been cleaned up by the prior
+    Plan 06 executor; result: `/app/recipes` was empty inside the worker
+    and `forward_to_agent` raised `recipe_lacks_inapp_channel`. Workaround
+    used: force-recreate the affected services from the canonical project
+    root with `--force-recreate`. Long-term fix: the deploy stack should
+    bind-mount from a stable path (the canonical project root, not the
+    worktree that booted it). Owner: deploy/orchestration follow-up.
