@@ -22,9 +22,32 @@ Scope:
 
 24h TTL default matches CONTEXT.md §D-01. GC is Plan 19-07's
 responsibility via a cron against ``idx_idempotency_expires``.
+
+AMD-03 reserved-row extension (Phase 29):
+
+The Phase 29 LLM proxy needs idempotent retries against a multi-second
+upstream call. The existing ``check_or_reserve`` primitive returns
+``"miss"`` until the FIRST request finishes and writes its row — under
+concurrent retries 50ms apart, BOTH callers see ``"miss"`` and BOTH
+forward to upstream → double charge. PROBE-VAL-06 reproduced this gap
+empirically.
+
+The reserved-row pattern closes the gap: the FIRST caller inserts a
+placeholder row with ``status='in_flight'`` and ``verdict_json=NULL``
+(via ``insert_reserved_row``) BEFORE forwarding upstream. The SECOND
+concurrent caller sees ``ON CONFLICT DO NOTHING`` and falls through
+to ``poll_for_completion``, waiting for the first caller to flip the
+row to ``status='success'`` (via ``finalize_reserved_row``) and then
+replaying the cached verdict.
+
+Migration 013 added the ``status`` text column + relaxed
+``verdict_json`` to NULLABLE on ``idempotency_keys`` to support this
+pattern. The legacy ``check_or_reserve`` / ``write_idempotency`` pair
+is unchanged — chat-path callers continue to work.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Literal
@@ -141,4 +164,136 @@ async def write_idempotency(
         """,
         user_id, key, run_id, json.dumps(verdict_json),
         body_hash, str(ttl_hours),
+    )
+
+
+# ---------------------------------------------------------------------------
+# AMD-03 reserved-row primitive (Phase 29 — closes the in-flight gap)
+# ---------------------------------------------------------------------------
+
+
+async def insert_reserved_row(
+    conn: asyncpg.Connection,
+    *,
+    user_id: UUID,
+    key: str,
+    request_body_hash: str,
+    ttl_seconds: int = 86400,
+) -> bool:
+    """Insert a placeholder ``status='in_flight'`` row.
+
+    Returns ``True`` if WE inserted the row (we own the in-flight slot
+    and must call :func:`finalize_reserved_row` after the upstream call
+    completes), or ``False`` if a row already existed for
+    ``(user_id, key)`` (another caller is in-flight; poll for completion
+    via :func:`poll_for_completion`).
+
+    The ``ON CONFLICT (user_id, key) DO NOTHING`` semantics make this
+    the single race-resolution point: concurrent callers serialize on
+    the unique constraint and exactly one wins the in-flight slot.
+
+    AMD-03 — closes the in-flight gap PROBE-VAL-06 reproduced. Migration
+    013 added the ``status`` column + relaxed ``verdict_json`` to
+    NULLABLE so this row can be inserted BEFORE the upstream returns.
+    """
+    result = await conn.execute(
+        """
+        INSERT INTO idempotency_keys (
+            id, user_id, key, request_body_hash,
+            verdict_json, status, expires_at, run_id
+        ) VALUES (
+            gen_random_uuid(), $1, $2, $3,
+            NULL, 'in_flight',
+            NOW() + ($4 || ' seconds')::interval,
+            NULL
+        )
+        ON CONFLICT (user_id, key) DO NOTHING
+        """,
+        user_id, key, request_body_hash, str(ttl_seconds),
+    )
+    # asyncpg returns 'INSERT 0 1' on insert, 'INSERT 0 0' on conflict-skip.
+    return result.endswith(" 1")
+
+
+async def poll_for_completion(
+    conn: asyncpg.Connection,
+    *,
+    user_id: UUID,
+    key: str,
+    max_wait_s: float = 5.0,
+    poll_interval_s: float = 0.1,
+) -> dict | None:
+    """Wait for a reserved row to flip to ``status='success'``.
+
+    Returns the cached ``verdict_json`` dict on success, or ``None`` on
+    timeout / ``status='failed'`` / row missing. The caller treats
+    ``None`` as "fall through to a fresh upstream attempt" — which is
+    safe because the failed/timed-out row is already terminal in this
+    iteration; the original caller has either crashed or surfaced the
+    error to the user.
+
+    Polls every ``poll_interval_s`` (default 100ms) up to ``max_wait_s``
+    (default 5s) — the same window PROBE-VAL-06 demonstrated single-
+    charges under a 3s simulated upstream.
+    """
+    deadline = asyncio.get_event_loop().time() + max_wait_s
+    while True:
+        row = await conn.fetchrow(
+            """
+            SELECT status, verdict_json
+            FROM idempotency_keys
+            WHERE user_id = $1 AND key = $2
+            """,
+            user_id, key,
+        )
+        if row is None:
+            return None
+        status = row["status"]
+        if status == "success":
+            cached = row["verdict_json"]
+            # Mirror check_or_reserve's JSON normalization — asyncpg
+            # decodes JSONB to either a dict or a JSON string depending
+            # on the codec registered for the pool.
+            if isinstance(cached, (str, bytes, bytearray)):
+                cached = json.loads(cached)
+            return cached
+        if status == "failed":
+            return None
+        if asyncio.get_event_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(poll_interval_s)
+
+
+async def finalize_reserved_row(
+    conn: asyncpg.Connection,
+    *,
+    user_id: UUID,
+    key: str,
+    verdict_json: dict,
+    status: str = "success",
+) -> None:
+    """Update an in-flight row to its terminal status + verdict.
+
+    Called by the original caller AFTER the upstream call resolves.
+    ``status`` must be ``'success'`` or ``'failed'`` — the check
+    constraint added in migration 013 enforces this at the DB layer
+    too, but failing fast in Python gives a clearer error than a
+    constraint violation.
+
+    ``verdict_json`` is JSON-dumped here so the ``::jsonb`` cast in the
+    SQL stays explicit (mirrors :func:`write_idempotency`'s pattern —
+    schema's JSONB column type is enforced at the call site, not via
+    asyncpg codec configuration).
+    """
+    if status not in ("success", "failed"):
+        raise ValueError(
+            f"finalize status must be 'success' or 'failed', got {status!r}"
+        )
+    await conn.execute(
+        """
+        UPDATE idempotency_keys
+        SET status = $3, verdict_json = $4::jsonb
+        WHERE user_id = $1 AND key = $2
+        """,
+        user_id, key, status, json.dumps(verdict_json),
     )
