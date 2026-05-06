@@ -8,11 +8,11 @@
 
 Phase 30 flips `runtime.via_proxy: true` on the **5 recipes** Phase 29 didn't cover (hermes, openclaw, zeroclaw, nullclaw, picoclaw), so every coding-agent deploy routes through the egress proxy and writes a `usage_logs` row with non-zero tokens + cost_usd. nanobot is already on the proxy (Phase 29 cutover). After Phase 30, **all 6 recipes** are via_proxy:true.
 
-A small proxy enhancement ships first (Plan 30-00) so cost capture is empirically accurate for openrouter recipes — the proxy currently estimates cost from `cost_weights` (~3x off until post-hoc backfill catches up); reading OpenRouter's inline `usage.cost` eliminates that window.
+A small proxy enhancement ships first (Plan 30-00) so the proxy reads OpenRouter's inline `usage.cost` field directly. **Note (post-verification 2026-05-06):** the proxy's existing `cost_weights` computation IS empirically accurate today for typical traffic (matches `/v1/generation` to the cent when `ap_multiplier=1.0` and cache_read tokens are captured). D-09 is therefore source-of-truth simplification + Phase B prep, not an active-bug fix — see `<verification_evidence>` below.
 
 **In scope:** 5 YAML flips, 5 per-recipe spikes (real-money, ~$0.05 total), 1 anthropic-shape proxy spike (real-money <$0.01), 1 proxy enhancement (read OpenRouter inline cost), per-flip regression-guard updates, a final cutover-verification plan.
 
-**Out of scope (deferred):** Phase 29 follow-ups (transient `status='unknown'` row dedup from inapp_dispatcher's parallel write; mobile `bot_timeout` chip rendering from Phase 29 Gate 5); cost_weights schema extension for cache_read/cache_write categories; OpenRouter `user` field pass-through (Phase B prerequisite); --workers 1 cap removal (Phase 29 follow-up).
+**Out of scope (deferred):** Phase 29 follow-ups (transient `status='unknown'` row dedup from inapp_dispatcher's parallel write; mobile `bot_timeout` chip rendering from Phase 29 Gate 5); OpenRouter `user` field pass-through (Phase B prerequisite); --workers 1 cap removal (Phase 29 follow-up). **NOT** out of scope despite earlier framing: cost_weights schema extension — verified the schema **already** has `cache_read_per_1m_usd` + `cache_creation_per_1m_usd`. No migration needed.
 
 </domain>
 
@@ -89,16 +89,18 @@ A small proxy enhancement ships first (Plan 30-00) so cost capture is empiricall
 - `recipes/nullclaw.yaml` — openrouter, Zig, 8 MB; smallest image, fastest spike turnaround
 - `recipes/picoclaw.yaml` — openrouter, Python; api_base baked into config.json via sh-heredoc
 
-### Proxy implementation surface (modification sites)
+### Proxy implementation surface (modification sites — VERIFIED PATHS)
 
-- `api_server/src/api_server/services/stream_parser.py` — `_scan_openai` lines 163-170 + `finalize` lines 207-272 (D-09 modification site; ParsedUsage construction)
-- `api_server/src/api_server/services/usage_recorder.py` — `_parse_openai_compat` (D-09 modification site for non-streaming JSON path); `ParsedUsage` dataclass (extend with optional `inline_cost_usd`)
-- `api_server/src/api_server/services/proxy_dispatcher.py` — provider routing dispatch on `runtime.process_env.api_key` (AMD-06)
+- `api_server/src/api_server/services/stream_parser.py` — `_scan_openai` lines 163-170 + `finalize` lines 207-272 (D-09 modification site for streaming; ParsedUsage construction)
+- `api_server/src/api_server/services/usage_recorder.py` — `_parse_openai_compat` lines 138-166 (D-09 modification site for non-streaming JSON; reads `prompt_tokens`/`completion_tokens` only — confirmed it does NOT read `usage.cost`); `ParsedUsage` dataclass lines 63-78 (extend with optional `inline_cost_usd`); `_compute_cost` line 270 (cost_weights lookup; honors all 4 token classes including cache_read/cache_creation)
+- `api_server/src/api_server/services/proxy_dispatcher.py` — `PROVIDERS` table (3 providers configured: openrouter/openai/anthropic) + `ENV_TO_PROVIDER` line 56 (3-key map: OPENROUTER_API_KEY→openrouter, ANTHROPIC_API_KEY→anthropic, OPENAI_API_KEY→openai)
 - `api_server/src/api_server/services/proxy_byok_cache.py` — Phase 29 in-process Postgres-backed cache (D-12 trust path)
 - `api_server/src/api_server/services/inapp_substitutions.py` — `build_activation_substitutions(via_proxy=True)` placeholder swap (AMD-12)
-- `api_server/src/api_server/services/inapp_recipe_index.py` — env injection dispatch on via_proxy (AMD-06)
 - `api_server/src/api_server/services/recipes_loader.py` — `runtime.via_proxy` field surface
-- `api_server/src/api_server/agent_lifecycle.py` — BYOK custody block, gated on `recipe.runtime.via_proxy=True` (Plan 29-05; mechanically guarantees Gate 7 — D-12)
+- `api_server/src/api_server/routes/agent_lifecycle.py` line 348 — BYOK custody block (validate + encrypt + persist + cache + provider_key_enc write) gated on `via_proxy_flag` (Phase 29 D-02b; mechanically guarantees Gate 7 — D-12). Calls `build_activation_substitutions(via_proxy=via_proxy_flag)` at line 498
+- `tools/run_recipe.py` lines 978-1042 — `_build_via_proxy_overrides` and `_PROXY_BASE_URL_ENV_BY_API_KEY` map. **This is where AMD-06 dispatch actually lives** for the standalone runner. Maps `OPENROUTER_API_KEY`→`OPENAI_BASE_URL`, `OPENAI_API_KEY`→`OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`→`ANTHROPIC_BASE_URL`. The api_server-side equivalent is `services/proxy_dispatcher.py::ENV_TO_PROVIDER` (mirrored, kept in sync)
+- `api_server/src/api_server/temporal/activities/backfill_openrouter_cost.py` line 146 — `UPDATE usage_logs SET cost_usd = $1 WHERE id = $2`. **Overwrites unconditionally** when `/v1/generation` returns 200 — empirically verified. This means inline cost_weights computation is the **first** value, then OpenRouter's authoritative `total_cost` overwrites
+- `api_server/src/api_server/temporal/workflows/backfill_openrouter_cost.py` — workflow that schedules the activity (Plan 29-07)
 
 ### External docs (empirically verified)
 
@@ -129,7 +131,7 @@ A small proxy enhancement ships first (Plan 30-00) so cost capture is empiricall
 ### Reusable Assets
 
 - **AMD-09 substitution pattern** — `${AP_PROXY_BASE_URL:-https://...}` in `recipes/nanobot.yaml` is sh-evaluated at container start (heredoc context). Reuse for hermes/zeroclaw/nullclaw/picoclaw via the same `api_base` field substitution. Mechanically already-working through `tools/run_recipe.py::substitute_argv` and the inapp recipe index.
-- **AMD-06 dispatch logic** — `inapp_recipe_index.py` already inspects `runtime.process_env.api_key` and selects OPENAI_BASE_URL vs ANTHROPIC_BASE_URL injection; works for any recipe with `via_proxy: true`. No new dispatch code needed for Phase 30.
+- **AMD-06 dispatch logic** — `tools/run_recipe.py:1007` (`_build_via_proxy_overrides`) inspects `runtime.process_env.api_key` and selects OPENAI_BASE_URL vs ANTHROPIC_BASE_URL injection; the api_server-side mirror is `services/proxy_dispatcher.py::ENV_TO_PROVIDER`. Works for any recipe with `via_proxy: true`. **Closed enum** — only OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY are recognized; raises ValueError on anything else. No new dispatch code needed for Phase 30; existing dispatch already covers all 5 cutover targets.
 - **`StreamUsageParser`** — Phase 29's byte-level SSE parser. D-09 extends `_scan_openai` to also capture `usage.cost`; existing buffering / chunked-byte plumbing is unchanged.
 - **`ParsedUsage` dataclass** (`usage_recorder.py`) — frozen-shape value object the proxy persists. Extend with `inline_cost_usd: float | None`; `usage_logs.cost_usd` write-site (`routes/llm_proxy.py`) prefers `inline_cost_usd` when not None, else falls back to existing cost_weights lookup.
 - **Plan 29-05's `via_proxy` gate** — entire BYOK custody block (validate + encrypt + persist + cache) wraps in `if getattr(recipe.runtime, 'via_proxy', False):`. Gate 7 (no `provider_key_enc` on legacy deploys) is **mechanically guaranteed** for every recipe Phase 30 flips, no per-recipe work required.
@@ -152,12 +154,64 @@ A small proxy enhancement ships first (Plan 30-00) so cost capture is empiricall
 <specifics>
 ## Specific Ideas
 
-- **Cost-fidelity proof point on nanobot row 1:** $0.00112305 (cost_weights inline estimate) vs $0.00039345 (`/api/v1/generation` post-hoc actual). The 3x overestimate is the load-bearing motivation for D-09.
+- **Cost-fidelity reality (refined post-verification 2026-05-06):** Phase 29 verification originally framed nanobot row 1 as `$0.00112305 (cost_weights inline) → $0.00039345 (post-hoc backfill)`. The current empirical state is more nuanced: cost_weights TODAY produces `$0.00039345` directly when cache_read is captured (`5111 input - 4992 cached + 4992 cached × $0.075/1M + 119 fresh × $0.15/1M + 2 output × $0.60/1M = $0.00039345`, exact). Either backfill normalized the original row, or the original `$0.00112305` was a transient cost_weights-without-cache-aware computation that's since been fixed. **D-09's strict "3x overestimate" framing is partially refuted**: cost_weights is accurate today when (a) row carries cache_read tokens AND (b) ap_multiplier=1.0. D-09 still has merit as **source-of-truth alignment** (OR's `cost` field is canonical) and **Phase B prep** (multiplier applies to OR's actual cost, not our estimate), but it's not fixing a current bug — it's eliminating a maintenance surface (cost_weights row maintenance for openrouter models).
 - **OpenClaw docs are the validation source for D-10**, not just speculation. Quote: "Anthropic still does not expose a per-message dollar estimate that OpenClaw can show in /usage full" — same constraint AP faces.
 - **MSV's calculator** (`api/pkg/billing/calculator.go`) is a 60-line proof that the price-table approach is the right shape for cost computation when the upstream doesn't return cost; AP's Phase 27 `cost_weights` already implements the same pattern.
 - **The 6-hotfix tail of Phase 29** is the realistic shape of "cutover work" — plans don't ship complete; expect each per-recipe flip to surface 0-2 hotfixes (BYOK leak, env-var quirk, JSON shape edge case).
+- **cost_weights schema is already 4-class** (input + output + cache_read + cache_creation + ap_multiplier). My earlier "no schema extension" claim in D-10 was based on a false premise that the schema only had input/output. Verified empirically — see `<verification_evidence>` below. **No migration needed for any cost-pricing accuracy in Phase 30.**
 
 </specifics>
+
+<verification_evidence>
+## Empirical Verification Pass — 2026-05-06
+
+This section documents what was checked AGAINST live state vs. assumed during the discuss session. Two user push-backs ("you can stop and do tests"; "I gave you links to study dude. do tests. verify b4.") forced this round.
+
+### Verified facts (live infra + code reads)
+
+| Claim | Method | Result |
+|---|---|---|
+| `cost_weights` schema | `\d cost_weights` on `deploy-postgres-1` | 8 cols incl. `input_per_1m_usd`, `output_per_1m_usd`, **`cache_read_per_1m_usd`** (nullable), **`cache_creation_per_1m_usd`** (nullable), `ap_multiplier` (default 1.0). PK = (provider, model). |
+| `cost_weights` rows | `SELECT * FROM cost_weights ORDER BY model` | 8 rows. Coverage: openrouter+anthropic forms of `claude-haiku-4.5`/`claude-haiku-4-5`/`claude-sonnet-4.5`/`claude-sonnet-4-5`; openrouter+openai forms of `gpt-4o-mini`; openrouter `xiaomi/mimo-v2.5`, `minimax/minimax-m2.5:free`. **MISSING**: `google/gemini-2.5-flash` (referenced by `recipes/hermes.yaml:152`) and any model in `recipes/zeroclaw.yaml::verified_cells` beyond `anthropic/claude-haiku-4.5`. |
+| `usage_logs` schema | `\d usage_logs` | 20 cols incl. `cost_usd numeric(14,8)`, `cache_read_tokens`, `cache_creation_tokens`, `proxy_latency_ms`, `upstream_latency_ms`. Status check constraint allows `success/error/unknown/failed`. Timestamp col is `created_at` (NOT `recorded_at`). |
+| Recent successful proxy rows | `SELECT ... FROM usage_logs WHERE status='success' ORDER BY created_at DESC LIMIT 3` | 3 rows, all `provider=openrouter`, `model=openai/gpt-4o-mini`. Latest at 22:24:00 has `cost_usd=$0.00039345`, `cache_read=4992` — matches manual cost_weights computation EXACTLY. |
+| `_parse_openai_compat` reads `cost`? | Read `usage_recorder.py:138-166` | NO. Only reads `prompt_tokens`/`completion_tokens`/`cache_read_input_tokens`/`prompt_tokens_details.cached_tokens`/`cache_creation_input_tokens`. The `cost` field in OpenRouter's response is silently dropped. |
+| `_compute_cost` source-of-truth | Read `usage_recorder.py:270-292` | Reads `cost_weights` for (provider, model) and computes USD from 4 token classes × per-1M-usd × `ap_multiplier`. No inline-cost path. |
+| Phase 29-07 backfill activity | Read `temporal/activities/backfill_openrouter_cost.py:143-148` | Reads `data["total_cost"]` from `/api/v1/generation`, `UPDATE usage_logs SET cost_usd = $1` **unconditionally** when 200. Will overwrite cost_weights value. |
+| `agent_lifecycle.py` location | `find ... -name agent_lifecycle*` | At `routes/agent_lifecycle.py` (NOT top-level — my earlier path was wrong). Line 348 = `if via_proxy_flag:` BYOK custody gate; line 498 = `build_activation_substitutions(via_proxy=via_proxy_flag)` call. |
+| AMD-06 dispatch location | `grep via_proxy in services/inapp_recipe_index.py` | NO matches. **Dispatch lives in `tools/run_recipe.py:1007-1042`** (`_build_via_proxy_overrides`). The api_server-side mirror is `services/proxy_dispatcher.py::ENV_TO_PROVIDER` (line 56). |
+| `tools/run_recipe.py` env map | Read lines 995-1003 | `OPENROUTER_API_KEY → OPENAI_BASE_URL`; `OPENAI_API_KEY → OPENAI_BASE_URL`; `ANTHROPIC_API_KEY → ANTHROPIC_BASE_URL`. Closed enum, ValueError on miss. |
+| `proxy_dispatcher.py::PROVIDERS` | Read lines 26-51 | 3 providers: `openrouter` (`Bearer`, sse=openai, `HTTP-Referer`+`X-Title` headers); `openai` (`Bearer`, sse=openai); `anthropic` (`x-api-key`, sse=anthropic, `anthropic-version: 2023-06-01`). |
+| OpenRouter inline cost | `webfetch /docs/guides/administration/usage-accounting.md` | `usage.cost` returned automatically per request; last SSE chunk for streams. `usage:{include:true}` deprecated/no-op. `cost_details.upstream_inference_cost` only on BYOK. |
+| OpenRouter input-output-logging | `webfetch /docs/guides/features/input-output-logging.md` | Admin/observability feature, NOT cost path. Irrelevant to Phase 30. |
+| OpenRouter user-tracking | `webfetch /docs/guides/administration/user-tracking.md` | `user: <id>` body field; metadata only; deferred to Phase B (D-11). |
+| OpenRouter structured-outputs | `webfetch /docs/guides/features/structured-outputs.md` | Response-format feature (JSON Schema validation); does NOT change usage/cost block. Irrelevant to Phase 30. |
+| OpenClaw usage-tracking | `webfetch /docs.openclaw.ai/concepts/usage-tracking` | Two-tier model: provider-level + caller-level. Provider-level uses upstream usage endpoints. |
+| OpenClaw api-usage-costs | `webfetch /docs.openclaw.ai/reference/api-usage-costs` | "Anthropic still does not expose a per-message dollar estimate that OpenClaw can show in /usage full" — D-10 source. |
+| OpenClaw token-use | `webfetch /docs.openclaw.ai/reference/token-use` | Price table: `models.providers.<provider>.models[].cost` USD per 1M tokens for input/output/cacheRead/cacheWrite. **Same shape as AP's cost_weights — validates the pattern.** |
+| Recipe `verified_cells[]` models | `grep "model:" recipes/*.yaml` | hermes: anthropic/claude-haiku-4.5, openai/gpt-4o-mini, **google/gemini-2.5-flash (NOT in cost_weights)**. zeroclaw: anthropic/claude-haiku-4.5. nullclaw: anthropic/claude-haiku-4.5, openrouter/anthropic/claude-haiku-4.5. picoclaw: openai/gpt-4o-mini, anthropic/claude-haiku-4.5. openclaw: anthropic/claude-haiku-4.5, anthropic/claude-haiku-4-5, anthropic/claude-sonnet-4.5, openai/gpt-4o-mini. |
+
+### Findings that contradicted my discuss-session claims
+
+1. **D-10 motivation was wrong** — I implied cost_weights schema lacked cache columns. It already has `cache_read_per_1m_usd` + `cache_creation_per_1m_usd` (both nullable, properly populated for anthropic/claude-haiku models). Decision (cost_weights only, no schema work) is still correct, but the framing in the deferred section ("schema extension deferred") needs walking back.
+2. **D-09 motivation softened** — the "3x overestimate window" was real for the original Phase 29 row, but is empirically NOT present today. cost_weights with cache-aware computation produces exact values matching `/v1/generation` (when ap_multiplier=1.0). D-09 remains valuable but as **source-of-truth simplification + Phase B prep**, not an active-bug fix.
+3. **AMD-06 dispatch location wrong** — claimed in CONTEXT to be in `inapp_recipe_index.py`. Empirically lives in `tools/run_recipe.py:1007` + `services/proxy_dispatcher.py:56`. Path corrected above.
+4. **agent_lifecycle.py path wrong** — claimed top-level. Actual: `routes/agent_lifecycle.py`. Path corrected above.
+5. **Hermes verified_cells coverage gap** — `google/gemini-2.5-flash` is NOT in cost_weights. Plan 30-06 (hermes flip) needs a cost_weights row populated before flip if smoke uses that cell.
+
+### Genuine plan-time spike work (NOT verified in discuss; correctly punted to PROBE-VAL)
+
+These are the legitimate unknowns the per-recipe spikes (D-04, D-05) exist to resolve. **Do NOT lock these decisions before research/plan phase.**
+
+| Item | Owns it | Why empirically unknown |
+|---|---|---|
+| Does each of hermes/zeroclaw/nullclaw/picoclaw honor `OPENAI_BASE_URL` env? | D-05 spikes (Plans 30-03..30-06 Wave 0) | Each agent's stack reads env differently. Rust/Zig especially — no precedent. |
+| Does openclaw honor `ANTHROPIC_BASE_URL`? | D-04 spike (Plan 30-01) | Anthropic SDK does honor it; openclaw's wrapper might override. |
+| Does picoclaw's `${AP_PROXY_BASE_URL:-...}` actually shell-expand inside its `cat <<EOF ... EOF` JSON heredoc? | D-05 picoclaw spike (Plan 30-05 Wave 0) | nanobot uses the same pattern but its heredoc may have different quoting. picoclaw's alpine `/bin/sh` (busybox/ash) is also a different shell than nanobot's. |
+| AMD-07 anthropic cumulative-tokens parser, end-to-end through proxy with REAL Anthropic | D-04 spike (Plan 30-01) | Phase 29 Plan 04 unit-tests cover the parser shape with synthetic SSE. No real-traffic e2e to date. |
+| Does the dispatcher's parallel `usage_logs` write race produce a `status='unknown'` row when proxy writes `success`, OR does the proxy now win the write? | Out of scope per D-01 | Phase 29 Open follow-up. Cosmetic; defer. |
+
+</verification_evidence>
 
 <deferred>
 ## Deferred Ideas
@@ -166,10 +220,11 @@ A small proxy enhancement ships first (Plan 30-00) so cost capture is empiricall
 
 - **Transient `unknown` row dedup** — inapp_dispatcher's parallel `usage_logs` write produces a transient `status='unknown'` row alongside the proxy's canonical `status='success'`. Cosmetic; route as Phase 30.5 / a separate cleanup phase after all 6 recipes are on the proxy.
 - **Mobile `bot_timeout` chip** — Phase 29 Gate 5 deferred to "Phase 30 user testing". DB-layer fail-closed semantic is already PASS (`tests/routes/test_llm_proxy.py::test_d15_4xx_records_failed_row`). Mobile chip rendering is a Phase 30 follow-up at user discretion.
-- **cost_weights schema extension** — adding `cache_read` and `cache_write` columns. Anthropic prompt caching makes cache_read tokens 90% cheaper than fresh input; openclaw uses caching aggressively. Without these columns, openclaw cost is structurally inflated. Defer to Phase 30.5 or cost-fidelity hardening phase.
+- **cost_weights schema extension** — ~~adding `cache_read` and `cache_write` columns~~. **Already present** (verified 2026-05-06): `cache_read_per_1m_usd` + `cache_creation_per_1m_usd` in cost_weights. No schema migration needed. The remaining concern is per-row coverage for new models (e.g. `google/gemini-2.5-flash` — see verification evidence).
 - **OpenRouter `user: <id>` field pass-through** — Phase B (platform-billed credits) prerequisite. Not useful while AP is BYOK-only.
 - **Plan 29-07 post-hoc backfill activity** — becomes vestigial for openrouter rows once D-09 ships (inline cost replaces the need to fetch `/api/v1/generation`). Keep as defense-in-depth in Phase 30; consider retirement in a later cleanup phase.
 - **`--workers 1` cap on api_server** — Phase 29 hotfix `f98c040` capped to single worker because proxy state (BYOK cache, IP map) is in-process. Multi-worker requires Redis or PG LISTEN/NOTIFY for state fan-out. Phase 29 follow-up, not Phase 30.
+- **cost_weights row population for `google/gemini-2.5-flash`** — required for hermes verified_cells[2]. Populate as part of Plan 30-06 spike if the spike actually exercises that cell; otherwise defer to a cost-coverage hardening phase.
 
 ### Reviewed Todos (not folded)
 

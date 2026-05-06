@@ -213,3 +213,31 @@
 
 - User intervened twice mid-discussion to halt assumption-locking and force empirical verification (per `feedback_test_everything_before_planning.md` golden rule #5). First intervention: cost-tracking generally; second: OpenClaw docs specifically. Both surfaced load-bearing decisions (D-09, D-10) that would have been wrong if locked from intuition.
 - `feedback_root_cause_first.md` rule applied: D-09 is a root-cause fix (proxy never read inline cost) for a symptom (cost_weights overestimate window) that Phase 29's post-hoc backfill was masking.
+
+---
+
+## Post-CONTEXT Verification Round — 2026-05-06
+
+After CONTEXT.md was committed at `a29d045`, user pushed back a third time: "annotate all, really, please. plus, DID YOU REMOVED ALL DOUBTS NOW, PRIOR TO PLAN/EXECUTE?" — invoking golden rule #5 a third time, this time AFTER decisions were locked.
+
+Honest answer at that point was **no** — multiple D-XX decisions had been locked from intuition without empirical verification. A second verification round was performed (live Postgres queries via `deploy-postgres-1` + code reads on real paths + targeted webfetches). Findings annotated in CONTEXT.md `<verification_evidence>` section.
+
+**Concrete corrections to CONTEXT.md from this round:**
+
+1. agent_lifecycle.py path: claimed top-level → actually `routes/agent_lifecycle.py`
+2. AMD-06 dispatch location: claimed `inapp_recipe_index.py` → actually `tools/run_recipe.py:1007` + `services/proxy_dispatcher.py:56`
+3. cost_weights schema claim: implied 2-col (input/output) → actually 6-col incl. cache_read/cache_creation/ap_multiplier (no migration needed in Phase 30; D-10 conclusion holds, motivation walked back)
+4. D-09 motivation: "3x overestimate active bug" → "source-of-truth simplification + Phase B prep" (cost_weights is empirically accurate today when ap_multiplier=1.0 and cache_read captured)
+5. Hermes verified_cells coverage gap: `google/gemini-2.5-flash` is NOT in cost_weights. Plan 30-06 needs to populate before flip if smoke uses that cell.
+
+**Plan-time spike work that was correctly NOT locked at discuss:**
+
+| Item | Owns it | Status |
+|------|---------|--------|
+| Does each openrouter recipe honor OPENAI_BASE_URL? | D-05 spikes | UNKNOWN — empirical resolution by spike |
+| Does openclaw honor ANTHROPIC_BASE_URL? | D-04 spike | UNKNOWN — empirical resolution by spike |
+| Does picoclaw heredoc-eval $AP_PROXY_BASE_URL inside JSON heredoc on alpine /bin/sh? | D-05 picoclaw spike | UNKNOWN — empirical resolution by spike |
+| AMD-07 anthropic parser e2e through proxy with REAL Anthropic | D-04 spike | UNKNOWN — synthetic SSE coverage exists, no real-traffic test |
+| Dispatcher's parallel `usage_logs` race | Out of scope | Phase 29 follow-up; deferred per D-01 |
+
+These remaining unknowns are LEGITIMATE plan-time spike work — the per-recipe spikes (D-05) and openclaw spike (D-04) exist precisely to resolve them. They are NOT discuss-time gaps.
