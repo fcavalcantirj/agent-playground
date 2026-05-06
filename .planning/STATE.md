@@ -5,7 +5,7 @@ milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
 last_updated: "2026-05-06T18:15:00Z"
-last_activity: 2026-05-06 -- Phase 29 Plan 04 SHIPPED (LLM egress proxy core: ProxyIPMap + StreamUsageParser AMD-07 last-wins + AMD-03 reserved-row idempotency + POST /v1/llm/forward route + main.py lifespan wiring; 35 new tests GREEN; commits 99cff07 / 436722a / a145198 / 27379bb)
+last_activity: 2026-05-06 -- Phase 29 Plan 05 SHIPPED (BYOK custody: ProxyBYOKCache + byok_validator + start_agent via_proxy gate + lifespan rehydrate; 26 new tests GREEN — 8 cache + 10 validator + 8 integration including 2 GATE-7 legacy-bypass invariants; commits 8788b70 + 6f4ec31 + b2c4cda)
 progress:
   total_phases: 19
   completed_phases: 5
@@ -56,7 +56,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Phase: 29 (llm-egress-proxy) — EXECUTING
-Plan: 29-02 + 29-03 SHIPPED (Wave 1 COMPLETE — both no-checkpoint plans done)
+Plan: 29-04 + 29-05 + 29-06 SHIPPED (Wave 2 COMPLETE — proxy core + BYOK custody + Anthropic-native usage parser all live)
 Status: Executing Phase 29
 Last activity: 2026-05-06 -- Phase 29 Plan 02 SHIPPED (alembic migration 013_phase29_proxy_columns; commits a854b94 + dfcdc0d + f944137; live deploy-postgres-1 at rev 013; 11 usage_logs.status='unknown' rows wiped via D-06; AMD-03 verdict_json relaxed to NULLABLE per PROBE-VAL-09)
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
