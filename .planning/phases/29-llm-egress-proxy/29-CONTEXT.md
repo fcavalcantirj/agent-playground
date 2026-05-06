@@ -393,3 +393,53 @@ Dev-OK per user decision: "wipe — it's dev, just kill them." User must redeplo
 ---
 
 *Amendments added 2026-05-06 — corrects 7 items surfaced by 29-RESEARCH.md before planner runs.*
+
+### AMD-08 — OpenRouter `/v1/generation` post-hoc latency budget bumped 9s → 65s
+
+**Supersedes:** D-03 ("post-hoc fetch ~1-3s after stream closes") + Plan 29-07 retry budget `[0, 2, 5]`.
+
+**Why:** PROBE-VAL-03 measured the empirical settle latency on `claude-haiku-4-5`: p50=10.5s, **p95=13.6s, p99=27.2s** (5 iterations; one iteration timed out at the spike's original 30s ceiling). Research's "≤2s settle + 9s ceiling" is below empirical p95 — Plan 29-07 would silently miss the cost backfill on >50% of OpenRouter calls.
+
+**What changes:**
+- Plan 29-07 activity: initial sleep `2.0s` → `5.0s` (covers p25 of settle distribution; lookups before settle return 404).
+- Retry backoff `[0.0, 2.0, 5.0]` → `[0.0, 10.0, 20.0, 30.0]`. Total ceiling 65s — covers p99=27.2s with headroom.
+- Test 2 / Test 3 timing assertions in 29-07-PLAN.md update accordingly.
+- Acceptance Gate 2 (`cost_usd within ±$0.001` within ~3-5s) — note: refinement now lands within ~5-65s post-stream-close. Inline cost-weights estimate still gives the immediate value (D-13 already covers this).
+
+### AMD-09 — nanobot routes via `~/.nanobot/config.json` `api_base` field, NOT `OPENAI_BASE_URL` env
+
+**Supersedes:** D-18 + AMD-06 partially — env-var injection alone is insufficient for nanobot.
+
+**Why:** PROBE-VAL-05 confirmed nanobot's `openai_compat_provider` reads `providers.openrouter.api_base` from the JSON config file at boot. The `OPENAI_BASE_URL` environment variable does NOT flow into nanobot's HTTP client. The current `recipes/nanobot.yaml` `inapp.persistent_argv_override` heredoc (lines 437-459) hardcodes `"api_base": "https://openrouter.ai/api/v1"` — Phase 29's proxy is bypassed unless this string is replaced at deploy time.
+
+**What changes:**
+- Plan 29-08 Task 1 (runner env-injection logic): when `via_proxy=true`, inject a new env var `AP_PROXY_BASE_URL=http://api_server:8000/v1/llm/forward` into the container and substitute the `api_base` JSON value in nanobot's config heredoc.
+- Concrete recipe edit (Plan 29-08 Step A, expanded): change `"api_base": "https://openrouter.ai/api/v1"` to `"api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"` so the heredoc's sh-expansion reads the runner-injected proxy URL when `via_proxy=true` and falls back to the upstream URL when not.
+- AMD-06's env-var injection (`OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL`) remains forward-compatible for Phase 30 recipes that DO honor BASE_URL env (TBD per recipe — re-flag during each recipe's Phase 30 cutover).
+- Plan 29-08 acceptance-criteria grep updated to also confirm the `api_base` substitution path is wired (in addition to `OPENAI_BASE_URL`).
+
+### AMD-10 — Anthropic emits exactly ONE `message_delta` per response (not multiple)
+
+**Augments:** AMD-07 — clarifies the empirical event shape; parser logic unchanged.
+
+**Why:** PROBE-VAL-13 captured a real Anthropic stream and observed: `message_start.output_tokens=1` followed by exactly ONE `message_delta` event with cumulative `output_tokens=N`. Research's example (multiple `message_delta` events with monotonically-increasing `output_tokens`) is not the wire shape — Anthropic emits a single final delta. Last-wins still produces the correct value.
+
+**What changes:**
+- 29-RESEARCH.md §Streaming Capture Strategy example sequence is updated for accuracy (doc-only fix; no code impact).
+- Plan 29-06 unit test for `_parse_anthropic_native_stream` (the `output_tokens=5, 12, 17 → 17` test from AMD-07) remains valid as a defense-in-depth assertion: future Anthropic protocol versions may emit multiple deltas, and last-wins is correct under both shapes.
+- No PLAN edit required — this AMD is documentation-only.
+
+### AMD-11 — TTFB unreliable under `httpx.ASGITransport`; use wall-clock for unit tests
+
+**Augments:** Plan 29-04 / Plan 29-03 streaming-tee test guidance.
+
+**Why:** PROBE-VAL-08 surfaced an in-process measurement gotcha: `httpx.ASGITransport` (used by FastAPI `TestClient` and `httpx.AsyncClient(transport=ASGITransport(app=app))`) buffers the full response body before exposing it to the consumer, so per-chunk TTFB measurements always read as low/inverted. The actual streaming path is non-buffering — confirmed via wall-clock latency (bot wall-time 1.014s vs upstream 1.0s emission floor proves no pre-emission buffering).
+
+**What changes:**
+- Plan 29-03 (proxy-router unit tests) and Plan 29-04 (StreamingResponse + StreamUsageParser tests): use **wall-clock latency** (bot-side end-of-stream wall-time vs upstream emission floor) as the non-buffering signal in unit tests. Do NOT assert per-chunk TTFB under ASGITransport — it is unreliable.
+- Real prod path (uvicorn + httpx-over-TCP) reproduces TTFB faithfully; integration tests against `make e2e-inapp-docker` (Plan 29-09 acceptance) reflect prod behavior.
+- 29-PATTERNS.md StreamUsageParser TTFB-test guidance receives a 2-line clarifying note pointing back to this AMD.
+
+---
+
+*Amendments AMD-08..AMD-11 added 2026-05-06 (post-Wave 0 spike-gate) — record empirical findings from Plan 29-01 PROBE-VAL spikes that diverged from sealed plan assumptions. Plans 29-07 + 29-08 receive mechanical edits to track these amendments before Waves 1+ execute.*
