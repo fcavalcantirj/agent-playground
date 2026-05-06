@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: complete
-stopped_at: phase 28 shipped (2026-05-05)
-last_updated: "2026-05-06T01:05:58.000Z"
-last_activity: 2026-05-05 -- Phase 28 shipped (Temporal-backed dispatch)
+status: executing
+stopped_at: context exhaustion at 90% (2026-05-05)
+last_updated: "2026-05-06T03:56:40.031Z"
+last_activity: 2026-05-06 -- Phase 29 execution started
 progress:
-  total_phases: 33
-  completed_phases: 13
-  total_plans: 109
-  completed_plans: 107
-  percent: 90
+  total_phases: 19
+  completed_phases: 5
+  total_plans: 32
+  completed_plans: 32
+  percent: 100
 ---
 
 ## Resume after /clear (2026-05-05)
@@ -51,14 +51,14 @@ Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring M
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 28 — temporal-dispatch
+**Current focus:** Phase 29 — llm-egress-proxy
 
 ## Current Position
 
-Phase: 28 (temporal-dispatch) — EXECUTING
+Phase: 29 (llm-egress-proxy) — EXECUTING
 Plan: 1 of 9
-Status: Executing Phase 28
-Last activity: 2026-05-05 -- Phase 28 execution started
+Status: Executing Phase 29
+Last activity: 2026-05-06 -- Phase 29 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
