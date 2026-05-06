@@ -55,6 +55,12 @@ class RecipeSummary(BaseModel):
     source_repo: str | None = None
     source_ref: str | None = None
     provider: str | None = None
+    # Phase 29 D-17 + D-18 + AMD-01: surfaces ``runtime.via_proxy`` so the
+    # planner / channel-listing UI can branch on whether a recipe routes
+    # its bot's LLM traffic through the api_server's egress proxy. Only
+    # ``nanobot`` ships with this flag in Phase 29; Phase 30 flips the
+    # remaining four. Defaults to False for recipes that omit the field.
+    via_proxy: bool = False
     pass_if: str | None = None
     license: str | None = None
     maintainer: str | None = None

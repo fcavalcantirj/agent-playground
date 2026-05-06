@@ -975,6 +975,73 @@ def run_cell(
     return verdict_obj, details
 
 
+# ---------- Phase 29 — LLM egress proxy env injection ----------
+
+# Canonical proxy URL injected into via_proxy=true recipe containers. The
+# host segment ``api_server`` is the docker compose service name on the
+# deploy_default bridge — runner pins spawned containers onto the same
+# bridge via AP_DOCKER_NETWORK so cross-container DNS resolves.
+# AP_PROXY_BASE_URL (Phase 29 AMD-09) is the canonical name; recipes that
+# write provider config files (e.g. nanobot's ~/.nanobot/config.json
+# providers.openrouter.api_base) sh-expand this in their JSON heredoc:
+#   "api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
+# Recipes that read OPENAI_BASE_URL / ANTHROPIC_BASE_URL directly (the
+# openai-SDK / anthropic-SDK env conventions) get those injected too.
+_PROXY_BASE_URL = "http://api_server:8000/v1/llm/forward"
+
+# Provider-key-env-var → SDK-convention-base-url-env-var mapping. Mirrors
+# api_server/services/proxy_dispatcher.py::ENV_TO_PROVIDER (kept inline
+# here so the standalone runner has zero api_server-package imports).
+_PROXY_BASE_URL_ENV_BY_API_KEY: dict[str, str] = {
+    "OPENROUTER_API_KEY": "OPENAI_BASE_URL",
+    "OPENAI_API_KEY": "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY": "ANTHROPIC_BASE_URL",
+}
+_PROXY_KEY_ENV_BY_API_KEY: dict[str, str] = {
+    "OPENROUTER_API_KEY": "OPENAI_API_KEY",
+    "OPENAI_API_KEY": "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY",
+}
+
+
+def _build_via_proxy_overrides(
+    *,
+    api_key_var: str,
+    inapp_auth_token: str,
+) -> dict[str, str]:
+    """Return the env-var dict to inject when ``recipe.runtime.via_proxy=true``.
+
+    Phase 29 D-17 + D-18 + AMD-06 + AMD-09. Dispatches on the recipe's
+    declared ``runtime.process_env.api_key`` env-var name:
+
+      - ``OPENROUTER_API_KEY`` / ``OPENAI_API_KEY`` → OpenAI-SDK shape
+        (``OPENAI_BASE_URL`` + ``OPENAI_API_KEY``).
+      - ``ANTHROPIC_API_KEY`` → Anthropic-SDK shape
+        (``ANTHROPIC_BASE_URL`` + ``ANTHROPIC_API_KEY``).
+
+    Always includes ``AP_PROXY_BASE_URL`` (AMD-09) — the canonical proxy
+    URL recipes can sh-expand into provider config files (nanobot's
+    ``~/.nanobot/config.json``).
+
+    Raises ``ValueError`` for unknown ``api_key_var`` (closed enum — no
+    silent fallback).
+    """
+    if api_key_var not in _PROXY_BASE_URL_ENV_BY_API_KEY:
+        raise ValueError(
+            f"via_proxy=true requires recognized api_key env var, got "
+            f"{api_key_var!r}; expected one of "
+            f"{sorted(_PROXY_BASE_URL_ENV_BY_API_KEY.keys())}"
+        )
+    base_url_env = _PROXY_BASE_URL_ENV_BY_API_KEY[api_key_var]
+    key_env = _PROXY_KEY_ENV_BY_API_KEY[api_key_var]
+    placeholder = f"ap-proxy-{inapp_auth_token}"
+    return {
+        "AP_PROXY_BASE_URL": _PROXY_BASE_URL,
+        base_url_env: _PROXY_BASE_URL,
+        key_env: placeholder,
+    }
+
+
 # ---------- persistent-mode helpers (Phase 22) ----------
 
 
@@ -1039,6 +1106,7 @@ def _build_env_file_content(
     optional_inputs: list,
     channel_creds: dict[str, str],
     rendered_activation_env: dict[str, str] | None = None,
+    via_proxy_overrides: dict[str, str] | None = None,
 ) -> str:
     """Pure-function env-file builder (Phase 22c.3.1 — B-6 fix).
 
@@ -1048,15 +1116,31 @@ def _build_env_file_content(
     new override path (rendered_activation_env=<rendered dict> — D-24 overlay).
 
     Order:
-      1. ``api_key_var=api_key_val``                (legacy first line)
+      1. ``api_key_var=api_key_val``                (legacy first line; OMITTED
+         when ``via_proxy_overrides`` is non-None — Phase 29 D-17/D-18/AMD-06)
       2. required_inputs + optional_inputs in order, with prefix_required
       3. rendered_activation_env entries (D-24 — last lines win on collision)
+      4. via_proxy_overrides entries (Phase 29 — last lines win, override
+         everything above; injects OPENAI_BASE_URL / ANTHROPIC_BASE_URL +
+         placeholder API key + AP_PROXY_BASE_URL — see AMD-09)
 
     Per docker ``--env-file`` semantics, later lines win for duplicate keys,
     so activation_env values OVERRIDE any colliding api_key/cred values.
     Do NOT deduplicate — duplicates are how the overlay works.
+
+    Phase 29 (D-17/D-18 + AMD-06 + AMD-09): when ``via_proxy_overrides`` is
+    non-None, the legacy ``api_key_var=api_key_val`` first line is OMITTED
+    so the bot's container env never carries the real BYOK key. The runner
+    instead injects ``AP_PROXY_BASE_URL`` (canonical proxy URL — used by
+    config-file-reading bots like nanobot per AMD-09) plus the
+    SDK-conventional pair (``OPENAI_BASE_URL`` + ``OPENAI_API_KEY`` for
+    openrouter/openai, or ``ANTHROPIC_BASE_URL`` + ``ANTHROPIC_API_KEY``
+    for anthropic) carrying an ``ap-proxy-<inapp_auth_token>`` placeholder
+    that the proxy route validates against ``agent_containers``.
     """
-    lines = [f"{api_key_var}={api_key_val}"]
+    lines: list[str] = []
+    if via_proxy_overrides is None:
+        lines.append(f"{api_key_var}={api_key_val}")
     for entry in (required_inputs or []) + (optional_inputs or []):
         var = entry.get("env")
         if not var:
@@ -1068,6 +1152,9 @@ def _build_env_file_content(
         lines.append(f"{var}={prefix}{val}")
     if rendered_activation_env:
         for k, v in rendered_activation_env.items():
+            lines.append(f"{k}={v}")
+    if via_proxy_overrides:
+        for k, v in via_proxy_overrides.items():
             lines.append(f"{k}={v}")
     return "\n".join(lines) + "\n"
 
@@ -1202,6 +1289,41 @@ def run_cell_persistent(
             if isinstance(v, str) and len(v) >= 8
         )
 
+    # Phase 29 D-17 + D-18 + AMD-06 + AMD-09: when ``recipe.runtime.via_proxy``
+    # is true, build the proxy env-var overrides. The runner STRIPS the real
+    # BYOK key from the container env (``_build_env_file_content`` omits the
+    # api_key_var line when via_proxy_overrides is non-None) and injects:
+    #   - AP_PROXY_BASE_URL (canonical — used by config-file-reading bots
+    #     like nanobot per AMD-09)
+    #   - OPENAI_BASE_URL / ANTHROPIC_BASE_URL (SDK-convention)
+    #   - OPENAI_API_KEY / ANTHROPIC_API_KEY = "ap-proxy-<inapp_auth_token>"
+    # The placeholder is validated by the proxy route against
+    # ``agent_containers.inapp_auth_token`` (Phase 29 Plan 04 D-07).
+    runtime_block = recipe.get("runtime") or {}
+    via_proxy_flag = bool(runtime_block.get("via_proxy", False))
+    via_proxy_overrides: dict[str, str] | None = None
+    if via_proxy_flag:
+        # The proxy path REQUIRES inapp_auth_token (no other channel can
+        # carry the placeholder). activation_substitutions is only built
+        # for channel == "inapp" by agent_lifecycle.py.
+        token = (activation_substitutions or {}).get("INAPP_AUTH_TOKEN")
+        if not token:
+            raise RuntimeError(
+                f"recipe {recipe['name']!r} runtime.via_proxy=true requires "
+                f"channel='inapp' with INAPP_AUTH_TOKEN in activation_substitutions"
+            )
+        via_proxy_overrides = _build_via_proxy_overrides(
+            api_key_var=api_key_var,
+            inapp_auth_token=token,
+        )
+        # Add proxy values to the redaction secret set so accidental
+        # stderr echo of the placeholder Bearer doesn't leak.
+        proxy_secrets = tuple(
+            v for v in via_proxy_overrides.values()
+            if isinstance(v, str) and len(v) >= 8
+        )
+        extra_secrets = tuple(set(extra_secrets) | set(proxy_secrets))
+
     if gate_open:
         # ===================================================================
         # NEW PATH — channel-aware override + activation_env overlay +
@@ -1262,6 +1384,7 @@ def run_cell_persistent(
             required_inputs, optional_inputs,
             channel_creds,
             rendered_activation_env=rendered_env,
+            via_proxy_overrides=via_proxy_overrides,
         ))
         try:
             env_file.chmod(0o600)
@@ -1414,6 +1537,7 @@ def run_cell_persistent(
             required_inputs, optional_inputs,
             channel_creds,
             rendered_activation_env=None,
+            via_proxy_overrides=via_proxy_overrides,
         ))
         try:
             env_file.chmod(0o600)

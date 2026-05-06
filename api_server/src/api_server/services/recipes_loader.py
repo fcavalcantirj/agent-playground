@@ -236,6 +236,10 @@ def to_summary(recipe: dict) -> RecipeSummary:
         source_repo=source.get("repo"),
         source_ref=str(source.get("ref")) if source.get("ref") is not None else None,
         provider=runtime.get("provider"),
+        # Phase 29 D-17 + D-18 + AMD-01: surface runtime.via_proxy so the
+        # planner / channel-listing UI can branch. Defaults to False for
+        # recipes that omit the flag (the other 5 in Phase 29).
+        via_proxy=bool(runtime.get("via_proxy", False)),
         pass_if=pass_if_val,
         license=metadata.get("license"),
         maintainer=maintainer_val,
