@@ -611,7 +611,7 @@ Plans:
 - [x] 28-08-PLAN.md — Mobile UsageTickerWidget re-mount (Consumer-scoped) + widget test + iOS smoke checkpoint
 - [x] 28-09-PLAN.md — Phase exit gate (verification doc with PHASE-28-EXIT-GATE-PASSED marker)
 
-**Status:** active; planned 2026-05-04
+**Status:** complete; shipped 2026-05-05 (PHASE-28-EXIT-GATE-PASSED)
 
 ## Backlog
 
