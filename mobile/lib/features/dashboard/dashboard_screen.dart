@@ -37,6 +37,7 @@ import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/dashboard/agent_row.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
+import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/ascii_agent_banner.dart';
 import 'package:agent_playground/shared/confirm_dialog.dart';
 import 'package:agent_playground/shared/empty_state_scaffold.dart';
@@ -92,6 +93,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
         ),
         actions: [
+          // Phase 28 Plan 08 / D-18 — Consumer-scoped subscription. The
+          // Consumer's Element is disposed cleanly when the AppBar tears
+          // down; the provider subscription is bound to THIS Consumer, not
+          // to the outer ConsumerStatefulWidget. Mirrors the
+          // chat_providers.dart pattern from Phase 25 (RESEARCH §6). Phase
+          // 27 yanked a direct ConsumerWidget mount because it triggered a
+          // defunct-element race during navigation tear-down.
+          Consumer(
+            builder: (context, ref, _) => const UsageTickerWidget(),
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             tooltip: 'More',
