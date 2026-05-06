@@ -302,6 +302,16 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
     upstream_headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Content-Length": str(len(body_out)),  # recomputed (D-14)
+        # Phase 29 hotfix: httpx.AsyncClient injects Accept-Encoding:
+        # gzip, deflate, br by default. Without an explicit override,
+        # OpenRouter / OpenAI return Content-Encoding: gzip + a gzipped
+        # body for non-streaming chat completions. The proxy yields the
+        # raw bytes via aiter_raw() and the bot's openai SDK then fails
+        # UTF-8 decode on the gzip magic suffix (0x8b at position 1).
+        # Forcing identity here is the canonical reverse-proxy pattern
+        # (nginx / envoy / traefik): plain bytes upstream → plain bytes
+        # downstream → no Content-Encoding mismatch possible.
+        "Accept-Encoding": "identity",
         spec.auth_header_name: spec.auth_value_template.format(key=key),
         **spec.extra_headers,
     }

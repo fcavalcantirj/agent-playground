@@ -242,6 +242,114 @@ async def test_happy_path_openrouter_stream_records_usage(
 
 
 # ---------------------------------------------------------------------------
+# Test 1b — Phase 29 hotfix: gzip-encoded upstream response
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_proxy_strips_gzip_encoding_from_upstream(
+    async_client: AsyncClient, db_pool: asyncpg.Pool,
+) -> None:
+    """Reproduce the 0x8b decode error: when upstream returns
+    Content-Encoding: gzip + gzipped body (the default behavior of
+    httpx.AsyncClient negotiating gzip with OpenRouter via its default
+    Accept-Encoding header), the proxy MUST NOT leak raw gzip bytes to
+    the bot.
+
+    Surfaced empirically 2026-05-06 by mobile screenshot at 17:36 (after
+    the prior auth/cache fixes landed). Bot's openai SDK fails on the
+    gzip magic suffix (0x8b at position 1) because the response back
+    omits Content-Encoding: gzip and the body bytes are still compressed.
+
+    Fix shape (canonical reverse-proxy pattern, per nginx/envoy/traefik):
+    force Accept-Encoding: identity on outbound, strip Content-Encoding
+    from the inbound response we forward. The bot then receives plain
+    UTF-8 JSON.
+    """
+    import gzip
+
+    user_id, agent_id = await _setup_app_for_proxy_test(async_client, db_pool)
+    app = async_client._app  # type: ignore[attr-defined]
+
+    # Plain JSON body — what OpenRouter would return for stream=False.
+    plain_body = (
+        b'{"id":"chatcmpl-gzip","object":"chat.completion",'
+        b'"choices":[{"index":0,"message":{"role":"assistant","content":"pong"},'
+        b'"finish_reason":"stop"}],'
+        b'"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}'
+    )
+    gzipped_body = gzip.compress(plain_body)
+    assert gzipped_body[:2] == b"\x1f\x8b"  # confirm fixture really is gzip
+
+    captured_request: dict[str, Any] = {}
+
+    def _record_and_return_gzip(request: httpx.Request) -> httpx.Response:
+        captured_request["headers"] = dict(request.headers)
+        return httpx.Response(
+            200,
+            content=gzipped_body,
+            headers={
+                "content-type": "application/json",
+                "content-encoding": "gzip",
+                "X-Generation-Id": "gen-gzip",
+            },
+        )
+
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        side_effect=_record_and_return_gzip,
+    )
+
+    proxy_client = _build_proxy_client(app, "172.18.0.42")
+    async with proxy_client:
+        resp = await proxy_client.post(
+            "/v1/llm/forward/chat/completions",
+            headers={
+                "Authorization": "Bearer ap-proxy-test-token-32hex",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openai/gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": "say pong"}],
+                "stream": False,
+            },
+        )
+
+    # ROOT-CAUSE GATE: the proxy's outbound request to upstream MUST carry
+    # `Accept-Encoding: identity` so OpenRouter returns plain bytes. If
+    # httpx's default `gzip, deflate, br` leaks through, upstream gzips,
+    # and the bug recurs.
+    accept_enc = captured_request["headers"].get("accept-encoding", "")
+    assert accept_enc.lower() == "identity", (
+        f"proxy must force Accept-Encoding: identity outbound; got "
+        f"{accept_enc!r}. httpx.AsyncClient defaults to negotiating gzip — "
+        "must override per request to keep upstream from compressing."
+    )
+
+    # ROOT-CAUSE GATE: even if upstream ignores `identity` and gzips
+    # anyway, the proxy MUST NOT forward Content-Encoding: gzip to the
+    # bot when the body bytes the bot receives are NOT gzipped (or vice
+    # versa). The bot's openai SDK relies on httpx auto-decompression
+    # which keys off this header.
+    assert resp.status_code == 200
+    body = resp.content
+    if body[:2] == b"\x1f\x8b":
+        # Body is still gzipped — header MUST signal it
+        assert resp.headers.get("content-encoding", "").lower() == "gzip", (
+            "proxy returned raw gzip bytes WITHOUT Content-Encoding header — "
+            "bot would fail UTF-8 decode on byte 0x8b. This is the exact "
+            "failure mode the user hit 2026-05-06 17:36."
+        )
+    else:
+        # Body is plain — header MUST be absent or identity
+        assert resp.headers.get("content-encoding", "identity").lower() in (
+            "identity", "",
+        )
+        # And the actual JSON content should be readable
+        assert b'"prompt_tokens":5' in body
+        assert b'"content":"pong"' in body
+
+
+# ---------------------------------------------------------------------------
 # Test 2 — D-07 IP-map miss → 401
 # ---------------------------------------------------------------------------
 
