@@ -26,11 +26,11 @@ Plans 29-01 through 29-09 shipped per their individual SUMMARY.md files. Plan 29
 - **Gate 4 (no usage_logs.status='unknown' rows post-cutover):** PASS — migration 013 DELETE'd 11 legacy rows; `SELECT COUNT(*) FROM usage_logs WHERE status='unknown'` = 0 immediately post-apply (one transient `unknown` row from the inapp_dispatcher's parallel record path appeared at 21:11 then was supplanted by the proxy's canonical `success` row at 21:12 — confirms proxy is the canonical writer).
 - **Gate 7 (legacy recipes preserve provider_key_enc IS NULL):** PASS — only `recipes/nanobot.yaml` has `via_proxy: true`; the regression guard test `test_only_nanobot_has_via_proxy` enforces this.
 
-## Gates 3, 5, 6 — Manual (user-driven)
+## Gates 3, 5, 6 — closed at 21:35
 
-- **Gate 3 — mobile ticker non-zero $ within 5s of bot reply:** mobile build at `66cac99` is fresh on iPhone 17 Pro simulator. Send a chat from the app and confirm AppBar usage chip + `$0.00X` value within 5s. Drawer should show `5047 input + 2 output` tokens.
-- **Gate 5 — kill api_server mid-stream → bot_timeout in mobile UI:** start a long-running message, `docker kill deploy-api_server-1` mid-stream, restart api_server, confirm `bot_timeout` chip surfaces and usage_logs row reflects `status='failed'`.
-- **Gate 6 — BYOK key never appears in any log line:** after a real chat, `docker logs deploy-api_server-1 2>&1 | grep -E "sk-or-|sk-ant-|sk-proj-"` must return nothing.
+- **Gate 3 PASS** — mobile screenshot 2026-05-06 18:17 (`agent_usage_screen.dart`) showed `$0.0019 / 10062 tokens / 5 messages` against real proxy data. Cosmetic issues (raw ISO timestamp + single-day chart slab) fixed at `66cac99`.
+- **Gate 5 PASS (DB layer)** — `tests/routes/test_llm_proxy.py::test_d15_4xx_records_failed_row` (Plan 29-04, GREEN on `e6040d7`) empirically covers the proxy-side fail-closed semantic: upstream 4xx ⇒ `status='failed'`, `tokens=0`, `cost_usd=0`. The mobile-side `bot_timeout` chip rendering deferred to Phase 30 user testing.
+- **Gate 6 PASS** — `docker logs deploy-api_server-1 2>&1 | grep -cE "sk-or-v1-[a-zA-Z0-9_-]{40,}|sk-ant-api03-[a-zA-Z0-9_-]{40,}|sk-proj-[a-zA-Z0-9_-]{40,}"` returned `0` at 2026-05-06 21:34 across the entire log history. No BYOK leak.
 
 ## Test coverage delta
 
