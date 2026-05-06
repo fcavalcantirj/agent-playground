@@ -368,6 +368,7 @@ Read files in this order after /clear:
 
 ### Roadmap Evolution
 
+- Phase 29 added: LLM egress proxy + provider-agnostic cost capture — 2026-05-05 (driven by 4-agent root-cause confirmation that Phase 27's `_parse_stripped` post-hoc backfill is infeasible without bot cooperation)
 - Phase 02.5 inserted after Phase 2: Recipe Manifest Reshape (URGENT) — 2026-04-14
 - Phase 03 (v0.1 consolidation) completed — 2026-04-15
 - Phases 9–17 added: framework maturity roadmap (v0.2 floor + v0.3 ceiling) — 2026-04-15

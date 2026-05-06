@@ -613,6 +613,18 @@ Plans:
 
 **Status:** complete; shipped 2026-05-05 (PHASE-28-EXIT-GATE-PASSED)
 
+### Phase 29: LLM egress proxy + provider-agnostic cost capture
+
+**Goal:** Build a single egress proxy that sits between agent containers and upstream LLM APIs (OpenRouter, OpenAI, Anthropic). Bots route through `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` pointed at the proxy. Proxy injects the OpenRouter `user` parameter for sticky routing + per-user attribution, captures the response usage block + `X-Generation-Id` header, normalizes into the existing `usage_logs` schema, and writes a row per upstream call.
+
+**Why:** Phase 27's `_parse_stripped` codepath returns `0 tokens / status='unknown'` for every contract that isn't `openai_compat` (zeroclaw_native, a2a_jsonrpc, and any future contract). Confirmed root cause via 4-agent investigation 2026-05-05: bots strip the `usage` block AND the OpenRouter generation id before replying to api_server, so post-hoc backfill (the deferred Phase 27 plan) cannot work — there's no key to look up. Cost capture has to move UPSTREAM of the bot, not downstream. This is the architecture documented in `PROJECT.md` ("HTTP egress proxy ... Metering at the proxy layer, not at the SDK layer. The agent CLI doesn't know it's metered.") that was never built.
+
+**Depends on:** Phase 28 (Temporal dispatch — proxy hooks into `record_usage` activity). No blocker for parallel work on Phase 27 follow-ups.
+
+**Plans:** TBD (run `/gsd-discuss-phase 29` then `/gsd-plan-phase 29`)
+
+**Status:** active; queued 2026-05-05
+
 ## Backlog
 
 ### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)
