@@ -495,6 +495,7 @@ async def start_agent(
             agent_name=agent["name"],
             agent_model=agent["model"],
             inapp_auth_token=inapp_auth_token,
+            via_proxy=via_proxy_flag,
         )
 
     # --- Step 6: execute_persistent_start (no DB held) ---

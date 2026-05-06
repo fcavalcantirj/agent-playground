@@ -21,6 +21,7 @@ def build_activation_substitutions(
     agent_name: str,
     agent_model: str,
     inapp_auth_token: str | None,
+    via_proxy: bool = False,
 ) -> dict[str, str]:
     """Build the activation-time substitution dict consumed by run_cell_persistent.
 
@@ -35,12 +36,28 @@ def build_activation_substitutions(
     BYOK: provider_key flows under all of {OPENROUTER, ANTHROPIC,
     INAPP_PROVIDER} — recipe activation_env decides; per-recipe vault is a
     future phase (deferred per CONTEXT.md).
+
+    Phase 29 (AMD-12): when ``via_proxy`` is True, the provider-key
+    placeholders (OPENROUTER/ANTHROPIC/INAPP_PROVIDER) substitute to
+    ``ap-proxy-<inapp_auth_token>`` instead of the real BYOK key — so
+    recipe heredocs like ``"api_key": "${OPENROUTER_API_KEY}"`` render to
+    the proxy placeholder Bearer that ``routes/llm_proxy.py``'s D-07
+    auth-token check expects. The real BYOK key still flows separately
+    via Plan 29-05's ``proxy_byok_cache`` (encrypted at rest in
+    ``agent_containers.provider_key_enc``); the proxy decrypts it
+    server-side when forwarding to upstream. Without this swap, nanobot's
+    ``~/.nanobot/config.json::providers.openrouter.api_key`` ends up
+    holding the real key and the bot's outbound auth header mismatches
+    the proxy's expected ``Bearer ap-proxy-<token>`` shape (PROBE-VAL-12
+    confirmed both openai-SDK and langchain accept the placeholder Bearer).
     """
+    proxy_placeholder = f"ap-proxy-{inapp_auth_token}" if inapp_auth_token else ""
+    api_key_value = proxy_placeholder if via_proxy else provider_key
     return {
         "INAPP_AUTH_TOKEN": inapp_auth_token or "",
-        "INAPP_PROVIDER_KEY": provider_key,
-        "OPENROUTER_API_KEY": provider_key,
-        "ANTHROPIC_API_KEY": provider_key,
+        "INAPP_PROVIDER_KEY": api_key_value,
+        "OPENROUTER_API_KEY": api_key_value,
+        "ANTHROPIC_API_KEY": api_key_value,
         "MODEL": agent_model,
         "agent_name": agent_name,
         "agent_url": f"http://{agent_name}.local",
