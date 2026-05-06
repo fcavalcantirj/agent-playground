@@ -1,0 +1,11 @@
+{
+  "agent": "picoclaw",
+  "model": "qwen/qwen3-coder:free",
+  "verdict": "FAIL",
+  "reason": "upstream 429 from OpenRouter: 'qwen/qwen3-coder:free is temporarily rate-limited upstream'. Transport and auth OK (key accepted via .security.yml), provider saturated.",
+  "exit_code": 1,
+  "wall_time_s": 1,
+  "stdout_snippet": "picoclaw banner + blank — no model reply rendered",
+  "stderr_snippet": "Error: error processing message: LLM call failed after retries: API request failed: Status: 429 Body: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"qwen/qwen3-coder:free is temporarily rate-limited up...",
+  "timestamp": "2026-04-15T19:56:53Z"
+}

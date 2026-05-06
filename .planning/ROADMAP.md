@@ -622,10 +622,10 @@ Plans:
 **Depends on:** Phase 28 (Temporal dispatch — proxy hooks into `record_usage` activity). No blocker for parallel work on Phase 27 follow-ups.
 
 **Plans:** 9 plans across 6 waves
-- [ ] 29-01-PLAN.md — Wave 0 spike gate (15 PROBE-VAL artifacts; checkpoint at end)
+- [x] 29-01-PLAN.md — Wave 0 spike gate (15 PROBE-VAL artifacts; checkpoint at end) (SHIPPED 2026-05-06; commits a7426c5 → 8cde8a8; 15/15 PASS verdicts; 4 AMD-08+ amendments surfaced + applied)
 - [x] 29-02-PLAN.md — Migration 013 (5 columns + ck widen + unknown wipe + idempotency status + AMD-03 verdict_json NULLABLE) + [BLOCKING] live schema push (SHIPPED 2026-05-06; commits a854b94 + dfcdc0d + f944137; 11 'unknown' rows wiped on deploy-postgres-1)
-- [ ] 29-03-PLAN.md — proxy_dispatcher.PROVIDERS table (D-09 + D-17)
-- [ ] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05)
+- [x] 29-03-PLAN.md — proxy_dispatcher.PROVIDERS table (D-09 + D-17) (SHIPPED 2026-05-06; commits 4e1924a + 3f7e3fe + 6cb2eeb; 14/14 tests PASS; PROVIDERS dict frozen for OpenRouter/OpenAI/Anthropic with empirical auth shapes from PROBE-VAL-04)
+- [x] 29-04-PLAN.md — proxy router + IP-map + stream parser (AMD-07) + idempotency reserved-row (AMD-03) + lifespan wiring (AMD-05) (SHIPPED 2026-05-06; commits 99cff07 + 436722a + a145198 + 27379bb + acfb9f3; 35/35 new tests PASS; 7 ProxyIPMap + 10 StreamUsageParser + 8 idempotency reserved-row + 10 llm_proxy route)
 - [x] 29-05-PLAN.md — ProxyBYOKCache + byok_validator (D-02 + D-02b) + start_agent integration (SHIPPED 2026-05-06; commits 8788b70 + 6f4ec31 + b2c4cda; 26 new tests PASS — 8 cache + 10 validator + 8 integration with 2 GATE-7 legacy-bypass invariants)
 - [x] 29-06-PLAN.md — usage_recorder Anthropic-native parser + record_usage signature extension (D-12 + D-15) (SHIPPED 2026-05-06; commit 902b9df; +_parse_anthropic_native + proxy_latency_ms/upstream_latency_ms kwargs; 7 new tests + 12 regression tests = 19/19 PASS)
 - [x] 29-07-PLAN.md — backfill_openrouter_cost Temporal activity + workflow (SHIPPED 2026-05-06; commits cc6deb9 + db7be00; AMD-08 latency budget [0,10,20,30] applied; 8/8 plan tests + 27/27 regression PASS)

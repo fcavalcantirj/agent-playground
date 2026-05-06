@@ -1,0 +1,12 @@
+{
+  "agent": "hermes",
+  "model": "openai/gpt-4o-mini",
+  "wall_time_s": 10.41,
+  "exit_code": 0,
+  "stdout_raw_snippet": "/opt/data is not owned by 10000, fixing\nDropping root privileges\nSyncing bundled skills into ~/.hermes/skills/ ...\n  + dogfood\n  + huggingface-hub\n  + pytorch-fsdp\n  + grpo-rl-training\n  + unsloth\n  + peft-fine-tuning\n  + axolotl\n  + fine-tuning-with-trl\n  + evaluating-llms-harness\n  + weights-and-biases\n  + dspy\n  + guidance\n  + obliteratus\n  + outlines\n  + llama-cpp\n  + serving-llms-vllm\n  + gguf-quantization\n  + segment-anything-model\n  + stable-diffusion-image-ge",
+  "stdout_payload": "I'm Hermes, your CLI AI Assistant! I'm here to help you with a variety of tasks, from coding and research to managing files and automating workflows. Just let me know what you need assistance with, and I'll get right on it!\n",
+  "stderr_snippet": "",
+  "session_id": "20260415_205001_ef4579",
+  "verdict": "PASS",
+  "verdict_note": "Payload contains 'Hermes' — model correctly identified itself."
+}

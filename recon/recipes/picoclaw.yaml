@@ -1,0 +1,63 @@
+apiVersion: recon/v0
+name: picoclaw
+source: https://github.com/sipeed/picoclaw@f1b659e5ef1ba972796eed70d57768120e08d0b6
+# nightly-25-gf1b659e5; latest release tag is v0.2.6 but HEAD tracks nightly
+
+build:
+  base: golang:1.25-alpine
+  steps:
+    # Upstream ships docker/Dockerfile as a two-stage build. These steps mirror
+    # stage 1; runtime is alpine:3.23 per stage 2 (see runtime note below).
+    - apk add --no-cache git make
+    - git clone https://github.com/sipeed/picoclaw.git /src
+    - cd /src && git checkout f1b659e5ef1ba972796eed70d57768120e08d0b6
+    - cd /src && go mod download
+    - cd /src && make build
+    # Verify
+    - /src/build/picoclaw --no-color version
+    # NOTE: the actual runtime image is alpine:3.23 + ca-certificates + tzdata + curl,
+    # with /src/build/picoclaw copied to /usr/local/bin/picoclaw. We encoded the
+    # builder-stage base here because recon/v0 only has one `base` slot. See the
+    # report's "Shape stretch" section — this is a finding, not a workaround.
+
+runtime:
+  provider: openrouter
+  # picoclaw does NOT read OPENROUTER_API_KEY or any *_API_KEY env var.
+  # Credentials live in $HOME/.picoclaw/.security.yml (YAML) keyed by model_name.
+  # Model selection and base URL live in $HOME/.picoclaw/config.json.
+  # This is a finding for recipe-shape: env-var-name mapping does not fit.
+  env:
+    api_key: null       # no env var — must write .security.yml
+    base_url: null      # no env var — must write config.json .model_list[].api_base
+    model: null         # no env var — must write config.json .agents.defaults.model_name
+  config_files:
+    - /root/.picoclaw/config.json
+    - /root/.picoclaw/.security.yml
+
+  # Harness-side contract for this recipe: mount a host-prepared dir at
+  # /root/.picoclaw containing the two files above, structured as:
+  #
+  #   config.json:
+  #     { "version": 3,
+  #       "agents": { "defaults": { "model_name": "<logical-name>", ... } },
+  #       "model_list": [ { "model_name": "<logical-name>",
+  #                         "model": "openrouter/<provider>/<model-id>",
+  #                         "api_base": "https://openrouter.ai/api/v1" } ] }
+  #   .security.yml:
+  #     model_list:
+  #       <logical-name>:
+  #         api_keys:
+  #           - "<openrouter-key>"
+
+invoke:
+  mode: cli-flag
+  spec:
+    cmd: ["picoclaw", "--no-color", "agent"]
+    flag: "-m"
+    # Equivalent long flag: --message. Positional prompt NOT accepted.
+    # Interactive mode (no -m) drops into a TUI; -m is the sole non-interactive path.
+
+smoke:
+  prompt: "who are you?"
+  pass_if: response_contains_name
+  timeout_s: 60

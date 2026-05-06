@@ -1,0 +1,12 @@
+{
+  "agent": "hermes",
+  "model": "google/gemini-2.5-flash",
+  "wall_time_s": 10.88,
+  "exit_code": 0,
+  "stdout_raw_snippet": "/opt/data is not owned by 10000, fixing\nDropping root privileges\nSyncing bundled skills into ~/.hermes/skills/ ...\n  + dogfood\n  + huggingface-hub\n  + pytorch-fsdp\n  + grpo-rl-training\n  + unsloth\n  + peft-fine-tuning\n  + axolotl\n  + fine-tuning-with-trl\n  + evaluating-llms-harness\n  + weights-and-biases\n  + dspy\n  + guidance\n  + obliteratus\n  + outlines\n  + llama-cpp\n  + serving-llms-vllm\n  + gguf-quantization\n  + segment-anything-model\n  + stable-diffusion-image-ge",
+  "stdout_payload": "I am a large language model, trained by Google.\n",
+  "stderr_snippet": "",
+  "session_id": "20260415_205011_fa6423",
+  "verdict": "FAIL",
+  "verdict_note": "Container ran successfully, exit 0, but the model answered as a generic Google LLM without adopting the Hermes system prompt. Full payload does NOT contain 'hermes' (case-insensitive). The Hermes CLI itself launched fine — this is a model-adherence finding on gemini-2.5-flash via OpenRouter."
+}

@@ -1,0 +1,11 @@
+{
+  "agent": "picoclaw",
+  "model": "meta-llama/llama-3.3-70b-instruct:free",
+  "verdict": "FAIL",
+  "reason": "upstream 429 from OpenRouter: 'meta-llama/llama-3.3-70b-instruct:free is temporarily rate-limited upstream'. Transport and auth OK (key accepted via .security.yml), provider saturated.",
+  "exit_code": 1,
+  "wall_time_s": 2,
+  "stdout_snippet": "picoclaw banner + blank — no model reply rendered",
+  "stderr_snippet": "Error: error processing message: LLM call failed after retries: API request failed: Status: 429 Body: {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"meta-llama/llama-3.3-70b-instruct:free is temporaril...",
+  "timestamp": "2026-04-15T19:56:52Z"
+}

@@ -1,0 +1,12 @@
+{
+  "agent": "hermes",
+  "model": "anthropic/claude-haiku-4-5",
+  "wall_time_s": 18.10,
+  "exit_code": 0,
+  "stdout_raw_snippet": "/opt/data is not owned by 10000, fixing\nDropping root privileges\nSyncing bundled skills into ~/.hermes/skills/ ...\n  + dogfood\n  + huggingface-hub\n  + pytorch-fsdp\n  + grpo-rl-training\n  + unsloth\n  + peft-fine-tuning\n  + axolotl\n  + fine-tuning-with-trl\n  + evaluating-llms-harness\n  + weights-and-biases\n  + dspy\n  + guidance\n  + obliteratus\n  + outlines\n  + llama-cpp\n  + serving-llms-vllm\n  + gguf-quantization\n  + segment-anything-model\n  + stable-diffusion-image-ge",
+  "stdout_payload": "    I'm Hermes, an AI agent designed to help you get things done. I'm built to work with your terminal and have access to a wide range of tools and skills.\n    \n    Here's what I can do for you:\n    \n    - Run commands and manage files on your system\n    - Browse the web and interact with websites\n    - Search files and inspect codebases\n    - Manage tasks and remember information across sessions\n    - Work with GitHub, email, APIs, and more\n    - Delegate work to other AI agents\n    - Generate creative content, code, data analysis\n    - And much more depending on what skills are available\n    \n    I have persistent memory, so I can learn your preferences and keep useful context between conversations. I'll also look for relevant skills when tackling your tasks to give you the best approach.\n    \nI'm Hermes, an AI agent designed to help you get things done. I'm built to work with your terminal and have access to a wide range of tools and skills.\n\nHere's what I can do for you:\n\n- Run commands and manage files on your system\n- Browse the web and interact with websites\n- Search files and inspect codebases\n- Manage tasks and remember information across sessions\n- Work with GitHub, email, APIs, and more\n- Delegate work to other AI agents\n- Generate creative content, code, data analysis\n- And much more depending on what skills are available\n\nI have persistent memory, so I can learn your preferences and keep useful context between conversations. I'll also look for relevant skills when tackling your tasks to give you the best approach.\n\nWhat can I help you with?\n",
+  "stderr_snippet": "",
+  "session_id": "20260415_204938_9a68fe",
+  "verdict": "PASS",
+  "verdict_note": "Payload contains 'Hermes' — model correctly identified itself."
+}

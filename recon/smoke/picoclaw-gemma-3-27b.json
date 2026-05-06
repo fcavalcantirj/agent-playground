@@ -1,0 +1,11 @@
+{
+  "agent": "picoclaw",
+  "model": "google/gemma-3-27b-it:free",
+  "verdict": "FAIL",
+  "reason": "upstream 404: no endpoints that support tool use; picoclaw sends tool definitions unconditionally and gemma:free has no tool-use provider route on OpenRouter",
+  "exit_code": 1,
+  "wall_time_s": 1,
+  "stdout_snippet": "picoclaw banner + blank — no model reply rendered",
+  "stderr_snippet": "Error: error processing message: LLM call failed after retries: API request failed: Status: 404 Body: {\"error\":{\"message\":\"No endpoints found that support tool use. Try disabling \\\"append_file\\\". To learn more about provider routi...",
+  "timestamp": "2026-04-15T19:56:50Z"
+}

@@ -20,7 +20,6 @@ android/app/google-services.json
 android/key.properties
 
 # FVM (D-05)
-.fvm/flutter_sdk
 
 # Editor / OS
 .idea/
@@ -28,3 +27,6 @@ android/key.properties
 .DS_Store
 *.iml
 *.log
+
+# FVM Version Cache
+.fvm/
