@@ -300,3 +300,96 @@ Dev-OK per user decision: "wipe — it's dev, just kill them." User must redeplo
 5. Failure-injection: kill api_server during a chat send → bot's call fails → user sees `bot_timeout` (D-05 fail-closed).
 6. BYOK key never appears in any log line (proxy injects upstream-only).
 7. The other 4 recipes (zeroclaw, nullclaw, nanobot, hermes) continue to work via the **legacy non-proxy path** (proven by re-running existing 5×5 e2e matrix). They migrate in subsequent phases.
+
+---
+
+## Amendments (post-research, 2026-05-06)
+
+> Added after 29-RESEARCH.md surfaced corrections to facts-on-disk that the discuss-phase didn't catch. Each AMD-XX rules over the original D-XX wording it touches. Planner reads these BEFORE the D-XX block.
+
+### AMD-01 — First cutover recipe is `nanobot`, not `nano-kaiku`
+
+**Replaces:** D-04 ("nano-kaiku" — 4 references), D-18 (`recipes/nano-kaiku.yaml`), D-19 (cutover script's `WHERE recipe_name='nano-kaiku'`).
+
+**Why:** `recipes/nano-kaiku.yaml` does not exist in the repo. Recipes on disk: `hermes.yaml`, `nanobot.yaml`, `nullclaw.yaml`, `openclaw.yaml`, `picoclaw.yaml`, `zeroclaw.yaml` (+ `BACKLOG.md`, `README.md`). `nanobot` is already PASS-verified (`memory/project_recipe_v0_state.md`) and uses `openai_compat` — same lowest-risk profile the discuss-phase wanted.
+
+**What changes:**
+- Phase 29 flips `recipes/nanobot.yaml` (NOT a non-existent `nano-kaiku.yaml`). Add `runtime.via_proxy: true` to `nanobot.yaml`.
+- Cutover script (D-19) is `tools/migrate_phase29_nanobot_cutover.py` with `WHERE recipe_name='nanobot'`.
+- The 7th acceptance gate (CONTEXT.md gate #7) now reads: "the other 4 recipes (zeroclaw, nullclaw, hermes, openclaw) continue to work via the legacy non-proxy path." (`picoclaw` is already deferred — not in the 5×5 matrix.)
+- Phase 30 scope drops `nanobot` and adds `picoclaw` (still 4 recipes left to flip).
+
+**Out of scope here:** Creating a new `nano-kaiku.yaml` recipe — that would require recon work (image, smoke prompt, model selection) that belongs in Phase 30+ if at all.
+
+### AMD-02 — Idempotency backend is Postgres, not Redis
+
+**Replaces:** D-16 wording ("Redis-backed cache" / "namespace `ap:proxy:idem:`").
+
+**Why:** `api_server/src/api_server/services/idempotency.py` (existing) is **Postgres-backed** (`asyncpg` + `pg_advisory_xact_lock` + an `idempotency_keys` table). There is no Redis-backed `IdempotencyMiddleware` in the codebase. Reusing the existing primitive is the dumb-client rule applied at the service layer: don't invent a second backend for the same problem.
+
+**What changes:**
+- Proxy idempotency reuses `services/idempotency.py` `check_or_reserve` + `write_idempotency` directly. No Redis.
+- The "namespace `ap:proxy:idem:`" line in D-16 is superseded by: "proxy idempotency rows live in the same `idempotency_keys` table; the proxy passes `key=Idempotency-Key` and `request_body_hash=hash_body(raw_bytes)` (already what the existing primitive expects). User scope: the resolved `(user_id, agent_instance_id)` from the IP-map."
+- TTL: 24h, matches the existing primitive (RESEARCH.md §Idempotency Strategy + Phase 19's `services/idempotency.py` line 23).
+
+### AMD-03 — In-flight idempotency: use insert-reserved-row pattern
+
+**Augments:** D-16 (does not replace; adds the missing race-resolution).
+
+**Why:** Existing `services/idempotency.py` has an in-flight gap — two concurrent retries 50ms apart can BOTH see "miss" under the advisory lock (because the lock releases at TX end, not at endpoint completion) and BOTH forward to upstream → double charge. Research O-03 surfaced this as a pre-existing gap that Phase 29 cannot ignore (Temporal's `[1s,2s,4s]` retries land within the gap window).
+
+**What changes:**
+- The proxy's idempotency check inserts a placeholder row `(key, user_id, request_body_hash, status='in_flight', expires_at=now()+1h)` under the advisory lock and commits BEFORE forwarding upstream. The second concurrent caller sees `status='in_flight'` and waits (poll every 100ms, 5s max) for the first to finish; on first-completion, the row is UPDATED with the final response + `status='success'` and the second replays it.
+- "in_flight" is a 4th transient status alongside `success | failed | unknown`. Per AMD-04 below, transient rows are GC'd if they age > 1h (orphaned by api_server crash mid-request).
+
+### AMD-04 — Add `agent_containers.bridge_ip` column (NEW, additional schema change)
+
+**Augments:** D-11 (schema additions).
+
+**Why:** D-07 says "lookup `agent_containers WHERE bridge_ip=<ip>`" but `agent_containers` does NOT have a `bridge_ip` column today. Resolving the IP at request time via Docker SDK walks adds 5–20ms per call (uncached) — too slow for the hot path. Persisting the IP at deploy time (where we already know it via `inapp_recipe_index.get_container_ip`) makes the lookup a single indexed query.
+
+**What changes:**
+- Migration `013` adds `agent_containers.bridge_ip INET NULL` (nullable until backfill) + a partial index `WHERE container_status='running'` for fast lookups. (Migration also adds the columns from D-11: `upstream_provider`, `proxy_latency_ms`, `upstream_latency_ms`, plus `provider_key_enc bytea` from D-02.)
+- Deploy flow (`/v1/agents/{id}/deploy`) writes `bridge_ip` after the container starts and `get_container_ip()` resolves.
+- Proxy's `ProxyIPMap` (RESEARCH.md §Architectural Approach) reads from this column — does NOT walk Docker on the hot path.
+- Refresh task (60s) re-reads the column and updates the in-process map; Docker network events are NOT subscribed (deferred — `events()` adds complexity, 60s polling is fine for v1 per D-07).
+
+### AMD-05 — Use a separate `proxy_upstream_client` httpx instance
+
+**Augments:** D-01 / D-09 (Claude's discretion).
+
+**Why:** The existing `app.state.bot_http_client` is configured for short-fuse bot-to-bot RPC (10s timeout). LLM streaming calls run 10–600s. Sharing the same connection pool would either starve bot RPC or force a 600s timeout on bot calls. Research recommends a dedicated client.
+
+**What changes:**
+- New `app.state.proxy_upstream_client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=5.0), limits=httpx.Limits(max_connections=100, max_keepalive_connections=20))` created in lifespan, closed at shutdown.
+- ALL proxy upstream calls use this client. Bot RPC continues to use `bot_http_client`.
+
+### AMD-06 — D-18 `runtime.via_proxy` placeholder applies to Anthropic env too
+
+**Clarifies:** D-18 (only mentioned `OPENAI_BASE_URL` / `OPENAI_API_KEY`).
+
+**Why:** `nanobot` is `openai_compat` so D-18 as-written works for it. But the recipe-flag mechanism is shared by Phase 30 recipes — `hermes` (Anthropic-native via `claude-code-sdk`) needs `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` placeholder injection, not `OPENAI_*`. The runner code that interprets `via_proxy: true` must dispatch on the recipe's `runtime.process_env.api_key` field (already known per D-17).
+
+**What changes:**
+- Runner's `via_proxy: true` handler:
+  - if `process_env.api_key == 'OPENROUTER_API_KEY'` → strip it; inject `OPENAI_BASE_URL=http://api_server:8000/v1/llm/forward` + `OPENAI_API_KEY=ap-proxy-<inapp_auth_token>`
+  - if `process_env.api_key == 'OPENAI_API_KEY'` → same as OpenRouter (OpenAI SDK reads `OPENAI_BASE_URL`)
+  - if `process_env.api_key == 'ANTHROPIC_API_KEY'` → strip it; inject `ANTHROPIC_BASE_URL=http://api_server:8000/v1/llm/forward` + `ANTHROPIC_API_KEY=ap-proxy-<inapp_auth_token>`
+- Phase 29 only exercises the OpenRouter path (nanobot uses OPENROUTER_API_KEY); Anthropic path is forward-compatible scaffolding for Phase 30.
+
+### AMD-07 — Anthropic streaming usage parser uses last-wins on `output_tokens`, NOT sum
+
+**Augments:** D-12 (mentions adding `_parse_anthropic_native` but doesn't spec the streaming parsing rule).
+
+**Why:** Research surfaced a HIGH-impact landmine: Anthropic's `message_delta.usage.output_tokens` is **cumulative**, NOT a delta. Multiple integrations have shipped 30-50% over-count bugs (langchain-js #10249, agno-agi #6537). MSV gets this right via "last-wins on output_tokens; cache tokens read from message_start." Phase 29 plans MUST mirror that exact pattern.
+
+**What changes:**
+- `_parse_anthropic_native_stream(events: AsyncIterator) -> ParsedUsage`:
+  - On `message_start`: capture `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` (these are FINAL — Anthropic emits totals once at start).
+  - On EACH `message_delta`: overwrite `output_tokens` with `event.usage.output_tokens` (last-wins; do NOT sum across deltas).
+  - On stream-close: emit ParsedUsage with the captured values.
+- Add an explicit unit test that simulates 3 `message_delta` events with `output_tokens=5, 12, 17` and asserts `ParsedUsage.output_tokens == 17` (NOT 34).
+
+---
+
+*Amendments added 2026-05-06 — corrects 7 items surfaced by 29-RESEARCH.md before planner runs.*
