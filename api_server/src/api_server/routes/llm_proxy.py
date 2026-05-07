@@ -156,35 +156,51 @@ async def _record_usage_from_parsed(
     """
     try:
         async with pool.acquire() as conn:
-            # Cost: only computable when status='success' AND we have a
-            # weights row. Failed rows persist with cost_usd=0 + tokens=0.
+            # Phase 30 D-09 — OpenRouter inline cost is the canonical USD
+            # source when present; cost_weights remains the fallback for
+            # everyone else (anthropic per D-10, OpenAI direct, openrouter
+            # rows whose response unexpectedly omits inline cost).
+            #
+            # Provider-gating is the Pitfall 1 mitigation: a non-openrouter
+            # provider that ever decides to ship usage.cost with different
+            # semantics will NOT silently shift our cost_usd. The literal
+            # ``provider == "openrouter"`` predicate lives ON THE SAME
+            # ``if``-branch line as ``parsed.inline_cost_usd is not None``
+            # (joined by ``and``) — if a future reviewer ever weakens this
+            # to ``provider in (...)``, test_d09_openai_direct_does_not_use_
+            # inline_path catches it empirically with a phantom inline cost.
             cost_usd = Decimal("0")
-            if parsed.status == "success" and (
-                parsed.input_tokens or parsed.output_tokens
-            ):
-                weights = await conn.fetchrow(
-                    """
-                    SELECT input_per_1m_usd, output_per_1m_usd,
-                           cache_read_per_1m_usd, cache_creation_per_1m_usd,
-                           ap_multiplier
-                    FROM cost_weights
-                    WHERE provider = $1 AND model = $2
-                    """,
-                    provider, model,
-                )
-                if weights is not None:
-                    in_rate = weights["input_per_1m_usd"] or Decimal("0")
-                    out_rate = weights["output_per_1m_usd"] or Decimal("0")
-                    cr_rate = weights["cache_read_per_1m_usd"] or Decimal("0")
-                    cc_rate = weights["cache_creation_per_1m_usd"] or Decimal("0")
-                    mult = weights["ap_multiplier"] or Decimal("1")
-                    raw = (
-                        Decimal(parsed.input_tokens) * in_rate
-                        + Decimal(parsed.output_tokens) * out_rate
-                        + Decimal(parsed.cache_read_tokens) * cr_rate
-                        + Decimal(parsed.cache_creation_tokens) * cc_rate
-                    ) / Decimal("1000000")
-                    cost_usd = raw * mult
+            if parsed.status == "success":
+                if (
+                    provider == "openrouter"
+                    and parsed.inline_cost_usd is not None
+                ):
+                    # D-09 inline path — OpenRouter's authoritative USD.
+                    cost_usd = Decimal(str(parsed.inline_cost_usd))
+                elif parsed.input_tokens or parsed.output_tokens:
+                    weights = await conn.fetchrow(
+                        """
+                        SELECT input_per_1m_usd, output_per_1m_usd,
+                               cache_read_per_1m_usd, cache_creation_per_1m_usd,
+                               ap_multiplier
+                        FROM cost_weights
+                        WHERE provider = $1 AND model = $2
+                        """,
+                        provider, model,
+                    )
+                    if weights is not None:
+                        in_rate = weights["input_per_1m_usd"] or Decimal("0")
+                        out_rate = weights["output_per_1m_usd"] or Decimal("0")
+                        cr_rate = weights["cache_read_per_1m_usd"] or Decimal("0")
+                        cc_rate = weights["cache_creation_per_1m_usd"] or Decimal("0")
+                        mult = weights["ap_multiplier"] or Decimal("1")
+                        raw = (
+                            Decimal(parsed.input_tokens) * in_rate
+                            + Decimal(parsed.output_tokens) * out_rate
+                            + Decimal(parsed.cache_read_tokens) * cr_rate
+                            + Decimal(parsed.cache_creation_tokens) * cc_rate
+                        ) / Decimal("1000000")
+                        cost_usd = raw * mult
 
             # Use the provided latency split; fall back to total =
             # upstream_latency_ms for the legacy ``latency_ms`` column.
