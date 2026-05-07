@@ -252,6 +252,14 @@ class StreamUsageParser:
                 if isinstance(details, dict):
                     cache_read = int(details.get("cached_tokens") or 0)
             cache_creation = int(usage.get("cache_creation_input_tokens") or 0)
+            # Phase 30 D-09 — OpenRouter ships ``usage.cost`` in the same
+            # last-wins usage chunk. Defensive cast handles JSON-number,
+            # JSON-string, and missing shapes (RESEARCH A5). Anthropic
+            # streaming branch below leaves inline_cost_usd=None per D-10.
+            inline_cost = usage.get("cost")
+            inline_cost_usd = (
+                float(inline_cost) if inline_cost is not None else None
+            )
             return ParsedUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -259,6 +267,7 @@ class StreamUsageParser:
                 cache_creation_tokens=cache_creation,
                 upstream_request_id=self._upstream_request_id,
                 status="success" if self._was_complete else "failed",
+                inline_cost_usd=inline_cost_usd,
             )
         if self._sse_format == "anthropic":
             return ParsedUsage(

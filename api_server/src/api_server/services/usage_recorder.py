@@ -75,7 +75,15 @@ class ParsedUsage:
     cache_creation_tokens: int = 0
     upstream_request_id: str | None = None
     stop_reason: str | None = None
-    status: str = "success"  # 'success' | 'unknown'
+    status: str = "success"  # 'success' | 'unknown' | 'failed'
+    # Phase 30 D-09 — OpenRouter returns ``usage.cost`` (USD) inline in
+    # every response (last SSE chunk for streams; top-level for
+    # non-streaming). When populated AND provider == "openrouter", the
+    # proxy persists this directly as usage_logs.cost_usd. None means
+    # "not present in upstream response — fall back to cost_weights
+    # computation". Anthropic + OpenAI direct never populate this
+    # field (D-10 + Pitfall 1 — provider-gate exclusivity).
+    inline_cost_usd: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +163,13 @@ def _parse_openai_compat(response: dict, provider: str | None) -> ParsedUsage:
 
     cache_creation = _int_or_zero(usage.get("cache_creation_input_tokens"))
 
+    # Phase 30 D-09 — OpenRouter inline cost extraction.
+    # Defensive cast handles JSON-number, JSON-string, and missing shapes
+    # (RESEARCH A5). Downstream Decimal(str(...)) in routes/llm_proxy.py
+    # re-coerces. None means "fall back to cost_weights computation".
+    inline_cost = usage.get("cost")
+    inline_cost_usd = float(inline_cost) if inline_cost is not None else None
+
     return ParsedUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -163,6 +178,7 @@ def _parse_openai_compat(response: dict, provider: str | None) -> ParsedUsage:
         upstream_request_id=_str_or_none(response.get("id")),
         stop_reason=_str_or_none(_first_choice_finish_reason(response)),
         status="success" if (input_tokens or output_tokens) else "unknown",
+        inline_cost_usd=inline_cost_usd,
     )
 
 
