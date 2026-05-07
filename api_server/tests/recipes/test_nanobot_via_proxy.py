@@ -50,37 +50,15 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # ---------------------------------------------------------------------------
 
 
-# All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
-# Phase 30 flips the remaining 5 one PLAN at a time.
-# Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES: list[str] = []
-
-
-@pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
-def test_only_nanobot_has_via_proxy_true(recipe_name: str) -> None:
-    """Regression guard — Phase 30 plans flip recipes one PLAN at a time;
-    recipes still in this list must remain on the legacy non-proxy path."""
-    recipe = _load(recipe_name)
-    runtime = recipe.get("runtime") or {}
-    assert runtime.get("via_proxy", False) is False, (
-        f"recipe {recipe_name!r} unexpectedly has via_proxy: true — "
-        f"Phase 30 flips one recipe per plan; updating this list and the "
-        f"flipped-count assertion below is part of each plan's TDD work."
-    )
-
-
-def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
-    """Combined assertion: across all *.yaml files in recipes/, exactly
-    the expected number carry via_proxy: true. Phase 30 increments per plan;
-    after Plan 30-02 (openclaw) the count is 2 (nanobot + openclaw)."""
-    flipped_count = 0
-    for path in RECIPES_DIR.glob("*.yaml"):
-        text = path.read_text()
-        if "via_proxy: true" in text:
-            flipped_count += 1
-    assert flipped_count == 6, (
-        f"expected exactly 6 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw + zeroclaw + hermes — full Phase 30 cutover), got {flipped_count}"
-    )
+# Phase 30 EXIT GATE (Plan 30-07): the shrinking-_OTHER_RECIPES regression
+# guard pattern is retired. The positive-assertion replacement lives at
+# api_server/tests/recipes/test_phase30_via_proxy_invariant.py — it
+# parametrizes test_all_recipes_have_via_proxy_true over all 6 flipped
+# recipes (nanobot + openclaw + nullclaw + picoclaw + zeroclaw + hermes)
+# and asserts the count via test_all_recipes_flipped_count. The
+# nanobot-specific sanity tests below (inapp contract, api_key env name,
+# RecipeSummary surfacing, two-heredoc shape) stay in this file because
+# they document nanobot-specific invariants, not Phase-30-wide ones.
 
 
 # ---------------------------------------------------------------------------

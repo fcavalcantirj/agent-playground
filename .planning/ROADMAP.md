@@ -645,16 +645,17 @@ Plans:
 **Plans:** 8 plans
 
 Plans:
-- [x] 30-00-PLAN.md — proxy reads OpenRouter inline cost (D-09); ParsedUsage + parsers extended; 8 new tests (4 unit + 4 integration) + 64/64 PASS regression sweep (SHIPPED 2026-05-07; commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa; live e2e gate via `make e2e-inapp-docker` deferred to Phase 28 follow-up — D-30-DEF-01 in deferred-items.md)
-- [x] 30-01-PLAN.md — PROBE-VAL-ANTHROPIC spike (D-04); real-money <$0.01 streaming validation of proxy anthropic SSE branch (SHIPPED 2026-05-07; commits 6521b64 + 5b053b6; cost=$0.000056; 4/4 invariants PASS; 1 Rule-1 deviation auto-fixed inline — proxy header chain now also captures Anthropic `request-id` + body-level fallback for upstream_request_id; Plan 30-02 GATE OPEN)
-- [ ] 30-02-PLAN.md — openclaw flip + e2e (D-03); one-line via_proxy:true; ANTHROPIC_BASE_URL env injection (no heredoc)
-- [ ] 30-03-PLAN.md — nullclaw flip + e2e (D-06); mechanical heredoc edit at line 468 (1 substitution)
-- [ ] 30-04-PLAN.md — picoclaw flip + e2e + harness matrix extension (D-06); 2 heredoc substitutions; Makefile + RECIPE_MATRIX extended to 6 cells
-- [ ] 30-05-PLAN.md — zeroclaw flip + e2e (D-06); Wave 0 inspection (distroless image — Pitfall 4); checkpoint-gated
-- [ ] 30-06-PLAN.md — hermes flip + e2e (D-06); Wave 0 inspection (.env override Pitfall 5); checkpoint-gated
-- [ ] 30-07-PLAN.md — cutover verification + regression-guard rewrite (D-08); 30-VERIFICATION.md; ROADMAP update
+- [x] 30-00-PLAN.md — proxy reads OpenRouter inline cost (D-09); ParsedUsage + parsers extended; 8 new tests (4 unit + 4 integration) + 64/64 PASS regression sweep (SHIPPED 2026-05-07; commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa)
+- [x] 30-01-PLAN.md — PROBE-VAL-ANTHROPIC spike (D-04); real-money $0.000056 streaming validation of proxy anthropic SSE branch (SHIPPED 2026-05-07; commits 6521b64 + 5b053b6; 4/4 invariants PASS; 1 Rule-1 deviation auto-fixed inline — proxy header chain now also captures Anthropic `request-id` + body-level fallback for upstream_request_id)
+- [x] 30-pre-02 — fix e2e harness Phase 28 import rot (D-30-DEF-01); rewrite drive_dispatcher_once for ActivityEnvironment (SHIPPED 2026-05-07; commits 3b7596a + 5e39074)
+- [x] 30-02-PLAN.md — openclaw flip via ANTHROPIC_BASE_URL env (no heredoc); regression-guard test added (SHIPPED 2026-05-07; commits e480ba5 + 2310d60; live deploy-stack smoke deferred on pre-existing recipe boot timeout — flip itself verified at the BYOK + Plan 30-01 anthropic-SSE-spike layer)
+- [x] 30-03-PLAN.md — nullclaw flip via documented `custom:URL` provider escape hatch (SHIPPED 2026-05-07; commits 31b2c70 + edf7d54; live smoke 2 chat completions through proxy, $0.02832 cost, real `gen-1778126207-...` + `gen-1778126210-...` IDs; D-30-DEF-03 retracted)
+- [x] 30-04-PLAN.md — picoclaw flip; 2 heredoc substitutions; e2e harness extension DEFERRED per Phase 22c.3 user direction 2026-04-30 — static-YAML invariant only (SHIPPED 2026-05-07; commit b166c01)
+- [x] 30-05-PLAN.md — zeroclaw flip via documented `custom:URL` provider escape hatch + AP_PROXY_BASE_URL substitution dict extension (SHIPPED 2026-05-07; commit e4f01a8; live smoke 1 chat completion through proxy, $0.01291 cost, real `gen-1778127299-...` ID)
+- [x] 30-06-PLAN.md — hermes flip via OPENROUTER_BASE_URL env injection in activation_env (no heredoc) (SHIPPED 2026-05-07; commit 6995546; live smoke 1 chat completion through proxy, $0.01302 cost, real `gen-1778127435-...` ID)
+- [x] 30-07-PLAN.md — cutover verification + regression-guard rewrite + 30-VERIFICATION.md + ROADMAP update (D-08) (SHIPPED 2026-05-07)
 
-**Status:** EXECUTING (2/8 plans shipped) — Plans 30-00 + 30-01 SHIPPED 2026-05-07; resume with /gsd-execute-phase 30
+**Status:** SHIPPED 2026-05-07 (PHASE-30-EXIT-GATE-PASSED). All 6 recipes carry `runtime.via_proxy: true`; 4 of 5 e2e-covered recipes verified via deploy-stack live smoke with real upstream cost ($0.05432 cumulative, well under $0.10 ceiling). openclaw live smoke deferred on a pre-existing recipe-level boot timeout (240s `ready_log_regex` miss); the cutover itself is verified at the BYOK custody + Plan 30-01 PROBE-VAL spike layer. picoclaw e2e cell formally DEFERRED per Phase 22c.3 user direction 2026-04-30. See 30-VERIFICATION.md for the full per-recipe acceptance gate report.
 
 ## Backlog
 

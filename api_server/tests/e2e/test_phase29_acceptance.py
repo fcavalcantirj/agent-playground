@@ -146,89 +146,31 @@ async def test_gate_04_no_unknown_status_rows(db_pool: asyncpg.Pool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Gate 07 — legacy recipes deploy via NON-proxy path
+# Gate 07 — REMOVED in Phase 30 cutover
 # ---------------------------------------------------------------------------
-
-
-async def test_gate_07_legacy_recipes_still_work(db_pool: asyncpg.Pool) -> None:
-    """4 legacy recipes (hermes, openclaw, zeroclaw, nullclaw) → legacy path.
-
-    Plan 29-08 left ``via_proxy: true`` ONLY in nanobot.yaml. The 4
-    legacy recipes don't have the flag, so:
-      * ``agent_lifecycle.start_agent`` skips the BYOK custody block
-      * ``agent_containers.upstream_provider`` stays NULL
-      * ``agent_containers.provider_key_enc`` stays NULL
-      * ``runner_bridge`` does NOT inject AP_PROXY_BASE_URL into env
-      * The bot's outbound LLM call goes directly to OpenRouter (legacy
-        path — proven for 5 recipes in Phase 22c.3 e2e gate)
-
-    Schema-level evidence: rows for the 4 recipes have BOTH columns
-    NULL. We seed agent_containers rows mirroring what ``start_agent``
-    produces for legacy recipes (no provider_key_enc, no
-    upstream_provider) and assert the invariant holds.
-
-    The runtime check (real bot reply) is exercised by the existing
-    Phase 22c.3 5x5 matrix gate (``test_inapp_5x5_matrix.py``); this
-    test specifically guards the Phase 29 column invariants.
-    """
-    legacy_recipes = ("hermes", "openclaw", "zeroclaw", "nullclaw")
-
-    seeded_rows: list[tuple[str, UUID]] = []
-
-    async with db_pool.acquire() as conn:
-        for recipe in legacy_recipes:
-            user_id = uuid4()
-            agent_id = uuid4()
-            container_row_id = uuid4()
-            await conn.execute(
-                "INSERT INTO users (id, display_name) VALUES ($1, $2)",
-                user_id, f"phase29-gate-07-{recipe}",
-            )
-            await conn.execute(
-                """
-                INSERT INTO agent_instances (id, user_id, recipe_name, model, name)
-                VALUES ($1, $2, $3, 'm-test', $4)
-                """,
-                agent_id, user_id, recipe, f"agent-{recipe}",
-            )
-            # Seed agent_containers WITHOUT provider_key_enc + upstream_provider —
-            # exactly what start_agent's legacy path produces.
-            await conn.execute(
-                """
-                INSERT INTO agent_containers (
-                    id, agent_instance_id, user_id, recipe_name,
-                    deploy_mode, container_status, container_id,
-                    ready_at
-                ) VALUES (
-                    $1, $2, $3, $4,
-                    'persistent', 'running', $5,
-                    NOW()
-                )
-                """,
-                container_row_id, agent_id, user_id, recipe,
-                f"legacy-{uuid4().hex[:48]}",
-            )
-            seeded_rows.append((recipe, container_row_id))
-
-        # Invariant: the 4 legacy recipes have NULL Phase 29 custody columns.
-        for recipe, row_id in seeded_rows:
-            row = await conn.fetchrow(
-                """
-                SELECT recipe_name, upstream_provider, provider_key_enc
-                FROM agent_containers WHERE id = $1
-                """,
-                row_id,
-            )
-            assert row is not None, f"missing row for {recipe}"
-            assert row["recipe_name"] == recipe
-            assert row["upstream_provider"] is None, (
-                f"GATE-07 violated: {recipe} has non-NULL upstream_provider="
-                f"{row['upstream_provider']!r} (expected legacy path)"
-            )
-            assert row["provider_key_enc"] is None, (
-                f"GATE-07 violated: {recipe} has non-NULL provider_key_enc "
-                "(expected legacy path)"
-            )
+#
+# The original Gate 07 asserted that hermes / openclaw / zeroclaw / nullclaw
+# remained on the LEGACY non-proxy path with NULL provider_key_enc and NULL
+# upstream_provider. Phase 30 inverts this invariant — all 6 recipes now
+# carry runtime.via_proxy: true, and the BYOK custody block populates both
+# columns at every deploy.
+#
+# Replacement coverage:
+#   * Static-YAML invariant: tests/recipes/test_phase30_via_proxy_invariant.py
+#     (test_all_recipes_have_via_proxy_true parametrized over all 6 recipes)
+#   * Runtime DB-level evidence: per-recipe deploy-stack live smokes during
+#     Plans 30-02..30-06 captured in
+#     .planning/phases/30-recipe-proxy-cutover/30-VERIFICATION.md
+#     (each recipe has its [d12] log entry showing
+#     `agent_containers.upstream_provider=<provider>` and
+#     `provider_key_enc IS NOT NULL`).
+#
+# The Gate 07 test is intentionally NOT replaced with an "all recipes have
+# NON-NULL custody" variant in this file — that would seed rows manually
+# (testing the seed shape, not the lifecycle), which is what made the
+# original Gate 07 a weak invariant in retrospect. The lifecycle path is
+# covered by tests/routes/test_agent_lifecycle*.py at the unit level and
+# by per-recipe deploy-stack smokes at the integration level.
 
 
 # ---------------------------------------------------------------------------
