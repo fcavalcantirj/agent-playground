@@ -280,8 +280,16 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
         return _err(401, ErrorCode.UNAUTHORIZED, "unknown caller")
     user_id, agent_instance_id, expected_token = caller
 
+    # The placeholder bearer can arrive in either of two header forms:
+    #   * Authorization: Bearer ap-proxy-<token>   (OpenAI-SDK / OpenRouter shape)
+    #   * x-api-key: ap-proxy-<token>              (Anthropic-SDK shape — openclaw,
+    #                                               vanilla anthropic-sdk-python)
+    # Phase 30-followup: openclaw's anthropic plugin uses the Anthropic SDK
+    # (x-api-key convention) and never sends Authorization. Reading both
+    # headers keeps the proxy uniform across SDK shapes.
     auth_header = request.headers.get("Authorization", "")
-    bearer = auth_header.removeprefix("Bearer ").strip()
+    x_api_key = request.headers.get("x-api-key", "")
+    bearer = auth_header.removeprefix("Bearer ").strip() or x_api_key.strip()
     if bearer != f"ap-proxy-{expected_token}":
         return _err(401, ErrorCode.UNAUTHORIZED, "auth token mismatch")
 

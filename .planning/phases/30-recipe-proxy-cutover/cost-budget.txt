@@ -23,3 +23,12 @@
   - Subtotal: $0.01302100
   - Phase 30 cumulative: ~$0.0543
   - All 6 recipes via proxy: nanobot + openclaw + nullclaw + picoclaw + zeroclaw + hermes
+
+[2026-05-07] post-Phase-30 followup — openclaw boot-timeout fix + live smoke
+  - 1 successful chat completion through proxy
+  - $0.02963550 (req_011CaoXVkMBnUgkjcSMS44N4)
+  - cost_weights row for anthropic/claude-haiku-4-5 produced cost; note: input=3 + output=30 tokens vs $0.0296 implies cost_weights scaling needs review (separate issue, tracked outside Phase 30)
+  - Subtotal: $0.02963550
+  - Phase 30 + followup cumulative: ~$0.0840
+
+  All 6 recipes now empirically verified end-to-end via the deploy stack with real upstream cost capture.

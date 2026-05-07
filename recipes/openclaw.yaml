@@ -807,7 +807,13 @@ channels:
                                          # token is openclaw.json gateway.auth.token
                                          # (the runner mints + persists per-session
                                          # to agent_containers.inapp_auth_token).
-    ready_log_regex: "\\[gateway\\] ready \\(\\d+ plugins"
+    # Upstream openclaw renamed the ready log line: pre-2026-05-07 emitted
+    # "[gateway] ready (N plugins: …)"; current openclaw emits
+    # "[gateway] http server listening (N plugins: …)" at +2.6s when the
+    # HTTP server has fully bound, then a bare "[gateway] ready" at +13.6s
+    # after model warmup. We match the earlier line — gateway is bound and
+    # accepting POST /v1/chat/completions before the model-warmup timeout.
+    ready_log_regex: "\\[gateway\\] http server listening \\(\\d+ plugins"
     response_routing: per_session       # 1:1 with the agent_instance
     persistent_argv_override:
       # D-20 single-channel-per-instance: when channel="inapp" is selected at
@@ -823,6 +829,24 @@ channels:
         - |
           set -e
           mkdir -p /home/node/.openclaw
+          # Phase 30 Plan 30-02 (live smoke fix): strip provider prefix from
+          # MODEL ("anthropic/claude-haiku-4-5" → "claude-haiku-4-5") so the
+          # models.providers.anthropic.models[].id below is the bare model id.
+          # The agents.defaults.model.primary keeps the prefixed form
+          # because that's what selects the provider entry at request time.
+          # Use a unique-prefix var name (OC_MODEL_ID, not MODEL_ID) so the
+          # runner's render_placeholders doesn't match $MODEL inside it.
+          # render_placeholders is greedy: $MODEL_ID would expand to
+          # "<MODEL_VAL>_ID". OC_MODEL_ID has no MODEL prefix collision.
+          OC_MODEL_ID=$(printf '%s' "$MODEL" | sed -E 's|^[^/]+/||')
+          # via_proxy: openclaw's anthropic plugin uses the
+          # models.providers.anthropic.baseUrl config knob to direct outbound
+          # Anthropic-shaped HTTP at our proxy. ANTHROPIC_BASE_URL env (the
+          # vanilla SDK convention) is NOT honored by openclaw's plugin.
+          # AP_PROXY_BASE_URL flows in via the runner's via_proxy_overrides
+          # (canonical proxy URL) when via_proxy=true; falls back to
+          # https://api.anthropic.com when unset (legacy direct path).
+          BASE_URL="${AP_PROXY_BASE_URL:-https://api.anthropic.com}"
           cat > /home/node/.openclaw/openclaw.json <<EOF
           {
             "agents": {
@@ -830,6 +854,23 @@ channels:
                 "model": { "primary": "${MODEL}", "fallbacks": [] },
                 "timeoutSeconds": 600,
                 "thinkingDefault": "high"
+              }
+            },
+            "models": {
+              "mode": "merge",
+              "providers": {
+                "anthropic": {
+                  "baseUrl": "$BASE_URL",
+                  "apiKey": "${ANTHROPIC_API_KEY}",
+                  "models": [
+                    {
+                      "id": "$OC_MODEL_ID",
+                      "name": "$OC_MODEL_ID",
+                      "api": "anthropic-messages",
+                      "baseUrl": "$BASE_URL"
+                    }
+                  ]
+                }
               }
             },
             "gateway": {
