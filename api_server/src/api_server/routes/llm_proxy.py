@@ -378,9 +378,16 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
         # Fail-closed (D-05) — surface a generic 502 to the bot.
         return _err(502, ErrorCode.INFRA_UNAVAILABLE, "upstream send failed")
     proxy_latency_ms = int((t_upstream_start - t_proxy_start) * 1000)
+    # Header-level request id covers OpenRouter (``X-Generation-Id``) and
+    # OpenAI / generic providers (``x-request-id``). Anthropic's REST API
+    # uses ``request-id`` lowercase (no x- prefix) — covered here too.
+    # Whichever header matches first wins; the body-level fallback below
+    # (Plan 30-01 PROBE-VAL-ANTHROPIC discovery) backstops anthropic
+    # streaming responses where some forwarders strip request-id.
     upstream_request_id = (
         upstream_resp.headers.get("X-Generation-Id")
         or upstream_resp.headers.get("x-request-id")
+        or upstream_resp.headers.get("request-id")
     )
     status_code = upstream_resp.status_code
 
@@ -406,6 +413,21 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
             # ParsedUsage is frozen — use dataclasses.replace for the
             # 4xx/5xx status override (D-15).
             parsed = parser.finalize()
+            # Plan 30-01 PROBE-VAL-ANTHROPIC fallback (Rule 1 — bug fix).
+            # If no upstream HTTP header carried a request id, use the
+            # parser-captured body-level id. For Anthropic streams this
+            # is the canonical ``message_start.message.id`` (``msg_...``);
+            # for OpenAI/OpenRouter streams it is ``data.id`` (``gen-...``).
+            # The proxy stored both via _scan_anthropic / _scan_openai but
+            # never threaded them out — empirically discovered when Plan
+            # 30-01's real-money spike found ``upstream_request_id IS NULL``
+            # rows on every anthropic call (Anthropic doesn't emit
+            # X-Generation-Id and lowercase ``request-id`` was missing
+            # from the lookup chain prior to this hotfix).
+            if not upstream_request_id and parsed.upstream_request_id:
+                upstream_request_id_local = parsed.upstream_request_id
+            else:
+                upstream_request_id_local = upstream_request_id
             if status_code >= 400:
                 parsed = replace(parsed, status="failed")
             usage_log_id = await _record_usage_from_parsed(
@@ -415,7 +437,7 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
                 provider=provider,
                 model=str(body.get("model") or ""),
                 parsed=parsed,
-                upstream_request_id=upstream_request_id,
+                upstream_request_id=upstream_request_id_local,
                 status_code=status_code,
                 proxy_latency_ms=proxy_latency_ms,
                 upstream_latency_ms=upstream_latency_ms,
