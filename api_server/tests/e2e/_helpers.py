@@ -4,15 +4,27 @@ The helpers are deliberately small. The matrix test in
 ``test_inapp_5x5_matrix.py`` stitches them together to produce the
 ``e2e-report.json`` exit-gate artifact.
 
-Per the Plan 15 ``key_links`` line 60, the test exercises the dispatcher
-adapters end-to-end against real ``ap-recipe-*`` containers and real
-OpenRouter HTTP. The runner-side wiring (``persistent_argv_override``,
-``${INAPP_AUTH_TOKEN}`` minting, ``activation_env`` rendering) that
-``routes/agent_lifecycle.py::start_persistent`` does NOT yet implement
-(flagged in Plans 10/11/12/13/14 SUMMARYs) is reproduced *inside this
-test fixture* so the gate is honest about exercising the dispatcher
-contract switch + recipe HTTP shape — without coupling the e2e gate to
-a runner-side refactor that is documented as follow-up work.
+Per the Plan 15 ``key_links`` line 60, the test exercises the
+dispatcher adapters end-to-end against real ``ap-recipe-*`` containers
+and real OpenRouter HTTP. The runner-side wiring
+(``persistent_argv_override``, ``${INAPP_AUTH_TOKEN}`` minting,
+``activation_env`` rendering) that ``routes/agent_lifecycle.py::
+start_persistent`` does NOT yet implement (flagged in Plans
+10/11/12/13/14 SUMMARYs) is reproduced *inside this test fixture* so
+the gate is honest about exercising the dispatcher contract switch +
+recipe HTTP shape — without coupling the e2e gate to a runner-side
+refactor that is documented as follow-up work.
+
+Phase 28 cutover (2026-05-05, commit ``6feb361``) deleted the asyncpg
+``dispatcher_loop`` and its per-row handler ``_handle_row``; in-app
+message dispatch now goes through the Temporal
+``DispatchMessageWorkflow`` (api_server/src/api_server/temporal/
+workflows/dispatch_message.py). ``drive_dispatcher_once`` was
+rewritten 2026-05-06 (D-30-DEF-01 follow-up) to drive the Phase 28
+activities directly via ``temporalio.testing.ActivityEnvironment`` —
+no real Temporal server, no mocks. Each activity runs its real body
+against the real test infra (Postgres, Docker, OpenRouter) so the
+gate's no-mocks invariant is preserved.
 """
 from __future__ import annotations
 
@@ -320,9 +332,11 @@ async def assert_status_transitions(
 def parse_reply_per_contract(contract: str, raw_dispatcher_response: dict) -> str:
     """Mirror of dispatcher's contract switch — for sanity asserts in tests.
 
-    The matrix test uses the dispatcher's REAL parser (calls _handle_row);
-    this helper is exposed for direct-unit callers that want to verify a
-    raw HTTP response against the contract before persisting.
+    The matrix test uses the dispatcher's REAL parser (via
+    ``forward_to_agent`` activity, which delegates to
+    ``services/inapp_dispatcher._dispatch_http_localhost``); this helper
+    is exposed for direct-unit callers that want to verify a raw HTTP
+    response against the contract before persisting.
     """
     if contract == "openai_compat":
         return raw_dispatcher_response["choices"][0]["message"]["content"]
@@ -365,24 +379,85 @@ def load_openrouter_key_from_env_local() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Inapp dispatcher driver — runs the dispatcher's _handle_row once.
+# Inapp dispatch driver — Phase 28 activity-environment harness.
 # ---------------------------------------------------------------------------
+#
+# Phase 28 cutover (commit ``6feb361``) deleted ``services/inapp_dispatcher::
+# _handle_row`` and ``dispatcher_loop`` in favour of the Temporal
+# ``DispatchMessageWorkflow``. ``drive_dispatcher_once`` rewritten 2026-05-06
+# (D-30-DEF-01) to drive the same activities the workflow drives, in the
+# same order, against the same real infra (asyncpg pool, httpx client,
+# docker-aware recipe_index). No real Temporal server is needed — the
+# ``temporalio.testing.ActivityEnvironment`` runner executes each activity
+# body inline. Pattern lifted verbatim from
+# ``tests/temporal/test_forward_to_agent_activity.py`` (the existing Phase
+# 28 unit-test convention).
+#
+# Why this is faithful to the production workflow rather than a shortcut:
+#
+# - Each activity runs its REAL code (real recipe lookup, real container-IP
+#   discovery, real bot HTTP, real ``_dispatch_http_localhost``, real
+#   asyncpg writes, real atomic mark_done + agent_event dual-write).
+# - Activity order matches ``DispatchMessageWorkflow.run`` step-for-step:
+#   check_container_ready → forward_to_agent → record_usage (best-effort) →
+#   emit_inapp_outbound (best-effort) → mark_message_done (load-bearing).
+# - ApplicationError handling mirrors the workflow's
+#   ``_classify_forward_failure`` minimally — pull ``.type`` off the
+#   exception and route to ``mark_message_failed`` so the message row
+#   transitions to a terminal state.
+# - The activity-internal retry budgets (e.g. forward_to_agent's
+#   ``[0,1s,2s,4s]`` transport-error loop) still fire because they live
+#   INSIDE the activity body that ActivityEnvironment runs.
+#
+# Skipped vs. workflow:
+#
+# - debit_balance: D-22 no-op stub. Skipped here for noise; covered by
+#   unit tests under tests/temporal/.
+# - workflow-level retry policies: ActivityEnvironment.run executes each
+#   body once. The workflow's outer ``maximum_attempts=5`` on
+#   ``check_container_ready`` and ``mark_message_done`` is therefore not
+#   reproduced — but those branches are exercised by the dedicated
+#   activity tests, and the e2e gate's no-mocks invariant is what we're
+#   protecting here, not retry semantics.
 
 
-class _DispatcherStateForE2E:
-    """Minimal duck-type matching what dispatcher._handle_row reads."""
+def _build_dispatch_input(row: asyncpg.Record, bot_timeout_seconds: float) -> Any:
+    """Build the workflow input the activities expect (matches Plan 28-06 shape).
 
-    def __init__(
-        self,
-        db: asyncpg.Pool,
-        recipe_index: Any,
-        bot_http_client: httpx.AsyncClient,
-        bot_timeout_seconds: float = 600.0,
-    ) -> None:
-        self.db = db
-        self.recipe_index = recipe_index
-        self.bot_http_client = bot_http_client
-        self.bot_timeout_seconds = bot_timeout_seconds
+    The production route at ``routes/agent_messages.py:255-266`` builds
+    exactly this dict — UUIDs stringified for Temporal JSON serialization
+    safety. We use a ``SimpleNamespace`` so the activity bodies' attribute
+    access (``inp.message_id`` etc.) works without needing to import the
+    workflow's ``DispatchMessageInput`` dataclass (which would pull the
+    workflow file's sandbox-pass-through machinery into the test).
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        message_id=str(row["id"]),
+        user_id=str(row["user_id"]),
+        agent_id=str(row["agent_id"]),
+        container_row_id=str(row["container_row_id"]),
+        container_id=row["container_id"],
+        recipe_name=row["recipe_name"],
+        # The dispatcher row JOIN doesn't carry the agent_instances.model
+        # column. Read it lazily below if needed; for the matrix gate the
+        # contract_model_name override on the recipe_index is what gets
+        # used by the openai_compat adapter, so this field is mostly an
+        # audit-trail column for record_usage.
+        agent_model=row.get("agent_model") if isinstance(row, dict) else None,
+        content=row["content"],
+        inapp_auth_token=row["inapp_auth_token"],
+        bot_timeout_seconds=bot_timeout_seconds,
+    )
+
+
+async def _fetch_agent_model(pool: asyncpg.Pool, agent_id: UUID) -> str | None:
+    """Read agent_instances.model — the dispatcher JOIN doesn't carry it."""
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT model FROM agent_instances WHERE id = $1", agent_id
+        )
 
 
 async def drive_dispatcher_once(
@@ -391,27 +466,110 @@ async def drive_dispatcher_once(
     message_id: UUID,
     bot_timeout_seconds: float = 600.0,
 ) -> None:
-    """Invoke the production dispatcher's _handle_row against a real bot HTTP client.
+    """Drive a single in-app message through the Phase 28 activities.
 
-    No respx, no mocks. The dispatcher constructs the URL from the
-    recipe_index (real container IP via docker_client) + the recipe's
-    declared port/endpoint and POSTs through the supplied
-    httpx.AsyncClient. Real OpenRouter calls happen behind the scenes
-    inside the recipe container.
+    Mirrors ``DispatchMessageWorkflow.run`` step-for-step using
+    ``temporalio.testing.ActivityEnvironment`` against the real test
+    infra. No respx, no mocks. The bot HTTP client is a real
+    ``httpx.AsyncClient``; activities resolve real container IPs via the
+    supplied ``recipe_index`` and post to real recipe containers, which
+    in turn call real OpenRouter upstream.
+
+    The signature is preserved for caller compatibility with Plan 22c.3
+    Plan 15 (the matrix test imports this function by name).
     """
-    from api_server.services.inapp_dispatcher import _handle_row
+    # Late imports: the activities pull asyncpg/httpx/docker; keeping
+    # them function-local keeps the helpers' module surface narrow.
+    from temporalio.exceptions import ApplicationError
+    from temporalio.testing import ActivityEnvironment
+
+    from api_server.temporal.activities.check_container_ready import (
+        ReadinessActivities,
+    )
+    from api_server.temporal.activities.emit_inapp_outbound import (
+        emit_inapp_outbound as emit_inapp_outbound_fn,
+    )
+    from api_server.temporal.activities.forward_to_agent import (
+        ForwardActivities,
+    )
+    from api_server.temporal.activities.mark_message_done import MarkActivities
+    from api_server.temporal.activities.mark_message_failed import (
+        MarkFailedActivities,
+    )
+    from api_server.temporal.activities.record_usage import (
+        RecordUsageActivities,
+    )
+
+    row = await fetch_dispatcher_row(pool, message_id)
+    inp = _build_dispatch_input(row, bot_timeout_seconds)
+    # asyncpg.Record exposes .get only on dicts; agent_model lives on
+    # agent_instances, not on the dispatcher row, so resolve it now.
+    if not getattr(inp, "agent_model", None):
+        inp.agent_model = await _fetch_agent_model(pool, row["agent_id"])
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(bot_timeout_seconds, connect=5.0)
     ) as bot_http_client:
-        row = await fetch_dispatcher_row(pool, message_id)
-        state = _DispatcherStateForE2E(
-            db=pool,
-            recipe_index=recipe_index,
+        readiness = ReadinessActivities(db_pool=pool)
+        forward = ForwardActivities(
+            db_pool=pool,
             bot_http_client=bot_http_client,
-            bot_timeout_seconds=bot_timeout_seconds,
+            recipe_index=recipe_index,
         )
-        await _handle_row(state, row)
+        record = RecordUsageActivities(db_pool=pool)
+        mark_done = MarkActivities(db_pool=pool)
+        mark_failed = MarkFailedActivities(db_pool=pool)
+
+        env = ActivityEnvironment()
+
+        # ---- Step 1: readiness gate ----
+        ready = await env.run(readiness.check_container_ready, inp)
+        if not ready:
+            await env.run(
+                mark_failed.mark_message_failed,
+                (inp.message_id, "container_not_ready"),
+            )
+            return
+
+        # ---- Step 2: forward to agent (the bot HTTP call) ----
+        try:
+            forward_result = await env.run(forward.forward_to_agent, inp)
+        except ApplicationError as e:
+            error_type = getattr(e, "type", None) or (
+                str(e.args[0]) if e.args else "internal_error"
+            )
+            await env.run(
+                mark_failed.mark_message_failed,
+                (inp.message_id, error_type),
+            )
+            return
+
+        if not forward_result.reply or not forward_result.reply.strip():
+            await env.run(
+                mark_failed.mark_message_failed,
+                (inp.message_id, "bot_empty"),
+            )
+            return
+
+        # ---- Step 3a: record_usage (best-effort, matches workflow D-15) ----
+        try:
+            await env.run(record.record_usage, forward_result.usage_input)
+        except Exception:  # noqa: BLE001 — best-effort per workflow contract
+            pass
+
+        # ---- Step 3c: emit_inapp_outbound (best-effort, no-op activity) ----
+        # Skip Step 3b (debit_balance) — D-22 no-op stub, not load-bearing
+        # for the e2e gate.
+        try:
+            await env.run(emit_inapp_outbound_fn, forward_result.event_input)
+        except Exception:  # noqa: BLE001 — best-effort per workflow contract
+            pass
+
+        # ---- Step 3d: mark_message_done (load-bearing, D-10) ----
+        # Failure here propagates: a stuck-forwarded row breaks the
+        # gate's status='done' assertion, which is the right surface for
+        # an operator to investigate.
+        await env.run(mark_done.mark_message_done, forward_result.mark_done_input)
 
 
 __all__ = [

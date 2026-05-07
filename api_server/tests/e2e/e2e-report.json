@@ -1,12 +1,12 @@
 {
-  "passed": true,
+  "passed": false,
   "recipes": [
     {
       "recipe": "hermes",
       "contract": "openai_compat",
       "status": "PASS",
-      "latency_ms": 17981,
-      "bot_response_excerpt": "I'm Hermes, a persistent AI assistant with long-term memory, browser access, coding tools, and automation capabilities \u2014 your technical Swiss Army knife that remembers across sessions.",
+      "latency_ms": 12267,
+      "bot_response_excerpt": "I'm Hermes Agent, an AI assistant from Nous Research that helps you with tasks ranging from coding and analysis to web interaction and complex automation.",
       "container_ip": "127.0.0.1",
       "endpoint": "/v1/chat/completions",
       "port": 8642
@@ -15,8 +15,8 @@
       "recipe": "nanobot",
       "contract": "openai_compat",
       "status": "PASS",
-      "latency_ms": 11966,
-      "bot_response_excerpt": "I'm nanobot \ud83d\udc08, a personal AI assistant that solves problems by doing, not describing.",
+      "latency_ms": 18391,
+      "bot_response_excerpt": "Error calling LLM: Connection error.",
       "container_ip": "127.0.0.1",
       "endpoint": "/v1/chat/completions",
       "port": 8900
@@ -24,19 +24,16 @@
     {
       "recipe": "openclaw",
       "contract": "openai_compat",
-      "status": "PASS",
-      "latency_ms": 69047,
-      "bot_response_excerpt": "LLM request rejected: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
-      "container_ip": "127.0.0.1",
-      "endpoint": "/v1/chat/completions",
-      "port": 18789
+      "status": "FAIL",
+      "error": "AssertionError('start failed for openclaw: 502 {\"error\":{\"type\":\"infra_error\",\"code\":\"INFRA_UNAVAILABLE\",\"category\":\"TIMEOUT\",\"message\":\"container failed to reach ready: ready_log_regex not matched within 240s\",\"param\":null,\"request_id\":\"d1999f25b8a0400f80dcc06e899aa9b1\"}}\\nassert 502 == 200\\n +  where 502 = <Response [502 Bad Gateway]>.status_code')",
+      "latency_ms": 243865
     },
     {
       "recipe": "nullclaw",
       "contract": "a2a_jsonrpc",
       "status": "PASS",
-      "latency_ms": 33528,
-      "bot_response_excerpt": "I'm Claude, an AI assistant here to help you think, build, and get things done.",
+      "latency_ms": 19557,
+      "bot_response_excerpt": "I'm a fresh AI assistant in this workspace, still figuring out who I am.\n\n(The identity file is empty, so I'm in that first-conversation mode from BOOTSTRAP.md\u2014ready to figure out my name, vibe, and w",
       "container_ip": "127.0.0.1",
       "endpoint": "/a2a",
       "port": 3000
@@ -45,12 +42,18 @@
       "recipe": "zeroclaw",
       "contract": "zeroclaw_native",
       "status": "PASS",
-      "latency_ms": 7992,
-      "bot_response_excerpt": "I'm ZeroClaw, a Rust-built AI assistant who gets things done without the corporate fluff. \ud83e\udd80",
+      "latency_ms": 6779,
+      "bot_response_excerpt": "I'm ZeroClaw, an autonomous AI agent designed to help you with tasks, information, and problem-solving.",
       "container_ip": "127.0.0.1",
       "endpoint": "/webhook",
       "port": 42617
     }
   ],
-  "failures": []
+  "failures": [
+    {
+      "recipe": "openclaw",
+      "contract": "openai_compat",
+      "error": "AssertionError('start failed for openclaw: 502 {\"error\":{\"type\":\"infra_error\",\"code\":\"INFRA_UNAVAILABLE\",\"category\":\"TIMEOUT\",\"message\":\"container failed to reach ready: ready_log_regex not matched within 240s\",\"param\":null,\"request_id\":\"d1999f25b8a0400f80dcc06e899aa9b1\"}}\\nassert 502 == 200\\n +  where 502 = <Response [502 Bad Gateway]>.status_code')"
+    }
+  ]
 }
