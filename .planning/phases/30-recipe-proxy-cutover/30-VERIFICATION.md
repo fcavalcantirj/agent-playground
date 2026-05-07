@@ -1,27 +1,23 @@
 # Phase 30 — Verification Report
 
-**Status:** PHASE-30-EXIT-GATE-PASSED (with documented partials)
-**Date:** 2026-05-07
-**Final commits:** 6995546 (hermes), e4f01a8 (zeroclaw), b166c01 (picoclaw), 31b2c70 (nullclaw), 2310d60 (openclaw), Phase 29 nanobot prior
+**Status:** PHASE-30-EXIT-GATE-PASSED
+**Date:** 2026-05-07 (openclaw closed via post-30 followup `e44f1c2` later same day)
+**Final commits:** 6995546 (hermes), e4f01a8 (zeroclaw), b166c01 (picoclaw), 31b2c70 (nullclaw), 2310d60 (openclaw flip) + e44f1c2 (openclaw boot/proxy fixes), Phase 29 nanobot prior
 
 ## Summary
 
 All 6 recipes (nanobot, openclaw, nullclaw, picoclaw, zeroclaw, hermes) carry
 `runtime.via_proxy: true`. 5 of 6 have empirical live-stack usage_logs evidence
-(real OpenRouter / Anthropic request IDs, real cost). picoclaw's e2e cell was
+with real upstream request IDs and real cost. picoclaw's e2e cell was
 explicitly DEFERRED on 2026-04-30 per Phase 22c.3 user direction (no
 channels.inapp block) — picoclaw ships at the YAML invariant layer only.
-openclaw's deploy-stack live smoke is BLOCKED on a pre-existing recipe-level
-boot timeout (240s `ready_log_regex` miss); the cutover itself (YAML flip,
-BYOK custody, regression-guard test, Plan 30-01 anthropic SSE PROBE-VAL spike
-end-to-end against real Anthropic) is verified.
 
 ## Acceptance Gates
 
 | Gate | Recipe | YAML `via_proxy:true` | Live-stack smoke | usage_logs row | Real-money cost | Notes |
 |------|--------|----------------------|------------------|----------------|-----------------|-------|
 | G1 | **nanobot** | ✅ | ✅ (Phase 29 prod) | ✅ multiple | (Phase 29 prior) | Phase 29 cutover; regression PASS post-30-00 |
-| G2 | **openclaw** | ✅ | ⚠ deferred | n/a | $0.000056 (PROBE-VAL spike only) | Live deploy blocked on pre-existing 240s boot timeout (recipe-level, not introduced by flip). Plan 30-01 anthropic SSE proxy parser validated end-to-end against real Anthropic upstream. BYOK custody empirically verified at row level. |
+| G2 | **openclaw** | ✅ | ✅ (post-30 fix `e44f1c2`) | ✅ `req_011CaoXVkMBnUgkjcSMS44N4` | $0.02964 | Boot-timeout fixed (ready_log_regex updated for openclaw 2026.5.4); models.providers.anthropic config block added (the load-bearing knob; ANTHROPIC_BASE_URL env not honored by openclaw plugin); proxy auth extended to also accept `x-api-key` (Anthropic SDK convention). Real Anthropic request ID. |
 | G3 | **nullclaw** | ✅ | ✅ | ✅ `gen-1778126207-ImnQ8JyhtVQ5FsS` + `gen-1778126210-9m1D9yrhhImYTFz` | $0.02832 | `custom:URL` provider escape hatch (D-30-DEF-03 retracted) |
 | G4 | **picoclaw** | ✅ | ⚠ DEFERRED | n/a | $0 | Static-YAML invariant only per Phase 22c.3 user direction 2026-04-30 (no channels.inapp block) |
 | G5 | **zeroclaw** | ✅ | ✅ | ✅ `gen-1778127299-jaAL6gsuyrHY6Ep` | $0.01291 | `custom:URL` provider escape hatch + AP_PROXY_BASE_URL substitution dict extension |
@@ -94,7 +90,7 @@ cell deploys it.
 ## Phase-Exit Checklist
 
 - [x] All 6 recipes have `runtime.via_proxy: true` (static YAML invariant; 24/24 regression tests PASS in `tests/recipes/`)
-- [x] 4 of 5 e2e-harness-covered recipes verified via deploy-stack live smoke with real upstream cost (nullclaw, zeroclaw, hermes; nanobot was Phase 29). openclaw deferred on a pre-existing recipe-level boot timeout — flip itself is verified at the BYOK + Plan 30-01 anthropic-SSE-spike layers.
+- [x] 5 of 5 e2e-harness-covered recipes verified via deploy-stack live smoke with real upstream cost (nullclaw, zeroclaw, hermes, openclaw; nanobot was Phase 29). openclaw closed via post-30 followup `e44f1c2`: ready_log_regex updated for openclaw 2026.5.4, models.providers.anthropic config block added (the load-bearing knob — ANTHROPIC_BASE_URL env not honored), proxy auth extended to read `x-api-key` (Anthropic SDK convention).
 - [x] picoclaw e2e harness cell formally DEFERRED (not regressed) per Phase 22c.3 user direction
 - [x] `test_phase30_via_proxy_invariant.py` PASS (covers all 6 statically)
 - [x] Phase 29 Gate 07 retired with replacement-coverage pointer

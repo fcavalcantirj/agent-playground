@@ -655,7 +655,7 @@ Plans:
 - [x] 30-06-PLAN.md — hermes flip via OPENROUTER_BASE_URL env injection in activation_env (no heredoc) (SHIPPED 2026-05-07; commit 6995546; live smoke 1 chat completion through proxy, $0.01302 cost, real `gen-1778127435-...` ID)
 - [x] 30-07-PLAN.md — cutover verification + regression-guard rewrite + 30-VERIFICATION.md + ROADMAP update (D-08) (SHIPPED 2026-05-07)
 
-**Status:** SHIPPED 2026-05-07 (PHASE-30-EXIT-GATE-PASSED). All 6 recipes carry `runtime.via_proxy: true`; 4 of 5 e2e-covered recipes verified via deploy-stack live smoke with real upstream cost ($0.05432 cumulative, well under $0.10 ceiling). openclaw live smoke deferred on a pre-existing recipe-level boot timeout (240s `ready_log_regex` miss); the cutover itself is verified at the BYOK custody + Plan 30-01 PROBE-VAL spike layer. picoclaw e2e cell formally DEFERRED per Phase 22c.3 user direction 2026-04-30. See 30-VERIFICATION.md for the full per-recipe acceptance gate report.
+**Status:** SHIPPED 2026-05-07 (PHASE-30-EXIT-GATE-PASSED). All 6 recipes carry `runtime.via_proxy: true`; **all 5** e2e-covered recipes verified via deploy-stack live smoke with real upstream cost ($0.0840 cumulative including the post-30 openclaw closure, well under $0.10 ceiling). openclaw closed via post-30 followup commit `e44f1c2` (ready_log_regex updated for openclaw 2026.5.4, `models.providers.anthropic` config block added, proxy auth extended to also read `x-api-key`). picoclaw e2e cell formally DEFERRED per Phase 22c.3 user direction 2026-04-30 (no channels.inapp block). See 30-VERIFICATION.md for the full per-recipe acceptance gate report.
 
 ## Backlog
 
