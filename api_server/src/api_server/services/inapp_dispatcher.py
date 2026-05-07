@@ -46,11 +46,14 @@ messages, does NOT manipulate context. The bot owns its memory.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 import asyncpg
 import httpx
+import websockets
+import websockets.exceptions
 
 from .inapp_recipe_index import InappChannelConfig
 
@@ -334,6 +337,160 @@ async def _dispatch_http_localhost(
             raise RuntimeError(f"unknown_contract:{other}")
 
 
+# ---------------------------------------------------------------------------
+# Adapter — _dispatch_websocket_chat
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_websocket_chat(
+    row: Any,
+    inapp: InappChannelConfig,
+    container_ip: str,
+    *,
+    timeout_seconds: float = BOT_TIMEOUT_SECONDS,
+) -> tuple[str, dict | None]:
+    """Forward one message to the bot over a WebSocket. Returns ``(text, None)``.
+
+    WebSocket sibling of :func:`_dispatch_http_localhost`. Activated when
+    a recipe declares ``channels.inapp.transport: websocket_chat``.
+    Currently supports a single contract — ``pico_native`` (sipeed/picoclaw)
+    — but the ``match inapp.contract:`` shape mirrors the HTTP dispatcher
+    so a future ``aionui_bridge`` arm is a single ``case`` extension.
+
+    Pico Protocol notes (cross-checked against pkg/channels/pico/ in
+    upstream picoclaw):
+
+    * Connections are keyed by ``?session_id=<sid>`` URL query param at
+      handshake — NOT by the ``session_id`` field in the ``message.send``
+      envelope. Without the URL param, the server assigns a fresh UUID
+      and the agent's outbound reply finds no connection
+      (``"no active connections for session ..."``).
+    * Auth: ``Authorization: Bearer <token>`` header (recipe sets
+      ``auth_mode: bearer`` and the dispatcher pulls
+      ``inapp_auth_token`` off the row).
+    * Send envelope: ``{type:"message.send", session_id, payload:{content}}``.
+    * Server-side stream: ``typing.start`` → ``typing.stop`` →
+      ``message.create`` events. Intermediate ``message.create`` events
+      with ``payload.kind in {"thought", "tool_calls"}`` (or the legacy
+      ``payload.thought == True`` boolean marker) are reasoning / tool
+      steps and MUST be skipped. The terminal assistant reply is the
+      ``message.create`` whose payload has no ``kind`` (None / absent)
+      AND non-empty ``content``.
+
+    Returns ``(reply_text, None)`` — the ``pico_native`` contract carries
+    no upstream-LLM usage block. Phase 27 cost capture for picoclaw
+    happens at the proxy layer (the recipe routes through
+    ``${AP_PROXY_BASE_URL}`` and the proxy writes ``usage_logs`` from
+    the upstream OpenRouter response).
+
+    Raises (mapped to the activity's existing 4-bucket exception
+    taxonomy in ``forward_to_agent`` so no activity changes are needed
+    for transport-error handling):
+
+    * ``httpx.ConnectError`` — TCP / handshake failure (retryable per
+      CONTEXT D-11; final attempt converts to ``bot_timeout``).
+    * ``httpx.ReadTimeout`` — overall ``timeout_seconds`` exceeded
+      (retryable; final attempt converts to ``bot_timeout``).
+    * ``RuntimeError("bot_5xx:<code>")`` — WS handshake rejected with
+      an HTTP status code (auth fail = 401, etc.); terminal, mapped to
+      ``bot_5xx`` by the activity's leading-colon-prefix rule.
+    * ``RuntimeError("pico_*")`` — protocol-level failure
+      (parse error, premature ``ConnectionClosed``, no terminal event);
+      terminal, mapped to ``internal`` by ``_truncate_error_type``.
+    * ``RuntimeError("unknown_contract:<value>")`` — caller passed a
+      transport+contract pair the WS dispatcher does not know.
+    """
+    sid = f"inapp:{row['user_id']}:{row['agent_id']}"
+
+    match inapp.contract:
+        case "pico_native":
+            url = (
+                f"ws://{container_ip}:{inapp.port}{inapp.endpoint}"
+                f"?session_id={sid}"
+            )
+            extra_headers: list[tuple[str, str]] = []
+            if inapp.auth_mode == "bearer":
+                token = _row_get(row, "inapp_auth_token")
+                if token:
+                    extra_headers.append(("Authorization", f"Bearer {token}"))
+            send_envelope = {
+                "type": "message.send",
+                "session_id": sid,
+                "payload": {"content": row["content"]},
+            }
+            try:
+                async with asyncio.timeout(timeout_seconds):
+                    try:
+                        ws = await websockets.connect(
+                            url, additional_headers=extra_headers
+                        )
+                    except websockets.exceptions.InvalidStatus as e:
+                        # The server returned a non-101 to the upgrade.
+                        # `e.response.status_code` is the HTTP code (401
+                        # for auth failure, 503 for "channel not running",
+                        # etc.). Mirror httpx's HTTPStatusError shape via
+                        # the leading-colon-prefix RuntimeError so the
+                        # activity converts to bot_5xx.
+                        code = getattr(getattr(e, "response", None), "status_code", 0)
+                        raise RuntimeError(f"bot_5xx:{code}") from e
+                    except (OSError, websockets.exceptions.WebSocketException) as e:
+                        # TCP refused, DNS failure, or handshake protocol
+                        # error before we got a structured InvalidStatus.
+                        # Treat as a transport error so the activity's
+                        # [0,1,2,4]s retry budget gets to apply.
+                        raise httpx.ConnectError(f"pico_ws_connect:{e}") from e
+
+                    async with ws:
+                        await ws.send(json.dumps(send_envelope))
+                        while True:
+                            try:
+                                raw = await ws.recv()
+                            except websockets.exceptions.ConnectionClosed as e:
+                                raise RuntimeError(
+                                    f"pico_ws_closed:{e.code}"
+                                ) from e
+                            try:
+                                msg = json.loads(raw)
+                            except (json.JSONDecodeError, TypeError) as e:
+                                raise RuntimeError(
+                                    f"pico_parse_error:{e}"
+                                ) from e
+                            if not isinstance(msg, dict):
+                                continue
+                            if msg.get("type") != "message.create":
+                                # typing.start / typing.stop / pong / etc.
+                                # are stream-noise for the unary wrapper.
+                                continue
+                            payload = msg.get("payload") or {}
+                            if not isinstance(payload, dict):
+                                continue
+                            kind = payload.get("kind")
+                            content = payload.get("content")
+                            # Intermediate reasoning / tool-call events
+                            # (mirrors `isThoughtPayload` in
+                            # pkg/channels/pico/protocol.go).
+                            if kind in ("thought", "tool_calls"):
+                                continue
+                            if payload.get("thought") is True:
+                                continue
+                            if not content:
+                                # `message.create` with empty content
+                                # (e.g. media-only) is not the terminal
+                                # text reply; keep listening.
+                                continue
+                            return str(content), None
+            except asyncio.TimeoutError as e:
+                # Overall budget exceeded waiting for terminal event.
+                # Mirror httpx.ReadTimeout so the activity's transient
+                # retry path applies.
+                raise httpx.ReadTimeout(
+                    f"pico_ws_read_timeout:{timeout_seconds}s"
+                ) from e
+
+        case other:
+            raise RuntimeError(f"unknown_contract:{other}")
+
+
 def _row_get(row: Any, key: str, default: Any = None) -> Any:
     """Safe getter for asyncpg.Record OR dict-like rows.
 
@@ -397,6 +554,7 @@ def _truncate_error_type(value: str) -> str:
 __all__ = [
     "BOT_TIMEOUT_SECONDS",
     "_dispatch_http_localhost",
+    "_dispatch_websocket_chat",
     "_row_get",
     "_KNOWN_ERROR_TYPES",
     "_truncate_error_type",

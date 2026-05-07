@@ -59,14 +59,19 @@ class InappChannelConfig:
 
     Fields:
 
-    * ``transport`` — only ``http_localhost`` is supported v1; D-06's
-      ``docker_exec_cli`` is informational future-work (Phase 24).
+    * ``transport`` — ``http_localhost`` (POST + JSON or SSE) or
+      ``websocket_chat`` (duplex WebSocket; picoclaw native shape).
+      D-06's ``docker_exec_cli`` is informational future-work (Phase 24).
     * ``port`` — bot's listening port inside the container (D-36 static).
-    * ``endpoint`` — request path (e.g. ``/v1/chat/completions``).
+    * ``endpoint`` — request path. For HTTP: ``/v1/chat/completions``,
+      ``/a2a``, ``/webhook``, ``/api/console/chat``. For WebSocket:
+      ``/pico/ws`` (picoclaw native).
     * ``contract`` — the dispatcher's adapter selector. One of
       ``openai_compat`` (hermes/nanobot/openclaw),
       ``a2a_jsonrpc`` (nullclaw native A2A),
-      ``zeroclaw_native`` (zeroclaw native /webhook).
+      ``zeroclaw_native`` (zeroclaw native /webhook),
+      ``agentscope_runtime`` (qwenpaw SSE),
+      ``pico_native`` (picoclaw WebSocket Pico Protocol).
     * ``contract_model_name`` — only used by ``openai_compat`` adapters
       that pin a specific model id (e.g. openclaw → ``"openclaw"``).
       ``None`` falls back to the literal ``"agent"``.
@@ -81,10 +86,16 @@ class InappChannelConfig:
       support them.
     """
 
-    transport: Literal["http_localhost"]
+    transport: Literal["http_localhost", "websocket_chat"]
     port: int
     endpoint: str
-    contract: Literal["openai_compat", "a2a_jsonrpc", "zeroclaw_native", "agentscope_runtime"]
+    contract: Literal[
+        "openai_compat",
+        "a2a_jsonrpc",
+        "zeroclaw_native",
+        "agentscope_runtime",
+        "pico_native",
+    ]
     contract_model_name: str | None = None
     request_envelope: dict | None = None
     response_envelope: dict | None = None
@@ -114,7 +125,17 @@ _VALID_CONTRACTS: set[str] = {
     # terminated by `status: "completed"`. Documented at
     # https://qwenpaw.agentscope.io/docs/api-tutorial.
     "agentscope_runtime",
+    # Post-Phase-30 — picoclaw native WebSocket Pico Protocol at
+    # `GET /pico/ws?session_id=<sid>` with Bearer auth. Send envelope
+    # `{type:"message.send", session_id, payload:{content}}`; receive
+    # loop until `message.create` with no `kind` and non-empty `content`
+    # (intermediate `kind=thought`/`kind=tool_calls` events skipped).
+    # Reference impl: pkg/channels/pico/{protocol.go,pico.go,client.go}
+    # in sipeed/picoclaw.
+    "pico_native",
 }
+
+_VALID_TRANSPORTS: set[str] = {"http_localhost", "websocket_chat"}
 
 
 def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
@@ -140,9 +161,10 @@ def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
         return None
 
     transport = str(inapp.get("transport") or "http_localhost")
-    if transport != "http_localhost":
+    if transport not in _VALID_TRANSPORTS:
         raise ValueError(
-            f"unsupported transport {transport!r} (only http_localhost is supported)"
+            f"channels.inapp.transport must be one of {sorted(_VALID_TRANSPORTS)}, "
+            f"got {transport!r}"
         )
     port = inapp.get("port")
     if not isinstance(port, int) or port <= 0:
@@ -179,7 +201,7 @@ def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
     provider = str(provider_raw) if provider_raw else None
 
     return InappChannelConfig(
-        transport="http_localhost",
+        transport=transport,  # type: ignore[arg-type]
         port=int(port),
         endpoint=str(endpoint),
         contract=contract,  # type: ignore[arg-type]

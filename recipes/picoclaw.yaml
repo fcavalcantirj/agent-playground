@@ -348,8 +348,113 @@ channels:
         category: PASS
         spike_artifact: ".planning/phases/22b-agent-event-stream/22b-SPIKES/spike-01b-picoclaw.md"
 
+  # ============================================================================
+  # IN-APP CHAT — Pico Protocol WebSocket (post-Phase-30 followup)
+  # ============================================================================
+  # Picoclaw exposes its native chat surface as a duplex WebSocket at
+  # GET /pico/ws on the gateway port (18790). Authenticated via Bearer
+  # token. This is the only first-party chat protocol picoclaw ships;
+  # there is no HTTP /v1/chat/completions equivalent in the upstream
+  # gateway, which is why picoclaw was static-YAML-only after Phase 30
+  # while the other 6 recipes were e2e-verified through proxy.
+  #
+  # Empirical findings from the 2026-05-07 spike (probe in-process via
+  # the `websockets` Python lib against a manually-launched container):
+  #
+  #   1. WS connections are keyed by the `?session_id=<sid>` URL query
+  #      param at handshake — NOT by the session_id field in the
+  #      message.send envelope. Without the URL param, picoclaw assigns
+  #      a server-generated UUID and the agent's outbound reply finds
+  #      no connection ("no active connections for session ..." → the
+  #      agent processes the message and the answer is lost).
+  #   2. Auth header `Authorization: Bearer <token>` works (also accepts
+  #      `Sec-WebSocket-Protocol: token.<value>` for browsers, and
+  #      `?token=<value>` query param when AllowTokenQuery=true; we use
+  #      Bearer because the dispatcher is a server, not a browser).
+  #   3. Send envelope:
+  #        {"type":"message.send","session_id":<sid>,"payload":{"content":<text>}}
+  #   4. Stream shape (one-word reply): typing.start → typing.stop →
+  #      message.create with kind=null + content=<text>. Intermediate
+  #      events with payload.kind in {"thought","tool_calls"} (or the
+  #      legacy boolean payload.thought=true) are reasoning/tool steps
+  #      to skip. The terminal assistant reply is the message.create
+  #      whose payload has no `kind` AND non-empty `content`.
+  #   5. Round-trip: ~3s wall through real OpenRouter for a haiku-4.5
+  #      one-word reply.
+  #
+  # Reference upstream sources (cross-checked at /tmp/picoclaw clone):
+  #   pkg/channels/pico/protocol.go (envelope shape + isThoughtPayload)
+  #   pkg/channels/pico/pico.go::authenticate (auth methods)
+  #   pkg/channels/pico/pico.go::handleWebSocket (session_id URL param)
+  #   pkg/channels/pico/client.go (terminal-event detection)
+  inapp:
+    transport: websocket_chat            # NEW: distinct from http_localhost
+    port: 18790                          # picoclaw gateway default
+    endpoint: /pico/ws                   # WebhookPath /pico/ + /ws subroute
+    contract: pico_native                # dispatcher's WebSocket contract arm
+    auth_mode: bearer                    # dispatcher pulls inapp_auth_token
+                                          # off the row and forwards as
+                                          # Authorization: Bearer (per
+                                          # _dispatch_websocket_chat).
+    auth_header: "Authorization: Bearer ${INAPP_AUTH_TOKEN}"
+    # Per-channel ready signal: the pico channel is up when this fires.
+    # The runner uses channel_ready_log instead of persistent.spec.ready_log_regex
+    # when the inapp channel is selected at deploy time (gate_open=True),
+    # so the gateway-level "Telegram bot connected username=" signal in
+    # persistent.spec is bypassed.
+    ready_log_regex: "INF pico [^\\s]*pico\\.go:\\d+ > Pico Protocol channel started"
+    response_routing: per_session        # 1:1 with the agent_instance
+    persistent_argv_override:
+      # When channel="inapp" is selected at deploy time, the runner SWAPS
+      # persistent.spec.argv (telegram-shaped, requires TELEGRAM_BOT_TOKEN)
+      # for this inapp-shaped heredoc — pico channel only, no telegram
+      # dependency. Same image, same gateway binary, just a different
+      # channel_list configuration written to ~/.picoclaw/config.json.
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+          mkdir -p /root/.picoclaw/workspace
+          cat > /root/.picoclaw/config.json <<EOF
+          {
+            "version": 3,
+            "agents": { "defaults": { "model_name": "openrouter-default", "workspace": "/root/.picoclaw/workspace" } },
+            "model_list": [{
+              "model_name": "openrouter-default",
+              "model": "${MODEL}",
+              "api_base": "${AP_PROXY_BASE_URL}"
+            }],
+            "channel_list": {
+              "pico": {
+                "enabled": true,
+                "type": "pico",
+                "settings": {
+                  "token": "${INAPP_AUTH_TOKEN}",
+                  "max_connections": 10
+                }
+              }
+            }
+          }
+          EOF
+          cat > /root/.picoclaw/.security.yml <<EOF
+          model_list:
+            openrouter-default:
+              api_keys:
+                - "${OPENROUTER_API_KEY}"
+          EOF
+          export PICOCLAW_GATEWAY_HOST=0.0.0.0
+          exec picoclaw gateway -d
+    activation_env:
+      # Runner injects ${INAPP_AUTH_TOKEN} as a per-session opaque bearer
+      # token at container start time + persists it to
+      # agent_containers.inapp_auth_token (consumed by the dispatcher's
+      # pico_native adapter when constructing the Authorization: Bearer
+      # header per the WS handshake).
+      INAPP_AUTH_TOKEN: "${INAPP_AUTH_TOKEN}"
+
   # Discord, Slack, WhatsApp, Matrix, Feishu, Line, QQ, OneBot, DingTalk,
-  # Wecom, Weixin, VK, MaixCam, Pico — picoclaw v3 channel_list exposes
+  # Wecom, Weixin, VK, MaixCam — picoclaw v3 channel_list exposes
   # all of these (empirically confirmed by its own migrated config). Each
   # has its own settings.* shape. NOT empirically validated yet — add
   # entries under `channels.<id>.verified_cells[]` only after round-trip PASS.

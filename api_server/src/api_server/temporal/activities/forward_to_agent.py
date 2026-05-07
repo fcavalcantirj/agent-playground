@@ -50,7 +50,10 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from ...services.inapp_dispatcher import _dispatch_http_localhost
+from ...services.inapp_dispatcher import (
+    _dispatch_http_localhost,
+    _dispatch_websocket_chat,
+)
 from ..workflows.types import ForwardResult
 
 
@@ -146,13 +149,27 @@ class ForwardActivities:
             if backoff_s > 0:
                 await asyncio.sleep(backoff_s)
             try:
-                reply, raw = await _dispatch_http_localhost(
-                    self.bot_http_client,
-                    row,
-                    inapp,
-                    container_ip,
-                    timeout_seconds=inp.bot_timeout_seconds,
-                )
+                # Pick the transport-specific dispatcher. Both raise the
+                # same exception family (httpx.ConnectError /
+                # httpx.ReadTimeout for transient errors, RuntimeError
+                # for terminal protocol/parse failures, RuntimeError
+                # "bot_5xx:<code>" for handshake-rejected upgrades) so
+                # the surrounding except arms below stay uniform.
+                if inapp.transport == "websocket_chat":
+                    reply, raw = await _dispatch_websocket_chat(
+                        row,
+                        inapp,
+                        container_ip,
+                        timeout_seconds=inp.bot_timeout_seconds,
+                    )
+                else:
+                    reply, raw = await _dispatch_http_localhost(
+                        self.bot_http_client,
+                        row,
+                        inapp,
+                        container_ip,
+                        timeout_seconds=inp.bot_timeout_seconds,
+                    )
             except (httpx.ConnectError, httpx.ReadTimeout) as e:
                 last_error = e
                 if retry_idx == 3:
