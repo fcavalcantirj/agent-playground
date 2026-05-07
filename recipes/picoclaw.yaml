@@ -37,6 +37,11 @@ build:
     --entrypoint to sh and running our own init+invoke script.
 
 runtime:
+  # LLM egress proxy. When via_proxy is true the runner injects
+  # AP_PROXY_BASE_URL + a placeholder OPENROUTER_API_KEY (ap-proxy-<token>).
+  # picoclaw's two config.json heredocs (one-shot @line 105 + persistent @line 213)
+  # sh-expand AP_PROXY_BASE_URL into model_list[0].api_base.
+  via_proxy: true
   provider: openrouter
   process_env:
     api_key: OPENROUTER_API_KEY
@@ -102,7 +107,7 @@ invoke:
               "model_name": "openrouter-default",
               "model": "$MODEL",
               "api_key": "${OPENROUTER_API_KEY}",
-              "api_base": "https://openrouter.ai/api/v1"
+              "api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
             }
           ]
         }
@@ -210,7 +215,7 @@ persistent:
           "model_list": [{
             "model_name": "openrouter-default",
             "model": "$MODEL",
-            "api_base": "https://openrouter.ai/api/v1"
+            "api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
           }],
           "channel_list": {
             "telegram": {

@@ -53,7 +53,7 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
 # Phase 30 flips the remaining 5 one PLAN at a time.
 # Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES = ["hermes", "zeroclaw", "picoclaw"]
+_OTHER_RECIPES = ["hermes", "zeroclaw"]
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
@@ -78,8 +78,8 @@ def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 3, (
-        f"expected exactly 3 recipes with via_proxy: true (nanobot + openclaw + nullclaw), got {flipped_count}"
+    assert flipped_count == 4, (
+        f"expected exactly 4 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw), got {flipped_count}"
     )
 
 
@@ -238,4 +238,39 @@ def test_nullclaw_legacy_path_still_works() -> None:
         "nullclaw legacy fallback — PROVIDER_KEY must default to 'openrouter' "
         "when AP_PROXY_BASE_URL is empty so the recipe still works without "
         "the runner injecting a proxy URL"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-04 — picoclaw flipped to via_proxy: true
+# ---------------------------------------------------------------------------
+
+
+def test_picoclaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-04 cutover invariant — picoclaw flipped to the proxy."""
+    recipe = _load("picoclaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-04 cutover invariant — picoclaw runtime.via_proxy must be true"
+    )
+
+
+def test_picoclaw_api_base_uses_proxy_url_default_form_in_both_heredocs() -> None:
+    """picoclaw has TWO config.json heredocs (one-shot invoke + persistent
+    gateway daemon). Both must substitute api_base via the AMD-09
+    sh-default form so via_proxy=true uses the runner-injected
+    AP_PROXY_BASE_URL and via_proxy=false falls back to the upstream URL.
+    Mirrors the nanobot two-heredoc pattern."""
+    text = (RECIPES_DIR / "picoclaw.yaml").read_text()
+    pattern = '"api_base": "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"'
+    occurrences = text.count(pattern)
+    assert occurrences == 2, (
+        f"expected exactly 2 sh-default api_base substitutions in "
+        f"picoclaw.yaml (one-shot heredoc @line 105 + persistent heredoc "
+        f"@line 213), got {occurrences}"
+    )
+    # Defense-in-depth — the bare upstream literal MUST NOT appear inside
+    # an api_base assignment anywhere (comments are fine).
+    assert '"api_base": "https://openrouter.ai/api/v1"' not in text, (
+        "the literal upstream URL leaked back into picoclaw.yaml — "
+        "should be sh-defaulted via AP_PROXY_BASE_URL"
     )
