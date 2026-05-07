@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-07T01:23:02.664Z"
-last_activity: 2026-05-07 -- Phase 30 planning complete
+last_updated: "2026-05-07T01:49:31.308Z"
+last_activity: 2026-05-07
 progress:
   total_phases: 19
   completed_phases: 5
@@ -14,9 +14,32 @@ progress:
   percent: 100
 ---
 
-## Resume after /clear (2026-05-05)
+## Resume after /clear (2026-05-07)
 
-**Current state:** Phase 28 fully planned, ready to execute. 9 plans across 8 waves committed at `06c802d` + `1bb831e` (D-08 user-id revision).
+**Current state:** Phase 30 EXECUTING — Plan 30-00 SHIPPED 2026-05-07 (commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa). Provider-gated OpenRouter inline-cost path live in api_server proxy. 7 plans remaining (30-01..30-07). Live e2e gate (`make e2e-inapp-docker`) deferred to a Phase 28 follow-up — D-30-DEF-01 in `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` (helpers.py imports deleted `_handle_row` from inapp_dispatcher).
+
+**Read in this order after /clear:**
+
+1. `memory/MEMORY.md` (auto-loaded — index of every memory file)
+2. `.planning/phases/30-recipe-proxy-cutover/30-00-SUMMARY.md` — Plan 30-00 ship report (D-09 inline cost path)
+3. `.planning/phases/30-recipe-proxy-cutover/30-CONTEXT.md` — locked decisions D-01..D-12 + verification_evidence
+4. `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` — D-30-DEF-01 (e2e harness rot, Phase 28 follow-up scope)
+5. `.planning/phases/30-recipe-proxy-cutover/30-{01..07}-PLAN.md` — remaining plans
+6. `git log --oneline -10` — confirm HEAD at `3a3e6aa` (Plan 30-00 chore commit) or later
+
+**Next command:**
+
+```
+/gsd-execute-phase 30 --auto
+```
+
+(Plan 30-01 is a real-money <$0.01 spike — checkpoint-gated.)
+
+---
+
+## Historical resume banner (Phase 28 — superseded)
+
+**Earlier state (2026-05-05):** Phase 28 fully planned, ready to execute. 9 plans across 8 waves committed at `06c802d` + `1bb831e` (D-08 user-id revision).
 
 **Read in this order after /clear:**
 
@@ -51,14 +74,14 @@ Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring M
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 29 — llm-egress-proxy
+**Current focus:** Phase 30 — recipe-proxy-cutover
 
 ## Current Position
 
-Phase: 29 (llm-egress-proxy) — EXECUTING
-Plan: 29-04 + 29-05 + 29-06 SHIPPED (Wave 2 COMPLETE — proxy core + BYOK custody + Anthropic-native usage parser all live)
+Phase: 30 (recipe-proxy-cutover) — EXECUTING
+Plan: 2 of 8
 Status: Ready to execute
-Last activity: 2026-05-07 -- Phase 30 planning complete
+Last activity: 2026-05-07
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
@@ -451,6 +474,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 22c.3-11 | ~25min | 1 task | 1 file |
 | Phase 22c.3-inapp-chat-channel P13 | 25 | 1 tasks | 1 files |
 | Phase 22c.3-inapp-chat-channel P14 | 5min | 2 tasks | 1 file |
+| Phase 30 P00 | 12 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -573,7 +597,8 @@ fec45dd feat(01-03): auth-gated landing page + dev login + dashboard shell
 
 ### Blockers/Concerns
 
-- **None blocking Phase 02.** Spike 4 result is needed for Phase 8 architecture decision but does NOT block Phase 02 (Recipes & Sandbox). Phase 02 can proceed assuming gVisor works; if it later fails, Phase 8 plans get adjusted.
+- **blocking Phase 02.** Spike 4 result is needed for Phase 8 architecture decision but does NOT block Phase 02 (Recipes & Sandbox). Phase 02 can proceed assuming gVisor works; if it later fails, Phase 8 plans get adjusted.
+- D-30-DEF-01: e2e harness _handle_row import broken since Phase 28 (deferred to Phase 28 follow-up)
 
 ## Local Dev Stack — How to Bring It Back Up
 
@@ -613,7 +638,7 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-05T20:06:04.986Z
+Last session: 2026-05-07T01:49:23.435Z
 
 Stopped at: context exhaustion at 90% (2026-05-05)
 

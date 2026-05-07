@@ -645,7 +645,7 @@ Plans:
 **Plans:** 8 plans
 
 Plans:
-- [ ] 30-00-PLAN.md — proxy reads OpenRouter inline cost (D-09); ParsedUsage + parsers extended; 7 new tests + nanobot regression sweep
+- [x] 30-00-PLAN.md — proxy reads OpenRouter inline cost (D-09); ParsedUsage + parsers extended; 8 new tests (4 unit + 4 integration) + 64/64 PASS regression sweep (SHIPPED 2026-05-07; commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa; live e2e gate via `make e2e-inapp-docker` deferred to Phase 28 follow-up — D-30-DEF-01 in deferred-items.md)
 - [ ] 30-01-PLAN.md — PROBE-VAL-ANTHROPIC spike (D-04); real-money <$0.01 streaming validation of proxy anthropic SSE branch
 - [ ] 30-02-PLAN.md — openclaw flip + e2e (D-03); one-line via_proxy:true; ANTHROPIC_BASE_URL env injection (no heredoc)
 - [ ] 30-03-PLAN.md — nullclaw flip + e2e (D-06); mechanical heredoc edit at line 468 (1 substitution)
@@ -654,7 +654,7 @@ Plans:
 - [ ] 30-06-PLAN.md — hermes flip + e2e (D-06); Wave 0 inspection (.env override Pitfall 5); checkpoint-gated
 - [ ] 30-07-PLAN.md — cutover verification + regression-guard rewrite (D-08); 30-VERIFICATION.md; ROADMAP update
 
-**Status:** PLANNED 2026-05-06; resume with /gsd-execute-phase 30
+**Status:** EXECUTING (1/8 plans shipped) — Plan 30-00 SHIPPED 2026-05-07; resume with /gsd-execute-phase 30
 
 ## Backlog
 
