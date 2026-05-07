@@ -1,0 +1,5 @@
+# Phase 30 real-money cost budget log
+# format: <plan>-<task-id>: $<value> at <UTC timestamp>
+# Total budget for Phase 30 ~$0.06; alert if cumulative exceeds $0.10
+
+30-00-nanobot-regression: $0.00 at 2026-05-07T01:42Z (e2e harness broken pre-existing — see deferred-items.md D-30-DEF-01; no upstream call made; verification deferred to Phase 28 follow-up)
