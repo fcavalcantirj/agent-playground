@@ -40,6 +40,7 @@ import asyncpg
 import httpx
 import pytest
 import respx
+from decimal import Decimal
 from httpx import ASGITransport, AsyncClient
 
 
@@ -727,4 +728,327 @@ async def test_byok_redaction_in_error_log(
     assert "<REDACTED>" in log_text, (
         "Expected ``<REDACTED>`` marker in log output; redaction helper "
         "was not invoked or logger was silent"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-00 — D-09 provider-gated inline cost path
+# ---------------------------------------------------------------------------
+#
+# 4 tests pin the structural + empirical invariants of the provider-gated
+# branch in routes/llm_proxy.py::_record_usage_from_parsed:
+#
+#   * Test 1 (openrouter+inline): inline_cost_usd persisted directly.
+#   * Test 2 (openrouter+missing-inline): cost_weights fallback fires.
+#   * Test 3 (anthropic+phantom-inline): D-10 — gate blocks anthropic.
+#   * Test 4 (openai-direct+phantom-inline): Pitfall 1 exclusivity gate.
+#
+# Tests 3+4 inject phantom ``cost`` fields to PROVE the gate is
+# ``provider == "openrouter"`` literally (not a substring match, not a
+# loose ``in`` check). If the gate ever weakens to ``provider in (...)``,
+# Test 4 catches it.
+
+
+@respx.mock
+async def test_d09_inline_cost_persisted(
+    async_client: AsyncClient, db_pool: asyncpg.Pool,
+) -> None:
+    """OpenRouter SSE with usage.cost → usage_logs.cost_usd matches inline,
+    NOT the cost_weights computation.
+
+    Seed: 100 prompt + 50 completion at 0.00042 inline cost. cost_weights
+    for openai/gpt-4o-mini would compute (100 * 0.15 + 50 * 0.6) / 1e6
+    = $0.000045. Test asserts cost_usd == 0.00042 (inline) NOT 0.000045
+    (cost_weights). Decimal precision matches numeric(14,8).
+    """
+    user_id, agent_id = await _setup_app_for_proxy_test(async_client, db_pool)
+    app = async_client._app  # type: ignore[attr-defined]
+
+    sse_chunks = (
+        b'data: {"id":"gen-d09-inline","choices":[{"delta":{"content":"hi"}}]}\n\n'
+        b'data: {"id":"gen-d09-inline","choices":[],'
+        b'"usage":{"prompt_tokens":100,"completion_tokens":50,"cost":0.00042}}\n\n'
+        b'data: [DONE]\n\n'
+    )
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_chunks,
+            headers={
+                "content-type": "text/event-stream",
+                "X-Generation-Id": "gen-d09-inline",
+            },
+        )
+    )
+
+    proxy_client = _build_proxy_client(app, "172.18.0.42")
+    async with proxy_client:
+        resp = await proxy_client.post(
+            "/v1/llm/forward/chat/completions",
+            headers={
+                "Authorization": "Bearer ap-proxy-test-token-32hex",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openai/gpt-4o-mini",
+                "messages": [],
+                "stream": True,
+            },
+        )
+        _ = resp.content
+    assert resp.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cost_usd, input_tokens, output_tokens, status, provider "
+            "FROM usage_logs WHERE user_id=$1 AND agent_instance_id=$2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            user_id, agent_id,
+        )
+    assert row is not None, "no usage_logs row inserted"
+    assert row["status"] == "success"
+    assert row["provider"] == "openrouter"
+    assert row["input_tokens"] == 100
+    assert row["output_tokens"] == 50
+    # D-09 invariant — cost_usd MUST equal inline cost, NOT cost_weights.
+    assert row["cost_usd"] == Decimal("0.00042000"), (
+        f"D-09: cost_usd should be inline 0.00042, got {row['cost_usd']!r}. "
+        f"If this is ~0.000045 the route fell through to cost_weights "
+        f"despite inline_cost_usd being present — the provider-gate "
+        f"branch is wrong."
+    )
+
+
+@respx.mock
+async def test_d09_no_inline_falls_back_to_cost_weights(
+    async_client: AsyncClient, db_pool: asyncpg.Pool,
+) -> None:
+    """OpenRouter SSE WITHOUT usage.cost → cost_weights fallback fires.
+
+    Seed: 100 prompt + 50 completion, NO cost field. Expected cost_weights
+    computation for openrouter/openai/gpt-4o-mini ($0.15 input / $0.60
+    output per 1M, multiplier 1.0): (100 * 0.15 + 50 * 0.60) / 1_000_000
+    = (15 + 30) / 1_000_000 = $0.000045 exact.
+    """
+    user_id, agent_id = await _setup_app_for_proxy_test(async_client, db_pool)
+    app = async_client._app  # type: ignore[attr-defined]
+
+    sse_chunks = (
+        b'data: {"id":"gen-d09-no-inline","choices":[{"delta":{"content":"hi"}}]}\n\n'
+        b'data: {"id":"gen-d09-no-inline","choices":[],'
+        b'"usage":{"prompt_tokens":100,"completion_tokens":50}}\n\n'
+        b'data: [DONE]\n\n'
+    )
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_chunks,
+            headers={
+                "content-type": "text/event-stream",
+                "X-Generation-Id": "gen-d09-no-inline",
+            },
+        )
+    )
+
+    proxy_client = _build_proxy_client(app, "172.18.0.42")
+    async with proxy_client:
+        resp = await proxy_client.post(
+            "/v1/llm/forward/chat/completions",
+            headers={
+                "Authorization": "Bearer ap-proxy-test-token-32hex",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openai/gpt-4o-mini",
+                "messages": [],
+                "stream": True,
+            },
+        )
+        _ = resp.content
+    assert resp.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cost_usd, input_tokens, output_tokens, status, provider "
+            "FROM usage_logs WHERE user_id=$1 AND agent_instance_id=$2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            user_id, agent_id,
+        )
+    assert row is not None
+    assert row["status"] == "success"
+    assert row["provider"] == "openrouter"
+    # cost_weights: (100 * 0.15 + 50 * 0.60) / 1e6 = $0.000045
+    assert row["cost_usd"] == Decimal("0.00004500"), (
+        f"D-09 fallback: with no inline cost, expected cost_weights = "
+        f"$0.000045, got {row['cost_usd']!r}. The fallback branch failed "
+        f"to fire — the inline-path may be incorrectly executing with "
+        f"None inline_cost_usd."
+    )
+
+
+@respx.mock
+async def test_d09_anthropic_does_not_use_inline_path(
+    async_client: AsyncClient, db_pool: asyncpg.Pool,
+) -> None:
+    """D-10 invariant: Anthropic provider MUST use cost_weights, NEVER inline.
+
+    Even if a hypothetical Anthropic response carried a ``cost`` field
+    (it never does in production — Anthropic doesn't return cost), the
+    gate ``provider == "openrouter"`` blocks the inline path. cost_weights
+    fires for anthropic/claude-haiku-4-5.
+
+    For Anthropic SSE, the parser path doesn't read usage.cost (only the
+    OpenAI branch does), so the natural state is inline_cost_usd=None
+    anyway — but this test pins the route-layer gate independently of
+    the parser. anthropic+message_start carries 100 input + final 50
+    output. cost_weights for anthropic/claude-haiku-4-5: $1/$5 per 1M
+    → (100 * 1 + 50 * 5) / 1e6 = $0.00035.
+    """
+    user_id, agent_id = await _setup_app_for_proxy_test(
+        async_client, db_pool, upstream_provider="anthropic",
+        byok_key="sk-ant-test-byok-key-anthropic-1234567890",
+    )
+    app = async_client._app  # type: ignore[attr-defined]
+
+    sse_chunks = (
+        b'event: message_start\n'
+        b'data: {"type":"message_start","message":{"id":"msg_d09_anthr",'
+        b'"usage":{"input_tokens":100,"output_tokens":1}}}\n\n'
+        b'event: message_delta\n'
+        b'data: {"type":"message_delta","usage":{"output_tokens":50}}\n\n'
+        b'event: message_stop\n'
+        b'data: {"type":"message_stop"}\n\n'
+    )
+    respx.post("https://api.anthropic.com/v1/messages").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_chunks,
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+    proxy_client = _build_proxy_client(app, "172.18.0.42")
+    async with proxy_client:
+        resp = await proxy_client.post(
+            "/v1/llm/forward/v1/messages",
+            headers={
+                "Authorization": "Bearer ap-proxy-test-token-32hex",
+                "Content-Type": "application/json",
+            },
+            json={
+                # cost_weights row is keyed (provider='anthropic', model='claude-haiku-4-5');
+                # the route layer uses body['model'] for the lookup, so send the bare
+                # name without the ``anthropic/`` prefix (which is the OpenRouter shape).
+                "model": "claude-haiku-4-5",
+                "messages": [],
+                "max_tokens": 50,
+                "stream": True,
+            },
+        )
+        _ = resp.content
+    assert resp.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cost_usd, input_tokens, output_tokens, status, provider "
+            "FROM usage_logs WHERE user_id=$1 AND agent_instance_id=$2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            user_id, agent_id,
+        )
+    assert row is not None
+    assert row["status"] == "success"
+    assert row["provider"] == "anthropic"
+    assert row["input_tokens"] == 100
+    assert row["output_tokens"] == 50
+    # cost_weights anthropic/claude-haiku-4-5: $1 input / $5 output per 1M
+    # → (100 * 1 + 50 * 5) / 1e6 = $0.00035 exact
+    assert row["cost_usd"] == Decimal("0.00035000"), (
+        f"D-10: anthropic must source cost from cost_weights, expected "
+        f"$0.00035, got {row['cost_usd']!r}. If non-zero != 0.00035, "
+        f"the provider-gate is leaking — the inline path may have fired "
+        f"despite provider != 'openrouter'."
+    )
+
+
+@respx.mock
+async def test_d09_openai_direct_does_not_use_inline_path(
+    async_client: AsyncClient, db_pool: asyncpg.Pool,
+) -> None:
+    """Pitfall 1 exclusivity gate: openai-direct provider MUST NOT consume
+    a phantom inline ``cost`` field.
+
+    OpenAI direct does NOT ship usage.cost in production. But if a future
+    schema does, AP must not silently consume it (different USD semantics
+    could shift cost_usd across the entire openai surface). This test
+    seeds a phantom cost=9.99 and asserts cost_weights still wins.
+
+    cost_weights for openai/gpt-4o-mini: $0.15 input / $0.60 output per 1M
+    → (30 * 0.15 + 15 * 0.60) / 1e6 = (4.5 + 9.0) / 1e6 = $0.0000135.
+    Test assert cost_usd == $0.0000135 (cost_weights), NOT $9.99 (phantom
+    inline). Empirically proves provider-gate exclusivity.
+    """
+    user_id, agent_id = await _setup_app_for_proxy_test(
+        async_client, db_pool, upstream_provider="openai",
+        byok_key="sk-openai-test-byok-key-1234567890",
+    )
+    app = async_client._app  # type: ignore[attr-defined]
+
+    # Phantom cost field — proves the gate blocks even when inline_cost_usd
+    # is populated by the parser (which it would be for any OpenAI-shape
+    # response that ships usage.cost).
+    sse_chunks = (
+        b'data: {"id":"gen-d09-openai","choices":[{"delta":{"content":"x"}}]}\n\n'
+        b'data: {"id":"gen-d09-openai","choices":[],'
+        b'"usage":{"prompt_tokens":30,"completion_tokens":15,"cost":9.99}}\n\n'
+        b'data: [DONE]\n\n'
+    )
+    respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_chunks,
+            headers={
+                "content-type": "text/event-stream",
+                "X-Generation-Id": "gen-d09-openai",
+            },
+        )
+    )
+
+    proxy_client = _build_proxy_client(app, "172.18.0.42")
+    async with proxy_client:
+        resp = await proxy_client.post(
+            "/v1/llm/forward/chat/completions",
+            headers={
+                "Authorization": "Bearer ap-proxy-test-token-32hex",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [],
+                "stream": True,
+            },
+        )
+        _ = resp.content
+    assert resp.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cost_usd, input_tokens, output_tokens, status, provider "
+            "FROM usage_logs WHERE user_id=$1 AND agent_instance_id=$2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            user_id, agent_id,
+        )
+    assert row is not None
+    assert row["status"] == "success"
+    assert row["provider"] == "openai"
+    assert row["input_tokens"] == 30
+    assert row["output_tokens"] == 15
+    # cost_weights openai/gpt-4o-mini: $0.15 input / $0.60 output per 1M
+    # → (30 * 0.15 + 15 * 0.60) / 1e6 = (4.5 + 9.0) / 1e6 = $0.0000135
+    assert row["cost_usd"] == Decimal("0.00001350"), (
+        f"Pitfall 1 exclusivity: openai-direct cost_usd must come from "
+        f"cost_weights ($0.0000135), NOT phantom inline (9.99). Got "
+        f"{row['cost_usd']!r}. If this is ~9.99, the provider-gate is "
+        f"matching too loosely (e.g. ``provider in (...)``); if this is "
+        f"0, the cost_weights fallback didn't fire and the gate is "
+        f"shorting both paths."
     )
