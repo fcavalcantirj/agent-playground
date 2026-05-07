@@ -46,6 +46,7 @@ messages, does NOT manipulate context. The bot owns its memory.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import asyncpg
@@ -191,6 +192,111 @@ async def _dispatch_http_localhost(
                 return data["result"]["artifacts"][0]["parts"][0]["text"], None
             except (KeyError, IndexError, TypeError) as e:
                 raise RuntimeError(f"a2a_parse_error:{e}") from e
+
+        case "agentscope_runtime":
+            # QwenPaw POST /api/console/chat — AgentScope Runtime SSE shape.
+            # Body uses `input[*].role/content[*].text` (NOT OpenAI's
+            # `messages[*].content`) and response is `data: {...}\n\n` SSE
+            # events terminated by `status: "completed"`. Documented at
+            # https://qwenpaw.agentscope.io/docs/api-tutorial.
+            #
+            # The X-Agent-Id header selects which QwenPaw agent to talk to;
+            # 'default' is the first/only agent on a fresh QwenPaw install
+            # (the recipe's bootstrap heredoc doesn't create extra agents).
+            agent_id_header = inapp.contract_model_name or "default"
+            body = {
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": row["content"]},
+                        ],
+                    },
+                ],
+                "session_id": f"inapp:{row['user_id']}:{row['agent_id']}",
+                "user_id": str(row["user_id"]),
+                "channel": "console",
+            }
+            sse_headers = {**headers, "X-Agent-Id": agent_id_header}
+            final_text: str | None = None
+            async with http_client.stream(
+                "POST",
+                url,
+                json=body,
+                headers=sse_headers,
+                timeout=timeout_seconds,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        event = json.loads(line[len("data: "):])
+                    except json.JSONDecodeError:
+                        continue
+                    status = event.get("status")
+                    obj = event.get("object")
+                    # AgentScope Runtime emits a tree of nested events:
+                    # `object: content` and `object: message` events fire
+                    # for intermediate streaming chunks AND tool-call
+                    # results, each with their own status transitions
+                    # (created → in_progress → completed). The OUTER
+                    # `object: response` event is the only one whose
+                    # `completed` status indicates the entire turn is
+                    # done with the final assistant text in `output`.
+                    # Filtering on `object == "response"` here is the
+                    # difference between exiting the SSE loop on the
+                    # first sub-event completion (wrong — output empty)
+                    # and waiting for the agent loop to finish (right).
+                    if obj != "response":
+                        continue
+                    if status == "failed":
+                        err = event.get("error") or {}
+                        msg = (
+                            err.get("message", "unknown")
+                            if isinstance(err, dict)
+                            else "unknown"
+                        )
+                        raise RuntimeError(
+                            f"agentscope_runtime_error:{msg}"
+                        )
+                    if status == "completed":
+                        # Concatenate every assistant text piece. QwenPaw
+                        # may emit multiple output messages for a single
+                        # turn (assistant + tool-result interleavings);
+                        # the inapp dispatcher only forwards the user-
+                        # facing assistant text.
+                        texts: list[str] = []
+                        for out_msg in event.get("output") or []:
+                            if not isinstance(out_msg, dict):
+                                continue
+                            if out_msg.get("role") != "assistant":
+                                continue
+                            for piece in out_msg.get("content") or []:
+                                if (
+                                    isinstance(piece, dict)
+                                    and piece.get("type") == "text"
+                                    and piece.get("text")
+                                ):
+                                    texts.append(str(piece["text"]))
+                        final_text = "".join(texts) if texts else None
+                        break
+            if not final_text:
+                # Stream ended without a `status: completed` event carrying
+                # assistant text. Mirror a2a_jsonrpc's parse-error shape so
+                # the activity converts to bot_invalid_response.
+                raise RuntimeError(
+                    "agentscope_runtime_no_completed_event"
+                )
+            # agentscope_runtime usage is captured at the proxy layer
+            # (the recipe routes through ${AP_PROXY_BASE_URL} and the
+            # proxy writes usage_logs from the upstream OpenRouter
+            # response). Return None for the dispatcher-side response
+            # dict so the recorder marks the dispatcher row as
+            # status='unknown' — the proxy row carries the canonical
+            # token counts + cost.
+            return final_text, None
 
         case "zeroclaw_native":
             body = {"message": row["content"]}

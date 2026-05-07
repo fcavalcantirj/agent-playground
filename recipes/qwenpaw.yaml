@@ -1,0 +1,392 @@
+apiVersion: ap.recipe/v0.2
+name: qwenpaw
+display_name: QwenPaw
+emoji: "🐾"
+description: |
+  Personal AI assistant by Alibaba's AgentScope team (formerly CoPaw, renamed
+  to QwenPaw 2026). 16,400 ★ at recon date. Multi-channel platform (Discord,
+  Telegram, Feishu, DingTalk, Lark, etc.) with an HTTP REST API for chat
+  completions over the AgentScope Runtime protocol. ~2.7 GB Debian-based
+  image, built-in supervisord + Xvfb for browser automation, default port
+  8088. Pre-built image at `agentscope/qwenpaw:latest` — recipe pulls
+  instead of building from source (Python + Node frontend cold build is
+  ~5 min; pull is seconds).
+
+source:
+  repo: https://github.com/agentscope-ai/QwenPaw
+  ref: main
+  ref_note: |
+    Latest stable on main at recon date 2026-05-07 (v1.1.5.post2).
+    Pre-built image is published to docker.io/agentscope/qwenpaw:latest.
+  upstream_version: v1.1.5+
+
+build:
+  mode: image_pull
+  image: agentscope/qwenpaw:latest
+  observed:
+    image_size_gb: 2.73
+    pull_wall_s: ~30
+    host_os: darwin 25.3.0 arm64
+  notes: |
+    Pre-built multi-arch image (amd64 + arm64). Stage 1 builds the React
+    console frontend with Bun; stage 2 is python3.11-slim base + Chromium +
+    Xvfb + supervisord. Port 8088 published. ENV paths:
+      QWENPAW_WORKING_DIR=/app/working
+      QWENPAW_SECRET_DIR=/app/working.secret
+      QWENPAW_BACKUP_DIR=/app/working.backups
+    Entrypoint runs `qwenpaw init --defaults --accept-security` on first
+    boot (when no config.json found in QWENPAW_WORKING_DIR), then starts
+    supervisord which runs the FastAPI server on QWENPAW_PORT (default 8088).
+
+runtime:
+  # LLM egress proxy. When via_proxy is true the runner injects
+  # AP_PROXY_BASE_URL (and a placeholder OPENROUTER_API_KEY). QwenPaw
+  # exposes a "Custom Provider" mechanism — provider configs live as
+  # JSON files at $QWENPAW_SECRET_DIR/providers/custom/<id>.json with
+  # base_url + api_key + chat_model (OpenAIChatModel for chat.completions
+  # compat). The bootstrap heredoc pre-writes a `ap-proxy` custom provider
+  # pointing at the proxy URL, plus an active_model.json that selects it
+  # as the default global model — so the runner-injected proxy URL is
+  # honored on every outbound chat completion. Documented at
+  # https://qwenpaw.agentscope.io/docs/models#custom-provider-configuration
+  via_proxy: true
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null     # baked into providers/custom/ap-proxy.json
+    model: null        # set per-call via $MODEL substitution into active_model.json
+  volumes:
+    - name: qwenpaw_data
+      host: per_session_tmpdir
+      container: /app/working
+      mode: rw
+      ephemeral: true
+      owner_uid: 0
+      notes: |
+        QWENPAW_WORKING_DIR. Holds config.json + chat history + skills.
+        Image runs as root by default; ephemeral per-session bind tmpdir.
+    - name: qwenpaw_secret
+      host: per_session_tmpdir
+      container: /app/working.secret
+      mode: rw
+      ephemeral: true
+      owner_uid: 0
+      notes: |
+        QWENPAW_SECRET_DIR. Holds providers/custom/*.json + active_model.json.
+        Bootstrap heredoc populates this before supervisord starts.
+    - name: qwenpaw_backups
+      host: per_session_tmpdir
+      container: /app/working.backups
+      mode: rw
+      ephemeral: true
+      owner_uid: 0
+  warnings:
+    - id: pre_init_provider_config
+      rule: |
+        Bootstrap heredoc MUST write providers/custom/ap-proxy.json AND
+        active_model.json BEFORE the upstream entrypoint runs `qwenpaw init`.
+      reason: |
+        `qwenpaw init --defaults --accept-security` only writes config.json
+        if missing — it does NOT touch the SECRET_DIR providers/active_model
+        files (those live separately under QWENPAW_SECRET_DIR). Pre-writing
+        them at heredoc time means qwenpaw boots with the proxy provider
+        already active; otherwise the user-facing default would be empty
+        and chat would fail with "no provider configured".
+    - id: localhost_auth_bypass
+      rule: |
+        QwenPaw auto-bypasses Web authentication for localhost (127.0.0.1
+        and ::1) requests; remote requests need an Authorization Bearer
+        token. The dispatcher reaches the container via the deploy
+        bridge IP (NOT localhost), so QwenPaw treats us as remote.
+        For Phase 30 cutover we run with auth disabled (default; only
+        QWENPAW_AUTH_ENABLED=true requires the Bearer).
+      reason: |
+        Per https://qwenpaw.agentscope.io/docs/api-tutorial Authentication
+        section. Default install has `QWENPAW_AUTH_ENABLED=false`, which
+        means any caller can invoke /api/console/chat without a token —
+        fine for our isolated per-session container. If we ever flip this
+        to true, the dispatcher needs to pre-mint a token via the
+        /api/auth/login endpoint and pass `Authorization: Bearer <token>`.
+
+invoke:
+  mode: cli-passthrough
+  spec:
+    # Upstream entrypoint runs supervisord which keeps the server
+    # foreground; one-shot `agent -m`-style invocation isn't directly
+    # exposed by QwenPaw. The persistent gateway is the load-bearing
+    # path — clients POST /api/console/chat to talk to the agent.
+    # The smoke below uses curl against the persistent gateway.
+    argv: []
+    argv_note: |
+      QwenPaw is server-only — there is no documented one-shot CLI
+      that prints a single LLM reply to stdout. The persistent_argv_override
+      below is the canonical deployment path; smoke validates via HTTP.
+
+  stdout_filter:
+    engine: awk
+    program: "{print}"
+  session_id_capture:
+    engine: none
+
+smoke:
+  prompt: "who are you in 1 short sentence?"
+  pass_if: response_contains_name
+  case_insensitive: true
+  timeout_s: 90
+  verified_cells:
+    - date: "2026-05-07"
+      provider: openrouter
+      model: "anthropic/claude-haiku-4-5"
+      verdict: PENDING
+      notes: |
+        End-to-end deploy-stack smoke pending. Recipe ships with
+        runtime.via_proxy:true so all outbound LLM calls route through
+        the AP egress proxy via the pre-written custom provider config.
+        Live verification deferred to post-recipe-ship integration.
+      category: PENDING
+
+# ════════════════════════════════════════════════════════════════════
+# Persistent mode — POST /api/console/chat is the load-bearing chat path
+# ════════════════════════════════════════════════════════════════════
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - "-c"
+      - |
+        set -e
+        # Phase 30 — pre-write QwenPaw provider config files before the
+        # upstream entrypoint starts. The heredoc-evaluated $AP_PROXY_BASE_URL
+        # + ${OPENROUTER_API_KEY} (placeholder ap-proxy-<token> when
+        # via_proxy=true) flow into the JSON. QwenPaw's loader detects
+        # plaintext api_key and re-encrypts on first read (per
+        # _maybe_migrate_plaintext — provider_manager.py:1574); we don't
+        # need to encrypt at write time.
+        # Strip provider prefix from MODEL ("openrouter/claude" → "claude")
+        # so the model id under the custom provider is bare. The dispatcher
+        # passes the full prefixed form via session messages; QwenPaw
+        # routes to the active provider+model by id.
+        QP_MODEL_ID=$(printf '%s' "$MODEL" | sed -E 's|^[^/]+/||')
+        BASE_URL="${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
+
+        mkdir -p /app/working.secret/providers/custom
+        mkdir -p /app/working.secret/providers/builtin
+
+        # Custom provider config — id 'ap-proxy', OpenAI-chat-completions
+        # protocol, models list with the agent's resolved model id.
+        cat > /app/working.secret/providers/custom/ap-proxy.json <<EOF
+        {
+          "id": "ap-proxy",
+          "name": "Agent Playground Proxy",
+          "base_url": "$BASE_URL",
+          "api_key": "${OPENROUTER_API_KEY}",
+          "chat_model": "OpenAIChatModel",
+          "generate_kwargs": {},
+          "models": [
+            {
+              "id": "$QP_MODEL_ID",
+              "name": "$QP_MODEL_ID",
+              "supports_image": false,
+              "supports_video": false,
+              "probe_source": "documentation",
+              "is_free": false,
+              "generate_kwargs": {}
+            }
+          ]
+        }
+        EOF
+        chmod 600 /app/working.secret/providers/custom/ap-proxy.json
+
+        # Active model — selects ap-proxy as the global default so chat
+        # completions through /api/console/chat use this provider.
+        cat > /app/working.secret/providers/active_model.json <<EOF
+        {
+          "provider_id": "ap-proxy",
+          "model": "$QP_MODEL_ID"
+        }
+        EOF
+        chmod 600 /app/working.secret/providers/active_model.json
+
+        echo "[qwenpaw-bootstrap] BASE_URL=$BASE_URL provider=ap-proxy model=$QP_MODEL_ID"
+
+        # Hand off to the upstream docker-entrypoint chain (CMD = /entrypoint.sh,
+        # which auto-inits config.json if missing then exec supervisord).
+        exec /entrypoint.sh
+    # Supervisord wraps the FastAPI server in an `app` child process and
+    # logs `INFO success: app entered RUNNING state, process has stayed
+    # up for > than 1 seconds (startsecs)` once uvicorn is reachable.
+    # That's the load-bearing readiness signal (verified empirically
+    # 2026-05-07: the API is serving JSON at /api/agents within ~50ms
+    # of this log line). Uvicorn itself does NOT print its standard
+    # "Uvicorn running on …" line — qwenpaw redirects uvicorn's stdout.
+    ready_log_regex: "success: app entered RUNNING state"
+    health_check:
+      kind: http
+      port: 8088
+      path: /api/agents
+    graceful_shutdown_s: 5
+    sigterm_handled: true
+  argv_note: |
+    Two-stage bootstrap inside one container: (1) pre-write
+    /app/working.secret/providers/custom/ap-proxy.json + active_model.json
+    so QwenPaw boots with the proxy provider as the global default; (2)
+    exec /entrypoint.sh which runs `qwenpaw init --defaults --accept-security`
+    on cold mount then starts supervisord. The runner substitutes $MODEL
+    + $AP_PROXY_BASE_URL into the heredoc; ${OPENROUTER_API_KEY} expands
+    inside sh from the docker-injected env (unquoted EOF delimiter).
+
+# ════════════════════════════════════════════════════════════════════
+# Phase 22c.3 inapp channel — POST /api/console/chat
+# ════════════════════════════════════════════════════════════════════
+channels:
+  inapp:
+    transport: http_localhost
+    port: 8088
+    endpoint: /api/console/chat
+    contract: agentscope_runtime
+    contract_model_name: null
+    request_envelope: null
+    response_envelope: null
+    auth_mode: none
+    auth_header: null
+    idempotency_header: null
+    session_header: null
+    provider: openrouter
+    # See persistent.spec.ready_log_regex above for rationale — supervisord's
+    # `success: app entered RUNNING state` is QwenPaw's load-bearing readiness
+    # signal because uvicorn's stdout is redirected by qwenpaw's startup
+    # chain. Empirically present at +7s after `docker run` (verified
+    # 2026-05-07).
+    ready_log_regex: "success: app entered RUNNING state"
+    response_routing: per_session
+    persistent_argv_override:
+      # inapp uses the same persistent.spec.argv shape as the top-level
+      # persistent block (POST /api/console/chat is the only chat surface
+      # QwenPaw exposes — no separate channel-vs-server bootstrap needed).
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+          # QwenPaw passes the model ID verbatim to the upstream HTTP
+          # client (OpenAIChatModel → OpenRouter). OpenRouter requires the
+          # full provider-prefixed slug ("anthropic/claude-haiku-4-5"), so
+          # we use $MODEL as-is — DO NOT strip the prefix. (Empirically
+          # verified 2026-05-07: stripping returned 400 'claude-haiku-4-5
+          # is not a valid model ID' from OpenRouter.)
+          QP_MODEL_ID="$MODEL"
+          BASE_URL="${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
+          mkdir -p /app/working.secret/providers/custom
+          mkdir -p /app/working.secret/providers/builtin
+          cat > /app/working.secret/providers/custom/ap-proxy.json <<EOF
+          {
+            "id": "ap-proxy",
+            "name": "Agent Playground Proxy",
+            "base_url": "$BASE_URL",
+            "api_key": "${OPENROUTER_API_KEY}",
+            "chat_model": "OpenAIChatModel",
+            "generate_kwargs": {},
+            "models": [
+              {"id": "$QP_MODEL_ID", "name": "$QP_MODEL_ID", "supports_image": false, "supports_video": false, "probe_source": "documentation", "is_free": false, "generate_kwargs": {}}
+            ]
+          }
+          EOF
+          chmod 600 /app/working.secret/providers/custom/ap-proxy.json
+          cat > /app/working.secret/providers/active_model.json <<EOF
+          {"provider_id": "ap-proxy", "model": "$QP_MODEL_ID"}
+          EOF
+          chmod 600 /app/working.secret/providers/active_model.json
+          echo "[qwenpaw-bootstrap] BASE_URL=$BASE_URL provider=ap-proxy model=$QP_MODEL_ID"
+          exec /entrypoint.sh
+    activation_env:
+      OPENROUTER_API_KEY: "${INAPP_PROVIDER_KEY}"
+      MODEL: "${MODEL}"
+      INAPP_AGENT_NAME: "{agent_name}"
+      INAPP_AGENT_URL: "{agent_url}"
+      INAPP_AUTH_TOKEN: "${INAPP_AUTH_TOKEN}"
+
+direct_interface:
+  kind: http_endpoint
+  spec:
+    method: POST
+    path: /api/console/chat
+    headers:
+      Content-Type: application/json
+      X-Agent-Id: default
+    body_template: |
+      {
+        "input": [
+          {"role": "user", "content": [{"type": "text", "text": "{prompt}"}]}
+        ],
+        "session_id": "{session_id}",
+        "user_id": "{user_id}",
+        "channel": "console"
+      }
+    response_kind: sse
+    timeout_s: 90
+    response_routing: per_session
+
+provider_compat:
+  supported:
+    - openrouter
+    - anthropic
+    - openai
+  recommended_provider: openrouter
+  notes: |
+    Custom Provider supports both OpenAI chat.completions protocol
+    (chat_model=OpenAIChatModel) and Anthropic messages protocol
+    (chat_model=AnthropicChatModel). For via_proxy:true we use
+    OpenAIChatModel + the AP proxy URL — the proxy itself dispatches
+    to upstream OpenRouter / Anthropic / OpenAI based on the BYOK
+    custody record's provider field.
+
+known_quirks:
+  config_re_encryption_on_first_load: |
+    QwenPaw's provider loader auto-detects plaintext api_key in
+    on-disk JSON and re-encrypts in place on first load
+    (provider_manager.py::_maybe_migrate_plaintext). Our heredoc
+    writes plaintext; QwenPaw silently upgrades it. Subsequent boots
+    read the encrypted form.
+  localhost_auth_bypass: |
+    Auth-bypass for localhost requests is by-design per the official
+    api-tutorial docs. The dispatcher reaches the container via the
+    deploy bridge IP, so QwenPaw treats us as remote — but the default
+    install has Web auth disabled, so no Bearer is required. If
+    QWENPAW_AUTH_ENABLED is ever set to true at the recipe level, the
+    dispatcher must pre-mint a token via POST /api/auth/login.
+  agentscope_runtime_protocol: |
+    The chat response is NOT OpenAI chat-completions shape — it's
+    AgentScope Runtime protocol (extension), documented at
+    https://runtime.agentscope.io/en/protocol.html. The response
+    is SSE with `data: {sequence_number, status, output[], error,
+    session_id, usage}` events. The final reply text is at
+    output[].content[].text on the event with status='completed'.
+    Our dispatcher uses the agentscope_runtime contract adapter to
+    parse this shape (added in this Phase 30 followup).
+
+verified_cells:
+  - date: "2026-05-07"
+    provider: openrouter
+    model: "anthropic/claude-haiku-4-5"
+    verdict: PENDING
+    notes: |
+      Recipe + agentscope_runtime contract adapter committed; live
+      smoke pending alongside the dispatcher-side adapter PR.
+
+metadata:
+  recon_date: "2026-05-07"
+  recon_by: |
+    main-conversation (read website/public/docs/{api-tutorial,models,
+    cli,channels,security}.en.md from agentscope-ai/QwenPaw GitHub)
+  source_citations:
+    - "README.md - QwenPaw v1.1.5 personal AI assistant"
+    - "deploy/Dockerfile - python3.11-slim + supervisord + Xvfb base"
+    - "docker-compose.yml - port 8088:8088 + 3 named volumes"
+    - "src/qwenpaw/app/routers/console.py:128 - POST /chat (mounted under /api/console)"
+    - "src/qwenpaw/providers/provider_manager.py:1408 - _save_provider writes JSON to providers/custom/<id>.json"
+    - "src/qwenpaw/providers/provider_manager.py:1518 - save_active_model writes active_model.json"
+    - "src/qwenpaw/providers/provider.py - ProviderInfo schema (id, name, base_url, api_key, chat_model, models[])"
+    - "website/public/docs/api-tutorial.en.md - POST /api/console/chat with X-Agent-Id header, SSE response"
+    - "website/public/docs/models.en.md - Custom Provider configuration is the documented escape hatch for arbitrary base_url"

@@ -84,7 +84,7 @@ class InappChannelConfig:
     transport: Literal["http_localhost"]
     port: int
     endpoint: str
-    contract: Literal["openai_compat", "a2a_jsonrpc", "zeroclaw_native"]
+    contract: Literal["openai_compat", "a2a_jsonrpc", "zeroclaw_native", "agentscope_runtime"]
     contract_model_name: str | None = None
     request_envelope: dict | None = None
     response_envelope: dict | None = None
@@ -104,7 +104,17 @@ class InappChannelConfig:
 # ---------------------------------------------------------------------------
 
 
-_VALID_CONTRACTS: set[str] = {"openai_compat", "a2a_jsonrpc", "zeroclaw_native"}
+_VALID_CONTRACTS: set[str] = {
+    "openai_compat",
+    "a2a_jsonrpc",
+    "zeroclaw_native",
+    # Phase 30 followup — QwenPaw `POST /api/console/chat` with the
+    # AgentScope Runtime SSE shape. Body uses `input[*].role/content[*].text`,
+    # response is `data: {sequence_number,status,output,usage,...}` events
+    # terminated by `status: "completed"`. Documented at
+    # https://qwenpaw.agentscope.io/docs/api-tutorial.
+    "agentscope_runtime",
+}
 
 
 def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:

@@ -30,7 +30,17 @@ def _load(name: str) -> dict:
         return dict(y.load(f))
 
 
-_ALL_RECIPES = ["nanobot", "openclaw", "nullclaw", "picoclaw", "zeroclaw", "hermes"]
+_ALL_RECIPES = [
+    "nanobot",
+    "openclaw",
+    "nullclaw",
+    "picoclaw",
+    "zeroclaw",
+    "hermes",
+    # Phase 30 followup — QwenPaw added 2026-05-07 with the new
+    # agentscope_runtime contract adapter.
+    "qwenpaw",
+]
 
 
 @pytest.mark.parametrize("recipe_name", _ALL_RECIPES)

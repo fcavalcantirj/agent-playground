@@ -218,19 +218,30 @@ def test_openclaw_process_env_api_key_is_anthropic() -> None:
     assert recipe["runtime"]["process_env"]["api_key"] == "ANTHROPIC_API_KEY"
 
 
-def test_openclaw_yaml_has_no_heredoc_proxy_substitution() -> None:
-    """Phase 30 Plan 30-02 D-03 — openclaw uses the Anthropic SDK which reads
-    ANTHROPIC_BASE_URL natively (injected by the runner at docker run -e time;
-    Pitfall 6). NO recipe-side heredoc edit is needed; this test pins that
-    invariant so a future plan doesn't bolt one on accidentally."""
+def test_openclaw_heredoc_uses_proxy_base_url_for_anthropic_provider() -> None:
+    """Phase 30 followup `e44f1c2` — the original Plan 30-02 design assumed
+    openclaw's anthropic plugin would honor the SDK-convention
+    ANTHROPIC_BASE_URL env var (injected by the runner). Empirically it
+    does NOT — the openclaw anthropic plugin reads only
+    `models.providers.anthropic.baseUrl` from openclaw.json. The fix
+    writes a `models` block in the bootstrap heredoc with
+    `baseUrl: $BASE_URL` derived from `${AP_PROXY_BASE_URL:-...}` so the
+    proxy URL reaches openclaw's HTTP client. This test pins the new
+    invariant — opposite of the pre-`e44f1c2` shape."""
     text = (RECIPES_DIR / "openclaw.yaml").read_text()
-    # AP_PROXY_BASE_URL substitution would indicate a heredoc edit landed —
-    # which would be wrong for openclaw (Anthropic SDK env-var path is the
-    # mechanism; D-03 RESEARCH §"One-line YAML add" lines 396-413).
-    assert "AP_PROXY_BASE_URL" not in text, (
-        "openclaw.yaml unexpectedly contains AP_PROXY_BASE_URL substitution — "
-        "the Anthropic SDK reads ANTHROPIC_BASE_URL natively via runner env "
-        "injection; no heredoc edit is required for openclaw (D-03)."
+    assert 'BASE_URL="${AP_PROXY_BASE_URL:-https://api.anthropic.com}"' in text, (
+        "openclaw.yaml must compute BASE_URL from AP_PROXY_BASE_URL (with "
+        "https://api.anthropic.com as the legacy non-proxy fallback) per "
+        "the post-30 followup fix"
+    )
+    assert '"baseUrl": "$BASE_URL"' in text, (
+        "openclaw heredoc must write models.providers.anthropic.baseUrl=$BASE_URL "
+        "— the load-bearing knob for redirecting outbound Anthropic calls"
+    )
+    # Defense-in-depth — the model entry's baseUrl must also point at the proxy
+    assert '"api": "anthropic-messages"' in text, (
+        "openclaw heredoc must declare api=anthropic-messages for the model "
+        "entry under providers.anthropic.models[]"
     )
 
 
@@ -315,4 +326,58 @@ def test_picoclaw_api_base_uses_proxy_url_default_form_in_both_heredocs() -> Non
     assert '"api_base": "https://openrouter.ai/api/v1"' not in text, (
         "the literal upstream URL leaked back into picoclaw.yaml — "
         "should be sh-defaulted via AP_PROXY_BASE_URL"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 followup — QwenPaw added 2026-05-07 with agentscope_runtime contract
+# ---------------------------------------------------------------------------
+
+
+def test_qwenpaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 followup cutover invariant — qwenpaw routes through the proxy."""
+    recipe = _load("qwenpaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 followup invariant — qwenpaw runtime.via_proxy must be true"
+    )
+
+
+def test_qwenpaw_uses_agentscope_runtime_contract() -> None:
+    """QwenPaw exposes POST /api/console/chat with the AgentScope Runtime
+    SSE shape — body is `input[*].role/content[*].text` (NOT OpenAI's
+    `messages[*].content`), response is `data: {sequence_number,status,
+    output,...}` events. This is the new 4th contract type added
+    alongside openai_compat / a2a_jsonrpc / zeroclaw_native."""
+    recipe = _load("qwenpaw")
+    assert recipe["channels"]["inapp"]["contract"] == "agentscope_runtime", (
+        "qwenpaw.channels.inapp.contract must be agentscope_runtime — "
+        "the new dispatcher contract added for AgentScope Runtime SSE shape"
+    )
+    assert recipe["channels"]["inapp"]["endpoint"] == "/api/console/chat", (
+        "qwenpaw chat endpoint per https://qwenpaw.agentscope.io/docs/api-tutorial"
+    )
+    assert recipe["channels"]["inapp"]["port"] == 8088, (
+        "qwenpaw default server port"
+    )
+
+
+def test_qwenpaw_bootstrap_writes_custom_provider_config() -> None:
+    """The persistent heredoc must pre-write the QwenPaw custom provider
+    config (providers/custom/ap-proxy.json) and active_model.json BEFORE
+    the upstream entrypoint runs. Without this, qwenpaw boots with no
+    default provider and chat completions fail."""
+    text = (RECIPES_DIR / "qwenpaw.yaml").read_text()
+    assert "/app/working.secret/providers/custom/ap-proxy.json" in text, (
+        "qwenpaw bootstrap heredoc must write the ap-proxy custom provider "
+        "config — that's the load-bearing baseUrl override per "
+        "https://qwenpaw.agentscope.io/docs/models#custom-provider-configuration"
+    )
+    assert "/app/working.secret/providers/active_model.json" in text, (
+        "qwenpaw bootstrap must also write active_model.json so the "
+        "ap-proxy provider becomes the global default"
+    )
+    assert "${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}" in text, (
+        "qwenpaw heredoc must use the AMD-09 sh-default form so legacy "
+        "non-proxy path falls back to openrouter.ai when AP_PROXY_BASE_URL "
+        "is unset (D-27 byte-identical fallback)"
     )

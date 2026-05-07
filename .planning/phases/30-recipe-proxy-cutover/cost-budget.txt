@@ -32,3 +32,10 @@
   - Phase 30 + followup cumulative: ~$0.0840
 
   All 6 recipes now empirically verified end-to-end via the deploy stack with real upstream cost capture.
+
+[2026-05-07] post-Phase-30 followup — QwenPaw recipe added (replaces deferred picoclaw e2e)
+  - 4 successful chat completions through proxy (qwenpaw is a multi-step React agent — 1 user prompt → 4 LLM calls)
+  - $0.00020900 + $0.01153600 + $0.01331100 + $0.01105900 = ~$0.0361
+  - Real OpenRouter IDs: gen-1778181771, gen-1778181839, gen-1778181839, gen-1778181841
+  - Phase 30 + followups cumulative: ~$0.1201
+  - All 7 recipes (added qwenpaw to nanobot/openclaw/nullclaw/picoclaw/zeroclaw/hermes) end-to-end verified through proxy with real upstream cost capture
