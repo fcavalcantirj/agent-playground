@@ -50,32 +50,36 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # ---------------------------------------------------------------------------
 
 
-# All 6 recipe filenames in repo/recipes/. nanobot is the cutover; the
-# other 5 MUST stay on the legacy non-proxy path until Phase 30.
-_OTHER_RECIPES = ["hermes", "openclaw", "zeroclaw", "nullclaw", "picoclaw"]
+# All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
+# Phase 30 flips the remaining 5 one PLAN at a time.
+# Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
+_OTHER_RECIPES = ["hermes", "zeroclaw", "nullclaw", "picoclaw"]
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
 def test_only_nanobot_has_via_proxy_true(recipe_name: str) -> None:
-    """Regression guard — Phase 30 work cannot leak into Phase 29."""
+    """Regression guard — Phase 30 plans flip recipes one PLAN at a time;
+    recipes still in this list must remain on the legacy non-proxy path."""
     recipe = _load(recipe_name)
     runtime = recipe.get("runtime") or {}
     assert runtime.get("via_proxy", False) is False, (
         f"recipe {recipe_name!r} unexpectedly has via_proxy: true — "
-        f"Phase 29 only flips nanobot; Phase 30 flips the others."
+        f"Phase 30 flips one recipe per plan; updating this list and the "
+        f"flipped-count assertion below is part of each plan's TDD work."
     )
 
 
 def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
     """Combined assertion: across all *.yaml files in recipes/, exactly
-    one (nanobot) carries via_proxy: true."""
+    the expected number carry via_proxy: true. Phase 30 increments per plan;
+    after Plan 30-02 (openclaw) the count is 2 (nanobot + openclaw)."""
     flipped_count = 0
     for path in RECIPES_DIR.glob("*.yaml"):
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 1, (
-        f"expected exactly 1 recipe with via_proxy: true, got {flipped_count}"
+    assert flipped_count == 2, (
+        f"expected exactly 2 recipes with via_proxy: true (nanobot + openclaw), got {flipped_count}"
     )
 
 
@@ -143,4 +147,46 @@ def test_nanobot_api_base_uses_proxy_url_default_form_in_both_heredocs() -> None
     assert '"api_base": "https://openrouter.ai/api/v1"' not in text, (
         "the literal upstream URL leaked back into nanobot.yaml — "
         "should be sh-defaulted via AP_PROXY_BASE_URL"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-02 — openclaw flipped to via_proxy: true (D-03)
+# ---------------------------------------------------------------------------
+
+
+def test_openclaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-02 cutover invariant — openclaw flipped to the proxy."""
+    recipe = _load("openclaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-02 cutover invariant — openclaw runtime.via_proxy must be true"
+    )
+
+
+def test_openclaw_process_env_api_key_is_anthropic() -> None:
+    """Sanity — openclaw's api_key env var is ANTHROPIC_API_KEY so AMD-06 dispatch
+    injects ANTHROPIC_BASE_URL (not OPENAI_BASE_URL).
+
+    The runner's `_build_via_proxy_overrides` (tools/run_recipe.py:1007-1042)
+    is a closed enum: ANTHROPIC_API_KEY -> ANTHROPIC_BASE_URL injection. If
+    this ever drifted to OPENROUTER_API_KEY, openclaw would route through the
+    OpenAI-SDK shape and the proxy's anthropic SSE branch would never fire.
+    """
+    recipe = _load("openclaw")
+    assert recipe["runtime"]["process_env"]["api_key"] == "ANTHROPIC_API_KEY"
+
+
+def test_openclaw_yaml_has_no_heredoc_proxy_substitution() -> None:
+    """Phase 30 Plan 30-02 D-03 — openclaw uses the Anthropic SDK which reads
+    ANTHROPIC_BASE_URL natively (injected by the runner at docker run -e time;
+    Pitfall 6). NO recipe-side heredoc edit is needed; this test pins that
+    invariant so a future plan doesn't bolt one on accidentally."""
+    text = (RECIPES_DIR / "openclaw.yaml").read_text()
+    # AP_PROXY_BASE_URL substitution would indicate a heredoc edit landed —
+    # which would be wrong for openclaw (Anthropic SDK env-var path is the
+    # mechanism; D-03 RESEARCH §"One-line YAML add" lines 396-413).
+    assert "AP_PROXY_BASE_URL" not in text, (
+        "openclaw.yaml unexpectedly contains AP_PROXY_BASE_URL substitution — "
+        "the Anthropic SDK reads ANTHROPIC_BASE_URL natively via runner env "
+        "injection; no heredoc edit is required for openclaw (D-03)."
     )
