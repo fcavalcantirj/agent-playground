@@ -36,6 +36,11 @@ runtime:
                                           # (openrouter path is upstream-broken; anthropic-direct
                                           # is the empirically-verified PASS path used by smoke
                                           # verified_cells[0] + spike-01e + Spike A 2026-04-19).
+  via_proxy: true                         # Phase 30 D-03 — anthropic-shape cutover (Plan 30-02)
+                                          # Anthropic SDK reads ANTHROPIC_BASE_URL natively;
+                                          # tools/run_recipe.py::_build_via_proxy_overrides
+                                          # injects it at docker run -e time (Pitfall 6).
+                                          # No heredoc edit needed.
   process_env:
     api_key: ANTHROPIC_API_KEY            # default for /v1/runs + tools/run_recipe.py CLI
                                           # (was OPENROUTER_API_KEY pre-22b-07; that path
