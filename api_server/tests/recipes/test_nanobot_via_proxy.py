@@ -53,7 +53,7 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
 # Phase 30 flips the remaining 5 one PLAN at a time.
 # Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES = ["hermes", "zeroclaw"]
+_OTHER_RECIPES = ["hermes"]
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
@@ -78,8 +78,45 @@ def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 4, (
-        f"expected exactly 4 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw), got {flipped_count}"
+    assert flipped_count == 5, (
+        f"expected exactly 5 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw + zeroclaw), got {flipped_count}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-05 — zeroclaw flipped to via_proxy: true
+# ---------------------------------------------------------------------------
+
+
+def test_zeroclaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-05 cutover invariant — zeroclaw flipped to the proxy."""
+    recipe = _load("zeroclaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-05 cutover invariant — zeroclaw runtime.via_proxy must be true"
+    )
+
+
+def test_zeroclaw_uses_custom_provider_form() -> None:
+    """zeroclaw's named providers (openrouter, openai, etc.) ignore
+    `providers.models.<name>.base-url` at request time — outbound calls
+    go to hardcoded URLs. The documented escape hatch is the literal
+    `custom:<URL>` provider id (per `zeroclaw providers` output:
+    "custom:<URL>   Any OpenAI-compatible endpoint"). The recipe must
+    onboard with `--provider custom:${AP_PROXY_BASE_URL}` so zeroclaw
+    treats the proxy as a first-class custom provider with the configured
+    base URL."""
+    text = (RECIPES_DIR / "zeroclaw.yaml").read_text()
+    assert "custom:${AP_PROXY_BASE_URL}" in text, (
+        "zeroclaw.yaml must onboard with --provider "
+        "'custom:${AP_PROXY_BASE_URL}' — that's the documented escape "
+        "hatch for redirecting zeroclaw's outbound HTTP at an arbitrary "
+        "OpenAI-compatible endpoint (the AP proxy)."
+    )
+    # Defense-in-depth — the `--provider openrouter` argv leaked back if
+    # someone mass-replaced. The legacy onboard string MUST be gone.
+    assert "- openrouter\n            - --api-key" not in text, (
+        "zeroclaw.yaml's onboard step still references the legacy "
+        "openrouter provider — should be custom:${AP_PROXY_BASE_URL}"
     )
 
 

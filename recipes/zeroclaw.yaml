@@ -32,6 +32,14 @@ build:
     sharing a named volume, then starts the long-running daemon.
 
 runtime:
+  # LLM egress proxy. When via_proxy is true the runner injects
+  # AP_PROXY_BASE_URL (and a placeholder OPENROUTER_API_KEY). zeroclaw's
+  # `providers.models.openrouter.base-url` config path (note hyphens —
+  # CLI uses kebab-case while the JSON schema uses snake_case) accepts
+  # the proxy URL when set via `zeroclaw config set` AFTER onboard. We
+  # add it as a sibling pre_start_command in persistent_argv_override
+  # below so the daemon honors the proxy URL on every outbound call.
+  via_proxy: true
   provider: openrouter
   process_env:
     api_key: OPENROUTER_API_KEY
@@ -286,13 +294,23 @@ channels:
       entrypoint: zeroclaw
       argv: [daemon]
       pre_start_commands:
+        # Phase 30 Plan 30-05 — onboard with `custom:<URL>` provider so
+        # zeroclaw routes outbound chat-completion calls through the AP
+        # egress proxy. zeroclaw's named providers (openrouter/openai/etc.)
+        # have hardcoded URLs that ignore `providers.models.<name>.base-url`
+        # at request time; the documented escape hatch is the literal
+        # `custom:<URL>` provider id (per `zeroclaw providers` output:
+        # "custom:<URL>   Any OpenAI-compatible endpoint").
+        # ${AP_PROXY_BASE_URL} substitutes to the canonical proxy URL when
+        # via_proxy=true (build_activation_substitutions); never empty for
+        # an api_server-driven launch since via_proxy is YAML-level.
         - argv:
             - zeroclaw
             - onboard
             - --quick
             - --force
             - --provider
-            - openrouter
+            - "custom:${AP_PROXY_BASE_URL}"
             - --api-key
             - "${OPENROUTER_API_KEY}"
             - --model

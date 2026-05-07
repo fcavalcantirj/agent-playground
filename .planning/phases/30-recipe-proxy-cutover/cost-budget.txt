@@ -10,3 +10,9 @@
   - $0.01279700 (gen-1778126207-ImnQ8JyhtVQ5FsS) + $0.01552300 (gen-1778126210-9m1D9yrhhImYTFz)
   - Subtotal: $0.02832000
   - Phase 30 cumulative: ~$0.0284
+
+[2026-05-07] Plan 30-05 — zeroclaw live smoke (custom:URL flip)
+  - 1 successful chat completion through proxy
+  - $0.01291200 (gen-1778127299-jaAL6gsuyrHY6Ep)
+  - Subtotal: $0.01291200
+  - Phase 30 cumulative: ~$0.0413

@@ -53,11 +53,20 @@ def build_activation_substitutions(
     """
     proxy_placeholder = f"ap-proxy-{inapp_auth_token}" if inapp_auth_token else ""
     api_key_value = proxy_placeholder if via_proxy else provider_key
+    # Phase 30 Plan 30-05: zeroclaw's pre_start_commands need the proxy
+    # URL substituted into argv (e.g. `zeroclaw config set
+    # providers.models.openrouter.base-url ${AP_PROXY_BASE_URL}`). Mirror
+    # tools/run_recipe.py:990 (canonical proxy URL on the deploy_default
+    # bridge — recipes spawned by the runner share that bridge).
+    proxy_base_url = (
+        "http://api_server:8000/v1/llm/forward" if via_proxy else ""
+    )
     return {
         "INAPP_AUTH_TOKEN": inapp_auth_token or "",
         "INAPP_PROVIDER_KEY": api_key_value,
         "OPENROUTER_API_KEY": api_key_value,
         "ANTHROPIC_API_KEY": api_key_value,
+        "AP_PROXY_BASE_URL": proxy_base_url,
         "MODEL": agent_model,
         "agent_name": agent_name,
         "agent_url": f"http://{agent_name}.local",
