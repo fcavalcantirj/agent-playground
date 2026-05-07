@@ -95,11 +95,21 @@ class InappChannelConfig:
         "zeroclaw_native",
         "agentscope_runtime",
         "pico_native",
+        "goose_native",
     ]
     contract_model_name: str | None = None
     request_envelope: dict | None = None
     response_envelope: dict | None = None
     auth_mode: Literal["none", "bearer", "token"] = "none"
+    # When ``auth_mode == "token"`` the dispatcher forwards
+    # ``inapp_auth_token`` under the recipe-declared header name (e.g.
+    # goose's ``X-Secret-Key``). ``None`` for ``bearer`` (always
+    # ``Authorization``) and ``none``. Single source of truth for the
+    # header name — recipe authors set this once in
+    # ``channels.inapp.auth_header_name`` and the dispatcher does the
+    # rest. Distinct from ``idempotency_header`` / ``session_header``
+    # which are non-auth utility headers.
+    auth_header_name: str | None = None
     idempotency_header: str | None = None
     session_header: str | None = None
     # Phase 27 — surfaced from the recipe's top-level ``runtime.provider``
@@ -133,6 +143,13 @@ _VALID_CONTRACTS: set[str] = {
     # Reference impl: pkg/channels/pico/{protocol.go,pico.go,client.go}
     # in sipeed/picoclaw.
     "pico_native",
+    # Post-Phase-30 — block/goose native HTTP+SSE at `POST /reply` with
+    # `X-Secret-Key` token auth. Body is the ChatRequest shape
+    # (user_message + session_id), response is an SSE stream of
+    # MessageEvent variants discriminated by `type` field; terminal
+    # event is `type: "Finish"`. Reference impl:
+    # crates/goose-server/src/routes/reply.rs in block/goose.
+    "goose_native",
 }
 
 _VALID_TRANSPORTS: set[str] = {"http_localhost", "websocket_chat"}
@@ -213,6 +230,11 @@ def _parse_inapp_block(recipe_yaml: dict) -> InappChannelConfig | None:
         request_envelope=dict(req_env) if isinstance(req_env, dict) else None,
         response_envelope=dict(resp_env) if isinstance(resp_env, dict) else None,
         auth_mode=auth_mode,  # type: ignore[arg-type]
+        auth_header_name=(
+            str(inapp["auth_header_name"])
+            if inapp.get("auth_header_name") is not None
+            else None
+        ),
         idempotency_header=(
             str(inapp["idempotency_header"])
             if inapp.get("idempotency_header") is not None

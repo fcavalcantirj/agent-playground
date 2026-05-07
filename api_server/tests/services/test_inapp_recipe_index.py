@@ -114,6 +114,19 @@ channels:
     config_transport: file
 """
 
+GOOSE_YAML = """\
+apiVersion: ap.recipe/v0.2
+name: goose
+channels:
+  inapp:
+    transport: http_localhost
+    port: 3000
+    contract: goose_native
+    endpoint: /reply
+    auth_mode: token
+    auth_header_name: X-Secret-Key
+"""
+
 MALFORMED_YAML = """\
 apiVersion: ap.recipe/v0.2
 name: malformed
@@ -148,6 +161,7 @@ def recipes_dir(tmp_path: Path) -> Path:
     _write(d, "nullclaw", NULLCLAW_YAML)
     _write(d, "zeroclaw", ZEROCLAW_YAML)
     _write(d, "picoclaw", PICOCLAW_NO_INAPP_YAML)
+    _write(d, "goose", GOOSE_YAML)
     return d
 
 
@@ -188,6 +202,26 @@ def test_recipe_index_loads_all_5_inapp_recipes(recipes_dir: Path) -> None:
     oc = idx.get_inapp_block("openclaw")
     assert oc is not None
     assert oc.contract_model_name == "openclaw"
+
+
+def test_recipe_index_loads_goose_token_auth(recipes_dir: Path) -> None:
+    """goose recipe parses the new token + auth_header_name fields.
+
+    Adds coverage for the post-Phase-30 dispatcher extension that lets
+    a recipe declare a non-Bearer auth header (X-Secret-Key for
+    block/goose). The parse path must accept ``auth_mode: token`` +
+    ``auth_header_name: X-Secret-Key`` and surface both on the
+    InappChannelConfig dataclass.
+    """
+    idx = InappRecipeIndex(recipes_dir)
+    cfg = idx.get_inapp_block("goose")
+    assert cfg is not None
+    assert cfg.contract == "goose_native"
+    assert cfg.transport == "http_localhost"
+    assert cfg.port == 3000
+    assert cfg.endpoint == "/reply"
+    assert cfg.auth_mode == "token"
+    assert cfg.auth_header_name == "X-Secret-Key"
 
 
 def test_recipe_index_returns_none_for_recipe_without_inapp(

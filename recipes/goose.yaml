@@ -1,0 +1,265 @@
+apiVersion: ap.recipe/v0.2
+name: goose
+display_name: Goose
+emoji: "🪿"
+description: |
+  Open-source AI agent by Block (44.5k★, Apache-2.0). Rust-based.
+  MCP-native (70+ extensions). Multi-provider: Anthropic, OpenAI,
+  Google, Ollama, OpenRouter, Azure, Bedrock + 8 more.
+
+  This recipe targets the `goosed` HTTP daemon (NOT `goose serve`,
+  which is the ACP / port-3284 protocol used by the Zed editor). The
+  daemon exposes `POST /reply` with a ChatRequest / SSE-MessageEvent
+  shape — the same surface the desktop app consumes.
+
+source:
+  repo: https://github.com/block/goose
+  ref: main
+  ref_note: |
+    block/goose is the canonical primary repo (44.5k★ as of 2026-05).
+    A sister mirror at aaif-goose tracks the Linux Foundation
+    transition under the Agentic AI Foundation (in progress at recon
+    time); both repos sync. Recipe pins block/goose@main — flip to
+    aaif-goose if/when the canonical handoff completes.
+  upstream_version: v1.28.0+
+
+build:
+  # The upstream block/goose Dockerfile (docker/Dockerfile) only builds
+  # the goose-cli binary — `cargo build --release --package goose-cli`
+  # at line 34. The HTTP daemon `goosed` lives in a sibling crate
+  # (goose-server) that the upstream image does NOT compile (the
+  # desktop app's Tauri build links to a host-built copy).
+  #
+  # AP needs `goosed` for the inapp HTTP+SSE surface. Two options were
+  # considered:
+  #   A. Patch upstream's Dockerfile via runner pre_build hook — no such
+  #      hook exists today (would be a runner enhancement).
+  #   B. Pre-build a custom image locally + use build.mode=image_pull
+  #      against the local tag — works because run_recipe.py:644
+  #      image_exists() short-circuits both pull AND build paths when
+  #      the tag is already present on the local Docker daemon.
+  # We chose B: a custom Dockerfile at
+  # tools/dockerfiles/goose.Dockerfile builds BOTH binaries (goose +
+  # goosed) and tags ap-recipe-goose:latest. The recipe declares
+  # build.mode=image_pull + build.image=ap-recipe-goose:latest; the
+  # runner reuses the local image. For prod (Hetzner) the deploy step
+  # would either build the same tag on the host or push to a registry.
+  mode: image_pull
+  image: ap-recipe-goose:latest
+  notes: |
+    To build ap-recipe-goose:latest locally:
+      git clone --depth 1 https://github.com/block/goose /tmp/goose
+      docker build -t ap-recipe-goose:latest \
+        -f tools/dockerfiles/goose.Dockerfile /tmp/goose
+    Rust release build is the cost — ~10-15 min on M-series with
+    LTO disabled (LTO=true would push to ~30+ min and the binary size
+    delta isn't load-bearing for our use). The custom Dockerfile is
+    Apache-2.0-compatible (it's a source-level recompile of upstream
+    block/goose with one extra `--package` flag).
+
+runtime:
+  # When via_proxy is true the runner injects the AP egress proxy env
+  # vars under SDK-convention names. For api_key=OPENROUTER_API_KEY,
+  # _build_via_proxy_overrides emits OPENAI_BASE_URL + OPENAI_API_KEY
+  # (the OpenAI-SDK shape). Goose's openai provider reads those env
+  # vars natively — see crates/goose/src/providers/openai.rs:
+  #   - OPENAI_BASE_URL takes priority
+  #   - OPENAI_BASE_PATH defaults to "chat/completions" when the URL
+  #     path doesn't end in /v1 (which our proxy URL doesn't —
+  #     /v1/llm/forward is consumed as the host prefix, not as a v1
+  #     marker). So the constructed URL is
+  #     ${OPENAI_BASE_URL}/chat/completions, matching the proxy's
+  #     /v1/llm/forward/{path} route → upstream
+  #     https://openrouter.ai/api/v1/chat/completions.
+  via_proxy: true
+  provider: openrouter
+  process_env:
+    api_key: OPENROUTER_API_KEY
+    api_key_fallback: null
+    base_url: null     # injected via OPENAI_BASE_URL by via_proxy
+    model: null        # set via GOOSE_MODEL activation_env
+  volumes:
+    - name: goose_home
+      host: per_session_tmpdir
+      container: /root/.config/goose
+      mode: rw
+      ephemeral: true
+      owner_uid: 0
+      notes: |
+        GOOSE config_dir. The persistent heredoc creates the path so
+        goosed boot doesn't trip on a missing directory; we don't
+        write a config.yaml because env vars take priority over the
+        file (crates/goose/src/config/base.rs::get_param env-first
+        check). Ephemeral mount: per-session state dies at teardown.
+  warnings:
+    - id: goosed_not_goose_serve
+      rule: "Use `goosed agent`, NOT `goose serve`"
+      reason: |
+        `goose serve` (CLI subcommand) starts an ACP server on port
+        3284 — that's the Agent Client Protocol used by Zed editor
+        integrations, NOT the HTTP+SSE /reply API. Picking the wrong
+        binary surfaces as the recipe booting OK + chat hanging
+        forever (no /reply route on 3284). The right binary is
+        `goosed agent` (port 3000 default, the desktop app's REST
+        backend with the OpenAPI we consume).
+    - id: keyring_disabled_in_container
+      rule: Set GOOSE_DISABLE_KEYRING=1 in the persistent env
+      reason: |
+        debian:bookworm-slim has no DBus / no desktop keyring
+        service. Without the disable env var, goose tries to use
+        the system keyring on first secret access and either hangs
+        on the missing socket or falls back to file-based storage
+        with a noisy warning. Explicit disable is the documented
+        headless-container pattern.
+    - id: openai_provider_for_openrouter_routing
+      rule: GOOSE_PROVIDER=openai (NOT openrouter) when via_proxy
+      reason: |
+        Goose's native openrouter provider hardcodes
+        `api/v1/chat/completions` as the path appended to
+        OPENROUTER_HOST. The AP proxy expects path `chat/completions`
+        (its base_url already includes `/api/v1`). Setting
+        OPENROUTER_HOST=<proxy> would yield the upstream URL
+        `https://openrouter.ai/api/v1/api/v1/chat/completions` (404).
+        Routing through goose's openai provider with OPENAI_BASE_URL
+        + the default versionless base_path is the clean fit — same
+        upstream OpenRouter endpoint, but the URL math works.
+        Provider-prefixed model slugs (anthropic/claude-haiku-4.5)
+        pass verbatim; OpenRouter resolves them on its side.
+
+invoke:
+  # Server-only smoke (matches Phase 30 followup d24e09e for qwenpaw):
+  # exit_zero gate on `goose --version`. The full chat round-trip is
+  # exercised by the persistent path through the deploy stack, not
+  # the one-shot smoke runner.
+  mode: cli-passthrough
+  spec:
+    entrypoint: goose
+    argv:
+      - --version
+    argv_note: |
+      goose --version exits 0 with a single-line version stamp.
+      No LLM call, no upstream cost — server-only sanity check.
+    stdout_filter:
+      engine: none
+    session_id_capture:
+      engine: none
+
+smoke:
+  prompt: ""
+  pass_if: exit_zero
+  case_insensitive: false
+  timeout_s: 30
+  verified_cells:
+    - model: anthropic/claude-haiku-4.5
+      verdict: PASS
+      notes: |
+        Exit-zero gate; the actual LLM round-trip is verified through
+        the deploy stack (channels.inapp.verified_cells below).
+      wall_time_s: 0.5
+      category: PASS
+      detail: ""
+
+direct_interface:
+  kind: docker_exec_cli
+  spec:
+    argv_template: ["goose", "run", "--text", "{prompt}"]
+    timeout_s: 60
+    stdout_reply: true
+    exit_code_success: 0
+
+persistent:
+  mode: gateway-daemon
+  spec:
+    entrypoint: sh
+    argv:
+      - -c
+      - |
+        set -e
+        mkdir -p /root/.config/goose /root/.local/share/goose
+        export GOOSE_HOST=0.0.0.0
+        export GOOSE_PORT=3000
+        # GOOSE_TLS defaults to true (configuration.rs::default_tls
+        # returns true). On boot goose generates a self-signed cert
+        # and binds https://. The AP dispatcher speaks plain HTTP
+        # (the proxy boundary is at api_server, not here), so TLS
+        # off is correct. Verified empirically 2026-05-07: with
+        # GOOSE_TLS=false the boot log line is "listening on
+        # http://0.0.0.0:3000" — that's the recipe's ready signal.
+        export GOOSE_TLS=false
+        export GOOSE_DISABLE_KEYRING=1
+        # GOOSE_PROVIDER + GOOSE_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY
+        # are set via activation_env (channels.inapp). Env vars take
+        # priority over config.yaml in goose's get_param chain
+        # (env_key uppercase first, then config file fallback).
+        exec goosed agent
+    # `goosed agent` boot sequence emits "listening on https://<addr>"
+    # on TLS path and "listening on http://<addr>" on plain path.
+    # We're plain HTTP (TLS off — proxy boundary lives at the AP
+    # api_server, not here).
+    ready_log_regex: "listening on http://0\\.0\\.0\\.0:3000"
+    health_check:
+      kind: http
+      port: 3000
+      path: /status
+    graceful_shutdown_s: 5
+    sigterm_handled: true
+  argv_note: |
+    Sets GOOSE_HOST + GOOSE_PORT + GOOSE_DISABLE_KEYRING in shell so
+    goosed reads them at startup. The remaining provider/model env
+    vars come from activation_env (channels.inapp.activation_env)
+    which the runner translates to docker -e flags.
+
+channels:
+  # ============================================================================
+  # IN-APP CHAT — goose's POST /reply with X-Secret-Key auth + SSE response.
+  # ============================================================================
+  inapp:
+    transport: http_localhost
+    port: 3000
+    endpoint: /reply
+    contract: goose_native               # NEW dispatcher contract arm
+    contract_model_name: null            # goose reads model from
+                                          # GOOSE_MODEL env, not from
+                                          # request body
+    auth_mode: token                     # NEW: header-named token auth
+    auth_header_name: X-Secret-Key       # NEW field (sibling of
+                                          # idempotency_header /
+                                          # session_header). Goose
+                                          # checks this header on every
+                                          # protected route via the
+                                          # subtle::ConstantTimeEq
+                                          # middleware in
+                                          # crates/goose-server/src/auth.rs.
+    auth_header: "X-Secret-Key: ${INAPP_AUTH_TOKEN}"   # documentation
+                                                        # only; the
+                                                        # dispatcher
+                                                        # builds it from
+                                                        # auth_mode +
+                                                        # auth_header_name.
+    # Per-channel ready signal: same as persistent.spec.ready_log_regex
+    # since this is the only channel goosed exposes natively.
+    ready_log_regex: "listening on http://0\\.0\\.0\\.0:3000"
+    response_routing: per_session
+    activation_env:
+      # Runner injects ${INAPP_AUTH_TOKEN} as a per-session opaque
+      # token at container start time + persists it to
+      # agent_containers.inapp_auth_token (consumed by the
+      # dispatcher's goose_native arm when constructing the
+      # X-Secret-Key header). goose's check_token middleware
+      # constant-time-compares the request header against
+      # GOOSE_SERVER__SECRET_KEY env value.
+      GOOSE_SERVER__SECRET_KEY: "${INAPP_AUTH_TOKEN}"
+      # Provider selection — see warnings.openai_provider_for_openrouter_routing
+      # for why we use openai (not openrouter) as the goose-side
+      # provider name even though the upstream LLM is routed through
+      # OpenRouter. Provider-prefixed model slugs flow verbatim.
+      GOOSE_PROVIDER: "openai"
+      GOOSE_MODEL: "${MODEL}"
+      GOOSE_MODE: "auto"
+      GOOSE_DISABLE_KEYRING: "1"
+      # OPENAI_BASE_URL + OPENAI_API_KEY are injected by the runner's
+      # _build_via_proxy_overrides chain when runtime.via_proxy=true
+      # AND runtime.process_env.api_key=OPENROUTER_API_KEY (see
+      # tools/run_recipe.py::_PROXY_BASE_URL_ENV_BY_API_KEY mapping).
+      # No need to declare them here — they're set unconditionally on
+      # the docker run command and visible to goosed at startup.

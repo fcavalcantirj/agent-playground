@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import asyncpg
@@ -138,6 +139,18 @@ async def _dispatch_http_localhost(
     # pair so /a2a returns 200.
     if inapp.auth_mode == "bearer" and row["inapp_auth_token"]:
         headers["Authorization"] = f"Bearer {row['inapp_auth_token']}"
+    elif inapp.auth_mode == "token" and row["inapp_auth_token"]:
+        # Token auth with a recipe-declared header name (goose's
+        # X-Secret-Key). Bearer is the dominant SDK convention; "token"
+        # mode is the escape hatch for bots that pick a different header
+        # name. The dispatcher trusts the recipe's auth_header_name —
+        # the loader (_parse_inapp_block) parses it, the dispatcher
+        # forwards it. No casing rewrite — recipe value lands verbatim.
+        if not inapp.auth_header_name:
+            raise RuntimeError(
+                "auth_mode=token requires channels.inapp.auth_header_name"
+            )
+        headers[inapp.auth_header_name] = row["inapp_auth_token"]
 
     match inapp.contract:
         case "openai_compat":
@@ -299,6 +312,142 @@ async def _dispatch_http_localhost(
             # dict so the recorder marks the dispatcher row as
             # status='unknown' — the proxy row carries the canonical
             # token counts + cost.
+            return final_text, None
+
+        case "goose_native":
+            # block/goose 3-step protocol (HTTP+SSE).
+            # Reference: crates/goose-server/src/routes/{agent,reply}.rs.
+            #
+            # Empirical findings from the 2026-05-07 spike:
+            #
+            #   1. POST /agent/start mints a session_id (server-generated,
+            #      e.g. "20260507_1" — date+counter, NOT a UUID we can
+            #      pre-pick). Body: {"working_dir": "/root"}. Returns
+            #      Session JSON with `id` field.
+            #   2. POST /agent/update_provider wires the LLM provider for
+            #      that session. WITHOUT this call /reply returns
+            #      `{"type":"Error","error":"Provider not set"}`. Body:
+            #      {"provider": "openai", "model": <slug>, "session_id":
+            #      <minted-id>}. Goose then reads OPENAI_BASE_URL +
+            #      OPENAI_API_KEY env vars to build the provider.
+            #   3. POST /reply with the minted session_id streams the
+            #      reply via SSE.
+            #
+            # The "openai" provider name is HARD-CODED here, not pulled
+            # from the recipe — every via_proxy goose instance uses the
+            # openai provider plugin (with OPENAI_BASE_URL pointed at
+            # the AP egress proxy) regardless of what's actually upstream
+            # of the proxy (anthropic, openrouter, etc.). See
+            # recipes/goose.yaml::warnings.openai_provider_for_openrouter_routing
+            # for why we don't use goose's native openrouter provider.
+            #
+            # SSE event shape (data: {...}\n\n) discriminated by `type`:
+            #   - Message{message, token_state}   — assistant text chunk
+            #   - Finish{reason, token_state}     — TERMINAL signal
+            #   - Error{error}                    — terminal failure
+            #   - Notification / UpdateConversation /
+            #     ActiveRequests / Ping            — intermediate
+            #
+            # Per spike: message.role is LOWERCASE "assistant" in the
+            # Message event payload (the role enum serializes lowercase
+            # via rmcp::model::Role's serde derive).
+            base_url = f"http://{container_ip}:{inapp.port}"
+
+            # Step 1 — mint a session.
+            start_resp = await http_client.post(
+                f"{base_url}/agent/start",
+                json={"working_dir": "/root"},
+                headers=headers,
+                timeout=timeout_seconds,
+            )
+            start_resp.raise_for_status()
+            try:
+                session_id = start_resp.json()["id"]
+            except (KeyError, TypeError, ValueError) as e:
+                raise RuntimeError(f"goose_start_parse_error:{e}") from e
+
+            # Step 2 — wire provider for that session.
+            update_resp = await http_client.post(
+                f"{base_url}/agent/update_provider",
+                json={
+                    "provider": "openai",
+                    "model": row["agent_model"],
+                    "session_id": session_id,
+                },
+                headers=headers,
+                timeout=timeout_seconds,
+            )
+            update_resp.raise_for_status()
+
+            # Step 3 — POST /reply, stream until Finish.
+            body = {
+                "user_message": {
+                    "role": "user",
+                    "created": int(time.time()),
+                    "content": [
+                        {"type": "text", "text": row["content"]},
+                    ],
+                    "metadata": {"userVisible": True, "agentVisible": True},
+                },
+                "session_id": session_id,
+                "override_conversation": None,
+                "recipe_name": None,
+                "recipe_version": None,
+            }
+            assistant_chunks: list[str] = []
+            finish_seen = False
+            async with http_client.stream(
+                "POST",
+                url,
+                json=body,
+                headers=headers,
+                timeout=timeout_seconds,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        event = json.loads(line[len("data: "):])
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = event.get("type")
+                    if event_type == "Error":
+                        err_msg = event.get("error") or "unknown"
+                        raise RuntimeError(f"goose_error:{err_msg}")
+                    if event_type == "Message":
+                        msg = event.get("message") or {}
+                        if msg.get("role") != "assistant":
+                            continue
+                        for piece in msg.get("content") or []:
+                            if (
+                                isinstance(piece, dict)
+                                and piece.get("type") == "text"
+                                and piece.get("text")
+                            ):
+                                assistant_chunks.append(str(piece["text"]))
+                        continue
+                    if event_type == "Finish":
+                        finish_seen = True
+                        break
+                    # Notification / UpdateConversation / ActiveRequests /
+                    # Ping fall through to the next iteration.
+            if not finish_seen:
+                # Stream ended without Finish — connection dropped or
+                # server crashed mid-turn. Mirror agentscope_runtime's
+                # parse-error shape.
+                raise RuntimeError("goose_no_finish_event")
+            final_text = "".join(assistant_chunks)
+            if not final_text:
+                # Finish arrived but no assistant text was streamed.
+                # Could be a tool-only turn or a bug in the bot.
+                raise RuntimeError("goose_finish_without_text")
+            # Usage is captured at the proxy layer (recipe routes through
+            # ${AP_PROXY_BASE_URL}); return None for the dispatcher-side
+            # response dict so the recorder marks status='unknown' on the
+            # dispatcher row — the proxy row carries canonical token
+            # counts + cost.
             return final_text, None
 
         case "zeroclaw_native":
