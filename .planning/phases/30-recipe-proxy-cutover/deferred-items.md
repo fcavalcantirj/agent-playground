@@ -36,6 +36,46 @@ nullclaw, zeroclaw); openclaw FAIL is recipe-level (container
 upstream OpenRouter→Anthropic plugin chain), NOT a harness issue.
 Phase 30 Wave 2 unblocked.
 
+## D-30-DEF-03 — nullclaw is structurally non-proxiable (config schema sealed) — DEFERRED
+
+**Discovered during:** Plan 30-03 Task 2 (live deploy-stack smoke).
+**Severity:** Plan 30-03 cannot complete cleanly. Plan 30-03 commits
+`f7bcd6a` (RED) + `5f2b03b` (GREEN) reverted in `c633b46` + `ccefd10`.
+
+**Empirical evidence (2026-05-07 in-isolation probes against `ap-recipe-nullclaw:latest`):**
+
+1. `nullclaw config set models.providers.<any>.base_url <url>` returns
+   `AccessDenied` for every named provider (openrouter, openai, anthropic,
+   azure, gemini, vertex, deepseek, groq, z.ai, glm, together-ai,
+   fireworks-ai, mistral, xai, …). Same response for adding custom
+   providers.
+2. Writing `models.providers.openrouter.base_url` directly into
+   `config.json` on disk: nullclaw's loader silently strips the field at
+   parse time. `nullclaw config show` reflects only the default
+   `models.providers.openrouter: {}` regardless of disk content. `api_key`
+   IS retained on the openrouter provider; `base_url` is not.
+3. Live-stack sniff test (Plan 30-03 executor, 2026-05-07): with a real
+   OpenRouter key + base_url pointed at a sniff-server on the deploy
+   bridge, nullclaw replied OK and the sniff server received ZERO
+   requests — outbound HTTP went directly to `openrouter.ai`. Definitive.
+
+**Conclusion:** nullclaw is a sealed-config recipe by design. The `base_url`
+override is intentionally not exposed for known providers. Phase 30's
+"flip via heredoc substitution" model cannot work for nullclaw without
+either (a) an upstream patch to expose `base_url`, (b) a sidecar that
+intercepts at network/DNS level (heavy substrate addition), or (c) a fork.
+
+**Routing:** Park nullclaw on its legacy direct-to-OpenRouter path. Phase 30
+ships with **5 of 6 recipes** going through the proxy: nanobot, openclaw,
+hermes, zeroclaw, picoclaw. nullclaw is `BLOCKED(provider-sealed)` and
+revisited only when one of the resolution paths (a/b/c above) becomes
+desirable enough to justify the work.
+
+**Carry-forward fact for Plan 30-07:** the regression-guard rewrite must
+NOT include nullclaw in the asserted set. `_ALL_RECIPES` should be
+`{nanobot, openclaw, hermes, zeroclaw, picoclaw}`; nullclaw is in
+`_OTHER_RECIPES` (the un-flipped set) permanently for this phase.
+
 ## D-30-DEF-02 — Test-runner Dockerfile missing `temporalio` (FIXED inline)
 
 **Discovered during:** Plan 30-00 Task 3 (running e2e harness)
