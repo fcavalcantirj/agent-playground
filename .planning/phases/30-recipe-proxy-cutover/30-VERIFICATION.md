@@ -6,11 +6,17 @@
 
 ## Summary
 
-All 6 recipes (nanobot, openclaw, nullclaw, picoclaw, zeroclaw, hermes) carry
-`runtime.via_proxy: true`. 5 of 6 have empirical live-stack usage_logs evidence
-with real upstream request IDs and real cost. picoclaw's e2e cell was
-explicitly DEFERRED on 2026-04-30 per Phase 22c.3 user direction (no
-channels.inapp block) — picoclaw ships at the YAML invariant layer only.
+**7 recipes** (nanobot, openclaw, nullclaw, picoclaw, zeroclaw, hermes, qwenpaw)
+carry `runtime.via_proxy: true`. **6 of 7** have empirical live-stack
+usage_logs evidence with real upstream request IDs and real cost. picoclaw's
+e2e cell was explicitly DEFERRED on 2026-04-30 per Phase 22c.3 user
+direction (no channels.inapp block) — picoclaw ships at the YAML invariant
+layer only.
+
+QwenPaw was added in commit `03b22f2` (post-Phase-30) alongside a new 4th
+dispatcher contract type (`agentscope_runtime`) for parsing the AgentScope
+Runtime SSE protocol. It replaces picoclaw as the "channel-based personal
+AI" slot in the recipe set.
 
 ## Acceptance Gates
 
@@ -22,17 +28,20 @@ channels.inapp block) — picoclaw ships at the YAML invariant layer only.
 | G4 | **picoclaw** | ✅ | ⚠ DEFERRED | n/a | $0 | Static-YAML invariant only per Phase 22c.3 user direction 2026-04-30 (no channels.inapp block) |
 | G5 | **zeroclaw** | ✅ | ✅ | ✅ `gen-1778127299-jaAL6gsuyrHY6Ep` | $0.01291 | `custom:URL` provider escape hatch + AP_PROXY_BASE_URL substitution dict extension |
 | G6 | **hermes** | ✅ | ✅ | ✅ `gen-1778127435-69OUenz6kfGyhXf` | $0.01302 | `OPENROUTER_BASE_URL` env injection in activation_env |
+| G7 | **qwenpaw** | ✅ (post-30 followup `03b22f2`) | ✅ | ✅ `gen-1778181771-...` + `gen-1778181839-...` ×2 + `gen-1778181841-...` | $0.0361 | New 4th dispatcher contract `agentscope_runtime` (AgentScope Runtime SSE — `POST /api/console/chat`); pre-written providers/custom/ap-proxy.json + active_model.json; React multi-step agent emits 4 chat completions per user prompt; lesson recorded in `feedback_read_official_docs_first.md` after I dismissed QwenPaw on the basis of a code-search miss before reading the docs. |
 
 ## Real-Money Cost Log
 
 ```
 30-00-nanobot-regression: $0.00     (no upstream call — workaround tests)
 30-01-anthropic-spike:    $0.00006  (PROBE-VAL real-money streaming)
+30-02-openclaw-followup:  $0.02964  (post-30 e44f1c2 — 1 anthropic completion)
 30-03-nullclaw:           $0.02832  (2 chat completions through proxy)
 30-05-zeroclaw:           $0.01291  (1 chat completion through proxy)
 30-06-hermes:             $0.01302  (1 chat completion through proxy)
+post-30-qwenpaw:          $0.03612  (post-30 03b22f2 — 4 chat completions because React agent multi-turn)
                           --------
-                          $0.05432  (cumulative — under $0.10 ceiling)
+                          $0.12007  (cumulative — under $0.20 followup ceiling)
 ```
 
 ## BYOK Custody Verification (D-12)
