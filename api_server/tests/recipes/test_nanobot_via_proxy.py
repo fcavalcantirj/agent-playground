@@ -53,7 +53,8 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
 # Phase 30 flips the remaining 5 one PLAN at a time.
 # Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES = ["hermes", "zeroclaw", "nullclaw", "picoclaw"]
+# Phase 30 Plan 30-03 — nullclaw removed (flipped to via_proxy:true; D-06 first openrouter mechanical heredoc).
+_OTHER_RECIPES = ["hermes", "zeroclaw", "picoclaw"]
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
@@ -72,14 +73,14 @@ def test_only_nanobot_has_via_proxy_true(recipe_name: str) -> None:
 def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
     """Combined assertion: across all *.yaml files in recipes/, exactly
     the expected number carry via_proxy: true. Phase 30 increments per plan;
-    after Plan 30-02 (openclaw) the count is 2 (nanobot + openclaw)."""
+    after Plan 30-03 (nullclaw) the count is 3 (nanobot + openclaw + nullclaw)."""
     flipped_count = 0
     for path in RECIPES_DIR.glob("*.yaml"):
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 2, (
-        f"expected exactly 2 recipes with via_proxy: true (nanobot + openclaw), got {flipped_count}"
+    assert flipped_count == 3, (
+        f"expected exactly 3 recipes with via_proxy: true (nanobot + openclaw + nullclaw), got {flipped_count}"
     )
 
 
@@ -189,4 +190,38 @@ def test_openclaw_yaml_has_no_heredoc_proxy_substitution() -> None:
         "openclaw.yaml unexpectedly contains AP_PROXY_BASE_URL substitution — "
         "the Anthropic SDK reads ANTHROPIC_BASE_URL natively via runner env "
         "injection; no heredoc edit is required for openclaw (D-03)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-03 — nullclaw flipped to via_proxy: true (D-06)
+# ---------------------------------------------------------------------------
+
+
+def test_nullclaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-03 cutover invariant — nullclaw flipped to the proxy."""
+    recipe = _load("nullclaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-03 cutover invariant — nullclaw runtime.via_proxy must be true"
+    )
+
+
+def test_nullclaw_base_url_uses_proxy_substitution() -> None:
+    """AMD-09 — nullclaw config heredoc substitutes AP_PROXY_BASE_URL via sh-default
+    form so via_proxy=true uses the runner-injected proxy URL and via_proxy=false
+    falls back to the upstream URL (legacy path preserved).
+
+    nullclaw has ONE heredoc occurrence (vs picoclaw's two; vs nanobot's two) — the
+    `persistent_argv_override` config.json under channels.inapp at line ~468.
+    """
+    text = (RECIPES_DIR / "nullclaw.yaml").read_text()
+    pattern = '"base_url":"${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"'
+    occurrences = text.count(pattern)
+    assert occurrences == 1, (
+        f"expected exactly 1 sh-default base_url substitution in nullclaw.yaml, got {occurrences}"
+    )
+    # Defense-in-depth — the original literal MUST be gone from this field.
+    assert '"base_url":"https://openrouter.ai/api/v1"' not in text, (
+        "the literal upstream URL leaked back into nullclaw.yaml — "
+        "should be sh-defaulted via AP_PROXY_BASE_URL"
     )
