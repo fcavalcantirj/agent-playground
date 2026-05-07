@@ -4,7 +4,7 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-07T01:49:31.308Z"
+last_updated: "2026-05-07T02:05:00.000Z"
 last_activity: 2026-05-07
 progress:
   total_phases: 19
@@ -14,18 +14,28 @@ progress:
   percent: 100
 ---
 
-## Resume after /clear (2026-05-07)
+## Resume after /clear (2026-05-07 — post-Plan-30-01)
 
-**Current state:** Phase 30 EXECUTING — Plan 30-00 SHIPPED 2026-05-07 (commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa). Provider-gated OpenRouter inline-cost path live in api_server proxy. 7 plans remaining (30-01..30-07). Live e2e gate (`make e2e-inapp-docker`) deferred to a Phase 28 follow-up — D-30-DEF-01 in `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` (helpers.py imports deleted `_handle_row` from inapp_dispatcher).
+**Current state:** Phase 30 EXECUTING — Plans 30-00 + 30-01 SHIPPED 2026-05-07. 6 plans remaining (30-02..30-07).
+
+- 30-00 (commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa) — provider-gated OpenRouter inline-cost path live in api_server proxy.
+- 30-01 (commits 6521b64 + 5b053b6) — real-money <$0.01 PROBE-VAL-ANTHROPIC spike PASS at $0.000056; 4/4 invariants asserted (cost_weights pre-check, usage_logs row shape, AMD-07 cumulative-tokens last-wins, D-12 BYOK custody); 1 Rule-1 deviation auto-fixed inline (proxy header chain extended to capture Anthropic `request-id` lowercase + body-level fallback for upstream_request_id; was NULL on every anthropic call before).
+
+Plan 30-02 (openclaw flip) gate is now OPEN — the only un-tested provider path (anthropic SSE through proxy) is empirically validated end-to-end.
+
+Live e2e gate (`make e2e-inapp-docker`) still deferred to a Phase 28 follow-up — D-30-DEF-01 in `.planning/phases/30-recipe-proxy-cutover/deferred-items.md`.
 
 **Read in this order after /clear:**
 
 1. `memory/MEMORY.md` (auto-loaded — index of every memory file)
-2. `.planning/phases/30-recipe-proxy-cutover/30-00-SUMMARY.md` — Plan 30-00 ship report (D-09 inline cost path)
-3. `.planning/phases/30-recipe-proxy-cutover/30-CONTEXT.md` — locked decisions D-01..D-12 + verification_evidence
-4. `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` — D-30-DEF-01 (e2e harness rot, Phase 28 follow-up scope)
-5. `.planning/phases/30-recipe-proxy-cutover/30-{01..07}-PLAN.md` — remaining plans
-6. `git log --oneline -10` — confirm HEAD at `3a3e6aa` (Plan 30-00 chore commit) or later
+2. `.planning/phases/30-recipe-proxy-cutover/30-01-SUMMARY.md` — Plan 30-01 ship report (real-money anthropic spike + proxy hotfix)
+3. `.planning/phases/30-recipe-proxy-cutover/30-00-SUMMARY.md` — Plan 30-00 ship report (D-09 inline cost path)
+4. `.planning/phases/30-recipe-proxy-cutover/30-CONTEXT.md` — locked decisions D-01..D-12 + verification_evidence
+5. `.planning/phases/30-recipe-proxy-cutover/spikes/PROBE-VAL-ANTHROPIC.md` — captured spike artifact (VERDICT: PASS)
+6. `.planning/phases/30-recipe-proxy-cutover/cost-budget.txt` — running real-money log ($0.000056 used so far / $0.10 ceiling)
+7. `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` — D-30-DEF-01 (e2e harness rot, Phase 28 follow-up scope)
+8. `.planning/phases/30-recipe-proxy-cutover/30-{02..07}-PLAN.md` — remaining plans
+9. `git log --oneline -10` — confirm HEAD at `5b053b6` (Plan 30-01 spike commit) or later
 
 **Next command:**
 
@@ -33,7 +43,7 @@ progress:
 /gsd-execute-phase 30 --auto
 ```
 
-(Plan 30-01 is a real-money <$0.01 spike — checkpoint-gated.)
+(Plan 30-02 is the openclaw via_proxy:true flip + e2e smoke. Anthropic-shape proxy path is now empirically validated.)
 
 ---
 
