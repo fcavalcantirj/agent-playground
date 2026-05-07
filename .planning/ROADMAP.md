@@ -642,9 +642,19 @@ Plans:
 
 **Depends on:** Phase 29 (proxy must be live + nano-kaiku must have proven the path).
 
-**Plans:** TBD (run `/gsd-discuss-phase 30` after Phase 29 ships)
+**Plans:** 8 plans
 
-**Status:** queued; opens after Phase 29 verification
+Plans:
+- [ ] 30-00-PLAN.md — proxy reads OpenRouter inline cost (D-09); ParsedUsage + parsers extended; 7 new tests + nanobot regression sweep
+- [ ] 30-01-PLAN.md — PROBE-VAL-ANTHROPIC spike (D-04); real-money <$0.01 streaming validation of proxy anthropic SSE branch
+- [ ] 30-02-PLAN.md — openclaw flip + e2e (D-03); one-line via_proxy:true; ANTHROPIC_BASE_URL env injection (no heredoc)
+- [ ] 30-03-PLAN.md — nullclaw flip + e2e (D-06); mechanical heredoc edit at line 468 (1 substitution)
+- [ ] 30-04-PLAN.md — picoclaw flip + e2e + harness matrix extension (D-06); 2 heredoc substitutions; Makefile + RECIPE_MATRIX extended to 6 cells
+- [ ] 30-05-PLAN.md — zeroclaw flip + e2e (D-06); Wave 0 inspection (distroless image — Pitfall 4); checkpoint-gated
+- [ ] 30-06-PLAN.md — hermes flip + e2e (D-06); Wave 0 inspection (.env override Pitfall 5); checkpoint-gated
+- [ ] 30-07-PLAN.md — cutover verification + regression-guard rewrite (D-08); 30-VERIFICATION.md; ROADMAP update
+
+**Status:** PLANNED 2026-05-06; resume with /gsd-execute-phase 30
 
 ## Backlog
 
