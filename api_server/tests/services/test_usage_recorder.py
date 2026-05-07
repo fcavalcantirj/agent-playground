@@ -460,6 +460,60 @@ def test_parse_anthropic_native_propagates_stop_reason() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 30 Plan 30-00 — D-09 inline cost extraction (OpenRouter usage.cost)
+# ---------------------------------------------------------------------------
+
+
+def test_d09_nonstreaming_inline_cost() -> None:
+    """Non-streaming ``response.usage.cost`` surfaces as ParsedUsage.inline_cost_usd.
+
+    OpenRouter returns ``usage.cost`` at the top level for non-streaming
+    chat completions (per docs verified 2026-05-06). The parser must
+    populate ``inline_cost_usd`` so the route layer can persist it as
+    ``usage_logs.cost_usd`` directly when provider == "openrouter".
+    """
+    response = {
+        "id": "gen-abc-123",
+        "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+        "usage": {
+            "prompt_tokens": 14,
+            "completion_tokens": 7,
+            "cost": 0.00012,  # NEW — D-09 inline cost
+        },
+    }
+    parsed = usage_recorder._parse_openai_compat(response, "openrouter")
+    assert parsed.input_tokens == 14
+    assert parsed.output_tokens == 7
+    assert parsed.inline_cost_usd == 0.00012  # D-09 invariant
+    assert parsed.status == "success"
+
+
+def test_d09_anthropic_native_leaves_inline_cost_none() -> None:
+    """D-10 invariant: Anthropic native parser MUST NOT populate inline_cost_usd.
+
+    Anthropic does not return cost in any response shape (confirmed by
+    OpenRouter and OpenClaw docs verified 2026-05-06). The dataclass
+    default ``inline_cost_usd=None`` covers this; this test pins the
+    invariant so a future reviewer can't accidentally add ``usage.get("cost")``
+    to ``_parse_anthropic_native`` (which would be wrong — Anthropic's
+    schema has no such field).
+    """
+    response = {
+        "id": "msg_abc",
+        "model": "claude-haiku-4-5",
+        "usage": {
+            "input_tokens": 5,
+            "output_tokens": 17,
+        },
+    }
+    parsed = usage_recorder._parse_anthropic_native(response)
+    assert parsed.inline_cost_usd is None  # D-10 — Anthropic returns no cost
+    assert parsed.input_tokens == 5
+    assert parsed.output_tokens == 17
+    assert parsed.status == "success"
+
+
+# ---------------------------------------------------------------------------
 # Phase 29 — record_usage signature extension (proxy_latency_ms + upstream_latency_ms)
 # ---------------------------------------------------------------------------
 

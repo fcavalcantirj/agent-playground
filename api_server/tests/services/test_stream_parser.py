@@ -387,3 +387,58 @@ def test_anthropic_non_streaming_no_usage_returns_failed() -> None:
     assert out.input_tokens == 0
     assert out.output_tokens == 0
     assert out.upstream_request_id == "msg_no_usage"
+
+
+# ===========================================================================
+# Phase 30 Plan 30-00 — D-09 inline cost extraction (OpenRouter usage.cost)
+# ===========================================================================
+
+
+def test_d09_inline_cost_extracted() -> None:
+    """OpenRouter inline `cost` field surfaces as ParsedUsage.inline_cost_usd.
+
+    OpenRouter ships ``usage.cost`` automatically in the last SSE chunk for
+    streams (per docs verified 2026-05-06). Phase 30 Plan 30-00 extends the
+    parser to capture it; ``routes/llm_proxy.py`` then prefers this value
+    over the cost_weights computation when ``provider == "openrouter"``.
+    """
+    parser = StreamUsageParser(provider="openrouter", sse_format="openai")
+    parser.feed(_sse_chunk({"id": "gen-x", "choices": [{"delta": {"content": "hi"}}]}))
+    parser.feed(_sse_chunk({
+        "id": "gen-x",
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 42,
+            "completion_tokens": 17,
+            "cost": 0.00039345,  # NEW — D-09 inline cost
+        },
+    }))
+    parser.feed(_sse_chunk("[DONE]"))
+
+    out = parser.finalize()
+    assert out.input_tokens == 42
+    assert out.output_tokens == 17
+    assert out.inline_cost_usd == 0.00039345  # D-09 invariant
+    assert out.status == "success"
+
+
+def test_d09_no_inline_cost_leaves_field_none() -> None:
+    """Backward compatibility: missing ``cost`` field → inline_cost_usd is None.
+
+    Tokens still populate normally; the route layer then falls back to
+    cost_weights. This proves the default-None semantics that anthropic
+    (D-10) + openai-direct + openrouter-without-cost all rely on.
+    """
+    parser = StreamUsageParser(provider="openrouter", sse_format="openai")
+    parser.feed(_sse_chunk({
+        "id": "gen-y",
+        "choices": [],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 22},
+    }))
+    parser.feed(_sse_chunk("[DONE]"))
+
+    out = parser.finalize()
+    assert out.inline_cost_usd is None  # falls back to cost_weights
+    assert out.input_tokens == 11
+    assert out.output_tokens == 22
+    assert out.status == "success"
