@@ -47,6 +47,14 @@ build:
     key at run time via `nullclaw onboard --api-key ... --provider openrouter`.
 
 runtime:
+  # LLM egress proxy. When via_proxy is true the runner injects
+  # AP_PROXY_BASE_URL + a placeholder OPENROUTER_API_KEY (ap-proxy-<token>).
+  # nullclaw is sealed against base_url overrides on its named providers
+  # (openrouter, openai, etc.) but DOES support a `custom:<URL>` provider
+  # key per its own onboard help (`--provider custom:https://...`). The
+  # heredoc below registers the proxy as a `custom:${RESOLVED_PROXY_URL}`
+  # OpenAI-compatible provider, then routes the model through it.
+  via_proxy: true
   provider: openrouter
   process_env:
     api_key: OPENROUTER_API_KEY
@@ -462,10 +470,31 @@ channels:
         - "-c"
         - |
           set -e
+          # Phase 30 Plan 30-03 — register the egress proxy as a
+          # `custom:<URL>` OpenAI-compatible provider. nullclaw rejects
+          # `base_url` on its named providers (openrouter, openai, etc.)
+          # but accepts arbitrary base_url for the `custom:<URL>` provider
+          # form (per the binary's `nullclaw onboard` help). We resolve
+          # any DNS hostname in AP_PROXY_BASE_URL to its bridge IP first
+          # because nullclaw's URL validator only accepts loopback or
+          # RFC1918 IPs.
+          RESOLVED_PROXY_URL="${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
+          PROVIDER_KEY="openrouter"
+          if [ -n "${AP_PROXY_BASE_URL}" ]; then
+            PROXY_HOST=$(printf '%s' "${AP_PROXY_BASE_URL}" | sed -E 's|^https?://([^:/]+).*|\1|')
+            if [ -n "$PROXY_HOST" ] && ! printf '%s' "$PROXY_HOST" | grep -qE '^[0-9.]+$|^localhost$'; then
+              PROXY_IP=$(getent hosts "$PROXY_HOST" 2>/dev/null | awk '{print $1}' | head -1)
+              if [ -n "$PROXY_IP" ]; then
+                RESOLVED_PROXY_URL=$(printf '%s' "${AP_PROXY_BASE_URL}" | sed "s|//$PROXY_HOST|//$PROXY_IP|")
+              fi
+            fi
+            PROVIDER_KEY="custom:${RESOLVED_PROXY_URL}"
+          fi
+          echo "[nullclaw-bootstrap] PROVIDER_KEY=$PROVIDER_KEY"
           cat > /nullclaw-data/config.json <<EOF
           {
-            "agents":{"defaults":{"model":{"primary":"openrouter/$MODEL"}}},
-            "models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}","base_url":"https://openrouter.ai/api/v1"}}},
+            "agents":{"defaults":{"model":{"primary":"${PROVIDER_KEY}/$MODEL"}}},
+            "models":{"providers":{"${PROVIDER_KEY}":{"api_key":"${OPENROUTER_API_KEY}","base_url":"$RESOLVED_PROXY_URL"}}},
             "gateway":{"port":3000,"host":"0.0.0.0","allow_public_bind":true,"require_pairing":false,"paired_tokens":["${INAPP_AUTH_TOKEN}"]},
             "a2a":{"enabled":true,"name":"${INAPP_AGENT_NAME}","description":"Phase 22c.3 inapp","url":"${INAPP_AGENT_URL}","version":"0.3.0"}
           }

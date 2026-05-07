@@ -53,7 +53,7 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
 # Phase 30 flips the remaining 5 one PLAN at a time.
 # Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES = ["hermes", "zeroclaw", "nullclaw", "picoclaw"]
+_OTHER_RECIPES = ["hermes", "zeroclaw", "picoclaw"]
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
@@ -78,8 +78,8 @@ def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 2, (
-        f"expected exactly 2 recipes with via_proxy: true (nanobot + openclaw), got {flipped_count}"
+    assert flipped_count == 3, (
+        f"expected exactly 3 recipes with via_proxy: true (nanobot + openclaw + nullclaw), got {flipped_count}"
     )
 
 
@@ -189,4 +189,53 @@ def test_openclaw_yaml_has_no_heredoc_proxy_substitution() -> None:
         "openclaw.yaml unexpectedly contains AP_PROXY_BASE_URL substitution — "
         "the Anthropic SDK reads ANTHROPIC_BASE_URL natively via runner env "
         "injection; no heredoc edit is required for openclaw (D-03)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-03 — nullclaw flipped to via_proxy: true via custom:URL
+# ---------------------------------------------------------------------------
+
+
+def test_nullclaw_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-03 cutover invariant — nullclaw flipped to the proxy."""
+    recipe = _load("nullclaw")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-03 cutover invariant — nullclaw runtime.via_proxy must be true"
+    )
+
+
+def test_nullclaw_uses_custom_provider_form() -> None:
+    """nullclaw rejects base_url on named providers (openrouter, openai, …)
+    with AccessDenied. The escape hatch is the literal `custom:<URL>`
+    provider key documented in the binary's onboard --help. The bootstrap
+    heredoc must register the proxy via this form, NOT via the openrouter
+    provider entry."""
+    text = (RECIPES_DIR / "nullclaw.yaml").read_text()
+    assert "PROVIDER_KEY=\"custom:${RESOLVED_PROXY_URL}\"" in text, (
+        "nullclaw.yaml must set PROVIDER_KEY to the custom:<URL> form when "
+        "AP_PROXY_BASE_URL is present — that's the only documented "
+        "base_url escape hatch in nullclaw."
+    )
+    # Sanity — heredoc references the constructed PROVIDER_KEY var, not a
+    # hardcoded "openrouter" string in the via_proxy=true path.
+    assert "\"models\":{\"providers\":{\"${PROVIDER_KEY}\":" in text, (
+        "the providers JSON must be keyed by ${PROVIDER_KEY} so the "
+        "custom:<URL> entry materializes when via_proxy=true"
+    )
+    assert "\"primary\":\"${PROVIDER_KEY}/$MODEL\"" in text, (
+        "agents.defaults.model.primary must use the ${PROVIDER_KEY}/<model> "
+        "form so the resolved primary points at the custom provider"
+    )
+
+
+def test_nullclaw_legacy_path_still_works() -> None:
+    """When AP_PROXY_BASE_URL is unset (legacy direct-to-OpenRouter path),
+    PROVIDER_KEY falls back to the bare 'openrouter' string and primary
+    becomes openrouter/<model>. D-27 byte-identical legacy invariant."""
+    text = (RECIPES_DIR / "nullclaw.yaml").read_text()
+    assert "PROVIDER_KEY=\"openrouter\"" in text, (
+        "nullclaw legacy fallback — PROVIDER_KEY must default to 'openrouter' "
+        "when AP_PROXY_BASE_URL is empty so the recipe still works without "
+        "the runner injecting a proxy URL"
     )

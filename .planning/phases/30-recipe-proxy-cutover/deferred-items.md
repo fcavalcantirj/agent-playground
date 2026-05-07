@@ -36,45 +36,50 @@ nullclaw, zeroclaw); openclaw FAIL is recipe-level (container
 upstream OpenRouter→Anthropic plugin chain), NOT a harness issue.
 Phase 30 Wave 2 unblocked.
 
-## D-30-DEF-03 — nullclaw is structurally non-proxiable (config schema sealed) — DEFERRED
+## D-30-DEF-03 — nullclaw escape hatch found: `custom:URL` provider — RESOLVED 2026-05-07
 
-**Discovered during:** Plan 30-03 Task 2 (live deploy-stack smoke).
-**Severity:** Plan 30-03 cannot complete cleanly. Plan 30-03 commits
-`f7bcd6a` (RED) + `5f2b03b` (GREEN) reverted in `c633b46` + `ccefd10`.
+**Premature loss declaration retracted.** The earlier investigation tested only
+the *named* providers (`openrouter`, `openai`, `lmstudio`, `vllm`, `ollama`,
+`sglang`, etc.) and found `base_url` rejected with `AccessDenied`. That was
+correct for those providers — but nullclaw's documented escape hatch is a
+**`custom:<URL>` provider key**, surfaced in the binary's onboard help:
 
-**Empirical evidence (2026-05-07 in-isolation probes against `ap-recipe-nullclaw:latest`):**
+```
+nullclaw onboard --api-key sk-... --provider custom:https://api.example.com/v1 --model ...
+```
 
-1. `nullclaw config set models.providers.<any>.base_url <url>` returns
-   `AccessDenied` for every named provider (openrouter, openai, anthropic,
-   azure, gemini, vertex, deepseek, groq, z.ai, glm, together-ai,
-   fireworks-ai, mistral, xai, …). Same response for adding custom
-   providers.
-2. Writing `models.providers.openrouter.base_url` directly into
-   `config.json` on disk: nullclaw's loader silently strips the field at
-   parse time. `nullclaw config show` reflects only the default
-   `models.providers.openrouter: {}` regardless of disk content. `api_key`
-   IS retained on the openrouter provider; `base_url` is not.
-3. Live-stack sniff test (Plan 30-03 executor, 2026-05-07): with a real
-   OpenRouter key + base_url pointed at a sniff-server on the deploy
-   bridge, nullclaw replied OK and the sniff server received ZERO
-   requests — outbound HTTP went directly to `openrouter.ai`. Definitive.
+**Empirical confirmation (2026-05-07, fresh probe in clean Docker volume):**
 
-**Conclusion:** nullclaw is a sealed-config recipe by design. The `base_url`
-override is intentionally not exposed for known providers. Phase 30's
-"flip via heredoc substitution" model cannot work for nullclaw without
-either (a) an upstream patch to expose `base_url`, (b) a sidecar that
-intercepts at network/DNS level (heavy substrate addition), or (c) a fork.
+Writing `config.json` directly with the provider key set to literally
+`custom:<URL>` results in nullclaw accepting the field. `nullclaw doctor`
+reports:
 
-**Routing:** Park nullclaw on its legacy direct-to-OpenRouter path. Phase 30
-ships with **5 of 6 recipes** going through the proxy: nanobot, openclaw,
-hermes, zeroclaw, picoclaw. nullclaw is `BLOCKED(provider-sealed)` and
-revisited only when one of the resolution paths (a/b/c above) becomes
-desirable enough to justify the work.
+```
+[ok] provider: custom:http://192.168.1.50:9000/v1/llm/forward
+[ok] API key configured
+[ok] default model: anthropic/claude-haiku-4-5
+```
 
-**Carry-forward fact for Plan 30-07:** the regression-guard rewrite must
-NOT include nullclaw in the asserted set. `_ALL_RECIPES` should be
-`{nanobot, openclaw, hermes, zeroclaw, picoclaw}`; nullclaw is in
-`_OTHER_RECIPES` (the un-flipped set) permanently for this phase.
+The provider gets persisted as a real first-class entry in
+`models.providers["custom:http://..."]` with the configured `base_url`
+honored. The `api_key` is encrypted at rest (`enc2:...` prefix).
+
+**Path for Plan 30-03 redo:** The recipe heredoc in `recipes/nullclaw.yaml`
+must be reshaped so the persisted provider key is `custom:${RESOLVED_PROXY_URL}`
+(NOT `openrouter`), and the `agents.defaults.model.primary` becomes
+`custom:${RESOLVED_PROXY_URL}/anthropic/claude-haiku-4-5`. Phase 30 ships
+with **6 of 6 recipes** going through the proxy.
+
+**Reverts of the earlier defeat:** the `c633b46` + `ccefd10` revert commits
+will themselves be re-reverted (or replaced with a fresh flip commit) once
+the heredoc reshape is verified live.
+
+**Lesson recorded:** A CLI's `AccessDenied` on a named-provider field is
+NOT the same as "the binary doesn't support this knob." Always check the
+binary's own help / examples / strings for documented escape hatches before
+declaring a recipe non-proxiable. The string
+`models.providers.<provider>.base_url: custom endpoint override used for
+custom/OpenAI-compatible providers...` was inside the binary the whole time.
 
 ## D-30-DEF-02 — Test-runner Dockerfile missing `temporalio` (FIXED inline)
 
