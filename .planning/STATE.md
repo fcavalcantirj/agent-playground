@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: context exhaustion at 90% (2026-05-05)
-last_updated: "2026-05-07T02:05:00.000Z"
+stopped_at: context exhaustion at 90% (2026-05-07)
+last_updated: "2026-05-07T19:20:31.649Z"
 last_activity: 2026-05-07
 progress:
   total_phases: 19
@@ -14,28 +14,44 @@ progress:
   percent: 100
 ---
 
-## Resume after /clear (2026-05-07 — post-Plan-30-01)
+## Resume after /clear (2026-05-07 — Phase 30 + post-30 followups SHIPPED)
 
-**Current state:** Phase 30 EXECUTING — Plans 30-00 + 30-01 SHIPPED 2026-05-07. 6 plans remaining (30-02..30-07).
+**Current state:** Phase 30 SHIPPED + 3 post-30 followups SHIPPED 2026-05-07.
+**Last commit:** `a989631` (docs(post-30): add QwenPaw row to VERIFICATION + ROADMAP).
+**Pending verification:** test the qwenpaw recipe through the actual mobile/web client (not just curl smokes) before declaring this work area closed.
 
-- 30-00 (commits f351ddb + 734562e + 818bee2 + 292625b + 3a3e6aa) — provider-gated OpenRouter inline-cost path live in api_server proxy.
-- 30-01 (commits 6521b64 + 5b053b6) — real-money <$0.01 PROBE-VAL-ANTHROPIC spike PASS at $0.000056; 4/4 invariants asserted (cost_weights pre-check, usage_logs row shape, AMD-07 cumulative-tokens last-wins, D-12 BYOK custody); 1 Rule-1 deviation auto-fixed inline (proxy header chain extended to capture Anthropic `request-id` lowercase + body-level fallback for upstream_request_id; was NULL on every anthropic call before).
+**Phase 30 main (8 plans, all SHIPPED, PHASE-30-EXIT-GATE-PASSED):**
+- 30-00 → `3a3e6aa` — provider-gated OpenRouter inline-cost path
+- 30-01 → `5b053b6` — PROBE-VAL-ANTHROPIC real-money spike ($0.000056)
+- 30-02 → `2310d60` — openclaw YAML flip + regression-guard
+- 30-03 → `31b2c70` — nullclaw via `custom:URL` provider escape hatch
+- 30-04 → `b166c01` — picoclaw YAML flip (e2e DEFERRED per Phase 22c.3 user direction)
+- 30-05 → `e4f01a8` — zeroclaw via `custom:URL` provider + AP_PROXY_BASE_URL substitution dict
+- 30-06 → `6995546` — hermes via `OPENROUTER_BASE_URL` env injection
+- 30-07 → `653ad54` — cutover verification + regression-guard rewrite
 
-Plan 30-02 (openclaw flip) gate is now OPEN — the only un-tested provider path (anthropic SSE through proxy) is empirically validated end-to-end.
+**Post-30 followups (all SHIPPED 2026-05-07):**
+- `e44f1c2` — openclaw end-to-end fix (3 changes): ready_log_regex updated for openclaw 2026.5.4; `models.providers.anthropic` config block added (the load-bearing knob — ANTHROPIC_BASE_URL env not honored by openclaw plugin); proxy auth extended to also accept `x-api-key`. Real Anthropic request ID `req_011CaoXVkMBnUgkjcSMS44N4` + $0.02964.
+- `03b22f2` — QwenPaw recipe added + new 4th dispatcher contract `agentscope_runtime` (AgentScope Runtime SSE — `POST /api/console/chat`, filter on `object=response` for terminal completion). Live verified end-to-end: 4 chat completions through proxy with real OpenRouter IDs (`gen-1778181771-...` + `gen-1778181839-...` ×2 + `gen-1778181841-...`) and $0.0361.
+- `a989631` — VERIFICATION + ROADMAP doc update for QwenPaw.
 
-Live e2e gate (`make e2e-inapp-docker`) still deferred to a Phase 28 follow-up — D-30-DEF-01 in `.planning/phases/30-recipe-proxy-cutover/deferred-items.md`.
+**Recipe roster after this work:**
+- ✅ nanobot · ✅ openclaw · ✅ nullclaw · ✅ zeroclaw · ✅ hermes · ✅ qwenpaw — 6 recipes e2e-verified through proxy with real upstream cost
+- ⚠️ picoclaw — static-YAML-only (`via_proxy: true` ships but no HTTP chat endpoint; Pico WebSocket channel `/pico/ws` exists per upstream docs but our dispatcher is HTTP-only — adding WebSocket transport is unscoped future work that would also unlock AionUi)
+- **$0.1201 cumulative real-money** spend (under $0.20 followup ceiling)
+
+**Open decisions for next session:**
+1. Test qwenpaw through the actual mobile/web client (recipe selector → deploy → chat → usage_logs)
+2. Decide picoclaw: drop, keep static-YAML-only, or invest ~half day in WebSocket dispatcher transport (also unlocks AionUi)
+3. AionUi (24k★ meta-orchestrator) is technically possible but architectural mismatch (WebSocket-only + flattened CLI-choice model) — flagged but not on the queue
 
 **Read in this order after /clear:**
 
-1. `memory/MEMORY.md` (auto-loaded — index of every memory file)
-2. `.planning/phases/30-recipe-proxy-cutover/30-01-SUMMARY.md` — Plan 30-01 ship report (real-money anthropic spike + proxy hotfix)
-3. `.planning/phases/30-recipe-proxy-cutover/30-00-SUMMARY.md` — Plan 30-00 ship report (D-09 inline cost path)
-4. `.planning/phases/30-recipe-proxy-cutover/30-CONTEXT.md` — locked decisions D-01..D-12 + verification_evidence
-5. `.planning/phases/30-recipe-proxy-cutover/spikes/PROBE-VAL-ANTHROPIC.md` — captured spike artifact (VERDICT: PASS)
-6. `.planning/phases/30-recipe-proxy-cutover/cost-budget.txt` — running real-money log ($0.000056 used so far / $0.10 ceiling)
-7. `.planning/phases/30-recipe-proxy-cutover/deferred-items.md` — D-30-DEF-01 (e2e harness rot, Phase 28 follow-up scope)
-8. `.planning/phases/30-recipe-proxy-cutover/30-{02..07}-PLAN.md` — remaining plans
-9. `git log --oneline -10` — confirm HEAD at `5b053b6` (Plan 30-01 spike commit) or later
+1. `memory/MEMORY.md` (auto-loaded)
+2. `.planning/phases/30-recipe-proxy-cutover/30-VERIFICATION.md` — full per-recipe acceptance gate report
+3. `.planning/phases/30-recipe-proxy-cutover/cost-budget.txt` — running real-money log
+4. `recipes/qwenpaw.yaml` — new recipe + agentscope_runtime contract reference
+5. `git log --oneline -15` — confirm HEAD at `a989631` or later
 
 **Next command:**
 
@@ -648,9 +664,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-07T01:49:23.435Z
+Last session: 2026-05-07T19:20:31.636Z
 
-Stopped at: context exhaustion at 90% (2026-05-05)
+Stopped at: context exhaustion at 90% (2026-05-07)
 
 **Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
 
