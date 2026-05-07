@@ -53,7 +53,7 @@ def test_nanobot_runtime_via_proxy_is_true() -> None:
 # All 6 recipe filenames in repo/recipes/. nanobot was the Phase 29 cutover;
 # Phase 30 flips the remaining 5 one PLAN at a time.
 # Phase 30 Plan 30-02 — openclaw removed (flipped to via_proxy:true; D-03 fail-fast on the anthropic-shape path).
-_OTHER_RECIPES = ["hermes"]
+_OTHER_RECIPES: list[str] = []
 
 
 @pytest.mark.parametrize("recipe_name", _OTHER_RECIPES)
@@ -78,8 +78,35 @@ def test_only_one_recipe_yaml_has_via_proxy_true() -> None:
         text = path.read_text()
         if "via_proxy: true" in text:
             flipped_count += 1
-    assert flipped_count == 5, (
-        f"expected exactly 5 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw + zeroclaw), got {flipped_count}"
+    assert flipped_count == 6, (
+        f"expected exactly 6 recipes with via_proxy: true (nanobot + openclaw + nullclaw + picoclaw + zeroclaw + hermes — full Phase 30 cutover), got {flipped_count}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 30-06 — hermes flipped to via_proxy: true
+# ---------------------------------------------------------------------------
+
+
+def test_hermes_runtime_via_proxy_is_true() -> None:
+    """Phase 30 Plan 30-06 cutover invariant — hermes flipped to the proxy."""
+    recipe = _load("hermes")
+    assert recipe["runtime"]["via_proxy"] is True, (
+        "Phase 30 Plan 30-06 cutover invariant — hermes runtime.via_proxy must be true"
+    )
+
+
+def test_hermes_activation_env_sets_openrouter_base_url() -> None:
+    """hermes reads OPENROUTER_BASE_URL via os.getenv() in
+    hermes_cli/runtime_provider.py (precedence: env > config.yaml >
+    hermes_constants.OPENROUTER_BASE_URL). The persistent-mode
+    activation_env block must inject OPENROUTER_BASE_URL=${AP_PROXY_BASE_URL}
+    so the runner-injected proxy URL reaches hermes's HTTP client."""
+    text = (RECIPES_DIR / "hermes.yaml").read_text()
+    assert 'OPENROUTER_BASE_URL: "${AP_PROXY_BASE_URL}"' in text, (
+        "hermes.yaml's persistent activation_env must inject "
+        "OPENROUTER_BASE_URL=${AP_PROXY_BASE_URL} — that's hermes's "
+        "documented env-var override path for the upstream URL."
     )
 
 

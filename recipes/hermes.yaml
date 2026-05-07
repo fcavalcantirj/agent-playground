@@ -30,6 +30,14 @@ build:
     Cold-build time is the long pole; warm apt/layer cache can halve it.
 
 runtime:
+  # LLM egress proxy. When via_proxy is true the runner injects
+  # AP_PROXY_BASE_URL (and a placeholder OPENROUTER_API_KEY). hermes reads
+  # OPENROUTER_BASE_URL natively in hermes_cli/runtime_provider.py
+  # (`os.getenv("OPENROUTER_BASE_URL", "").strip()` precedence chain), so
+  # we expose AP_PROXY_BASE_URL → OPENROUTER_BASE_URL via activation_env
+  # in the persistent-mode block below. No heredoc / config-file edit
+  # needed — env-var injection is the documented override path.
+  via_proxy: true
   provider: openrouter
   process_env:
     api_key: OPENROUTER_API_KEY
@@ -370,6 +378,16 @@ channels:
       # interpolation form (the YAML key is rendered to its value via the
       # runner's render_placeholders pass over activation_substitutions).
       MODEL: "${MODEL}"
+      # Phase 30 Plan 30-06 — point hermes's outbound openrouter calls
+      # at the AP egress proxy. hermes_cli/runtime_provider.py reads
+      # OPENROUTER_BASE_URL via os.getenv() with a precedence chain
+      # (env > config.yaml > hermes_constants.OPENROUTER_BASE_URL).
+      # build_activation_substitutions injects AP_PROXY_BASE_URL when
+      # via_proxy=true (the canonical proxy URL on the deploy_default
+      # bridge). When via_proxy=false the value is empty string and
+      # hermes falls back to the upstream URL — D-27 byte-identical
+      # legacy behavior preserved.
+      OPENROUTER_BASE_URL: "${AP_PROXY_BASE_URL}"
     persistent_argv_override:
       # Bug fix (root-cause confirmed 2026-05-04 by 4-agent recon + spike
       # artifact .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-

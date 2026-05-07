@@ -16,3 +16,10 @@
   - $0.01291200 (gen-1778127299-jaAL6gsuyrHY6Ep)
   - Subtotal: $0.01291200
   - Phase 30 cumulative: ~$0.0413
+
+[2026-05-07] Plan 30-06 — hermes live smoke (OPENROUTER_BASE_URL env flip)
+  - 1 successful chat completion through proxy (2 logged usage rows — gen-* + chatcmpl-* shapes)
+  - $0.01302100 (gen-1778127435-69OUenz6kfGyhXf)
+  - Subtotal: $0.01302100
+  - Phase 30 cumulative: ~$0.0543
+  - All 6 recipes via proxy: nanobot + openclaw + nullclaw + picoclaw + zeroclaw + hermes
