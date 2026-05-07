@@ -48,6 +48,7 @@ build:
 
 runtime:
   provider: openrouter
+  via_proxy: true                          # Phase 30 D-06 — nullclaw flip (Plan 30-03)
   process_env:
     api_key: OPENROUTER_API_KEY
     api_key_fallback: null
@@ -465,7 +466,7 @@ channels:
           cat > /nullclaw-data/config.json <<EOF
           {
             "agents":{"defaults":{"model":{"primary":"openrouter/$MODEL"}}},
-            "models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}","base_url":"https://openrouter.ai/api/v1"}}},
+            "models":{"providers":{"openrouter":{"api_key":"${OPENROUTER_API_KEY}","base_url":"${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"}}},
             "gateway":{"port":3000,"host":"0.0.0.0","allow_public_bind":true,"require_pairing":false,"paired_tokens":["${INAPP_AUTH_TOKEN}"]},
             "a2a":{"enabled":true,"name":"${INAPP_AGENT_NAME}","description":"Phase 22c.3 inapp","url":"${INAPP_AGENT_URL}","version":"0.3.0"}
           }
