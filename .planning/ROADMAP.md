@@ -670,12 +670,14 @@ Plans:
 **Plans:** 6 plans in 4 waves
 
 Plans:
-- [ ] 31-01-PLAN.md — Wave 0 preflight: register e2e_money_path marker, AMD-05 usage_logs truncate, sentry-sdk + sentry_flutter pins
-- [ ] 31-02-PLAN.md — Wave 1: H3 auth rate-limit bucket (5/min/IP × 7 routes, composite subject) + real-Postgres tests
-- [ ] 31-03-PLAN.md — Wave 1: H6 api_server Sentry init + AMD-06 before_send filter + middleware/session set_user + transport-mock tests
-- [ ] 31-04-PLAN.md — Wave 1: H6 mobile Sentry wrap-runner + H4 chat-stream classifier + provider + AMD-01 inline RetryBanner sibling-block + Makefile dart-defines
-- [ ] 31-05-PLAN.md — Wave 2: H4 classifier unit tests + banner widget tests + H6 mobile init test (depends on 31-04)
-- [ ] 31-06-PLAN.md — Wave 3: H8 CI e2e money-path workflow + tests/e2e/test_money_path.py + Makefile target + 4 manual gates (AC20/22/23/24)
+- [x] 31-01-PLAN.md — Wave 0 preflight: register e2e_money_path marker, AMD-05 usage_logs truncate, sentry-sdk + sentry_flutter pins (SHIPPED 2026-05-08)
+- [x] 31-02-PLAN.md — Wave 1: H3 auth rate-limit bucket (5/min/IP × 7 routes, composite subject) + real-Postgres tests (SHIPPED 2026-05-08; 6th call → 429 verified live in deploy stack)
+- [x] 31-03-PLAN.md — Wave 1: H6 api_server Sentry init + AMD-06 before_send filter + middleware/session set_user + transport-mock tests (SHIPPED 2026-05-08; live with DSN)
+- [x] 31-04-PLAN.md — Wave 1: H6 mobile Sentry wrap-runner + H4 chat-stream classifier + provider + AMD-01 inline RetryBanner sibling-block + Makefile dart-defines (SHIPPED 2026-05-08; live with DSN)
+- [x] 31-05-PLAN.md — Wave 2: H4 classifier unit tests + banner widget tests + H6 mobile init test (depends on 31-04) (SHIPPED 2026-05-08; 15/15 PASS)
+- [x] 31-06-PLAN.md — Wave 3: H8 CI e2e money-path workflow + tests/e2e/test_money_path.py + Makefile target + 4 manual gates (AC20/22/23/24) (SHIPPED 2026-05-08; 4 manual gates persisted in 31-HUMAN-UAT.md)
+
+**Status:** SHIPPED 2026-05-08 (PHASE-31-EXIT-GATE-PASSED for automated coverage). All 4 must_haves green: H3 auth bucket live (`6th call → 429` empirically verified against deploy stack), H4 chat-stream classifier + RetryBanner with 3 SPEC-locked copy strings + 15/15 mobile tests PASS, H6 errors-only Sentry initialized in both runtimes (DSNs wired 2026-05-08; AMD-06 4xx-drop verified by transport-mock test), H8 e2e money-path workflow + Makefile target + test landed (4 manual gates AC20/22/23/24 persist in 31-HUMAN-UAT.md until user runs them on GH/OpenRouter dashboards). Code review (31-REVIEW.md) found 1 critical + 5 warnings, all resolved in commits `9968f33`–`c939ac0` + `72503ef` (deploy Dockerfile sentry-sdk install). Phase B (Stripe paywall) unblocked from a code standpoint.
 
 ## Backlog
 

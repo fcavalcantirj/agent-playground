@@ -2,23 +2,56 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: executing
-stopped_at: context exhaustion at 90% (2026-05-07)
-last_updated: "2026-05-08T14:59:31.015Z"
-last_activity: 2026-05-08 -- Phase 31 execution started
+status: phase_complete
+stopped_at: "2026-05-08 — Phase 31 SHIPPED (automated); 4 manual gates persist in 31-HUMAN-UAT.md"
+last_updated: "2026-05-08T21:30:00.000Z"
+last_activity: 2026-05-08 -- Phase 31 SHIPPED, ready to begin Phase B (Stripe paywall)
 progress:
-  total_phases: 19
-  completed_phases: 5
-  total_plans: 32
-  completed_plans: 32
+  total_phases: 20
+  completed_phases: 6
+  total_plans: 38
+  completed_plans: 38
   percent: 100
 ---
 
-## Resume after /clear (2026-05-07 — Phase 30 + post-30 followups SHIPPED)
+## Resume after /clear (2026-05-08 — Phase 31 SHIPPED, Phase B queued)
 
-**Current state:** Phase 30 SHIPPED + 3 post-30 followups SHIPPED 2026-05-07.
-**Last commit:** `a989631` (docs(post-30): add QwenPaw row to VERIFICATION + ROADMAP).
-**Pending verification:** test the qwenpaw recipe through the actual mobile/web client (not just curl smokes) before declaring this work area closed.
+**Current state:** Phase 31 SHIPPED 2026-05-08 (PHASE-31-EXIT-GATE-PASSED for automated coverage). Sentry live in both runtimes against the deploy stack.
+**Last commit:** Phase 31 wrap-up commit (this commit).
+**Pending verification:** 4 manual gates in `.planning/phases/31-pre-stripe-billing-hardening/31-HUMAN-UAT.md` — OpenRouter $5/mo cap (AC22), GitHub `OPENROUTER_CI_KEY` secret (AC20), no-op baseline PR (AC23), regression PR (AC24). These require user action on Sentry/GitHub/OpenRouter dashboards.
+
+**Phase 31 (6 plans, all SHIPPED, PHASE-31-EXIT-GATE-PASSED for automated coverage):**
+
+- 31-01 → `709fec2`/`30809c5`/`975ce03`/`db7e678` — preflight: e2e_money_path marker + sentry pins + AMD-05 truncate
+- 31-02 → `d64d16f`/`f775f32`/`6b1cd37` — H3 auth bucket (5/60s × 7 routes) + 4 real-Postgres tests
+- 31-03 → `68fc724`/`169f970`/`91d1612` — H6 api_server Sentry init + AMD-06 4xx-drop + 5 transport-mock tests
+- 31-04 → `ab6ebae`/`a529e05`/`439abc4` — H4 chat-stream classifier + RetryBanner + H6 mobile init wrap-runner
+- 31-05 → `da8d6b9`/`891499a`/`7bd2698`/`b6d579f` — H4 widget tests + classifier units + H6 mobile init test
+- 31-06 → `ea21659`/`c849566`/`c07b183`/`7730aa7` — H8 e2e money-path test + GH workflow + Makefile target
+
+**REVIEW.md fixes (1 critical + 5 warnings, all SHIPPED 2026-05-08):**
+
+- CR-01 → `9968f33` — `CREATE DATABASE ... || true` idempotency in workflow YAML
+- WR-01 → `c939ac0` — mobile D-16 `Sentry.configureScope` user-tag on sign-in/out
+- WR-02 → `ae4efe0` — `pytest.skip` → `pytest.fail` on missing `OPENROUTER_API_KEY`
+- WR-03 → `e5f1ae3` — D-13 environment + release tagging assertion test
+- WR-04 → `4f9db9d` — `httpx>=0.27,<0.30` upper bound (pin discipline)
+- WR-05 → `e88fdcc` — derive `_AUTH_ROUTES` from `_AUTH_ROUTE_KEYS` to prevent drift
+
+**Post-Phase-31 deploy hole patched 2026-05-08:**
+
+- `72503ef` — added `sentry-sdk[fastapi]>=2.20,<3.0` to `tools/Dockerfile.api` pip-install list (was missed by Plan 31-01/03 because the deploy Dockerfile uses hardcoded literals, not pyproject). Without this, the deploy api_server image would crash at boot on `from .instrumentation.sentry import init_sentry`.
+
+**5-investigator post-mortem (2026-05-08) — split-brain trap documented in CLAUDE.md** (`1aefb4d`): never run native uvicorn alongside the deploy stack on macOS. Two postgres + two networks = silent message-dispatch failure. Canonical smoke path is `docker compose -f deploy/docker-compose.prod.yml ... build api_server && up -d api_server`.
+
+**Sentry live (2026-05-08):**
+
+- `python-fastapi` project (DSN ends `...4332416`) — wired in `deploy/.env.prod` as `AP_SENTRY_DSN_API`
+- `solvr_app_flutter` project (DSN ends `...0165120`) — wired in root `.env` as `SENTRY_DSN_MOBILE`
+- Both errors-only (`traces_sample_rate=0.0`, `profilesSampleRate` SDK-default 0)
+- AMD-06 budget protection live: 4xx HTTPException dropped before reaching Sentry transport
+
+**Next phase: Phase B (Stripe paywall).** `.planning/phases/B-stripe-paywall/CONTEXT.md` exists. Begin with `/gsd-discuss-phase B-stripe-paywall` (or `/gsd-plan-phase B-stripe-paywall` if context is already locked). Phase B is gated on H7 (Hetzner deploy) for live webhook delivery — local-substrate work can land first; webhook contract requires the public host.
 
 **Phase 30 main (8 plans, all SHIPPED, PHASE-30-EXIT-GATE-PASSED):**
 
