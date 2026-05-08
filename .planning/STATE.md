@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
-status: phase_complete
-stopped_at: "2026-05-08 — Phase 31 SHIPPED (automated); 4 manual gates persist in 31-HUMAN-UAT.md"
-last_updated: "2026-05-08T21:30:00.000Z"
-last_activity: 2026-05-08 -- Phase 31 SHIPPED, ready to begin Phase B (Stripe paywall)
+status: executing
+stopped_at: Phase B-stripe-paywall context gathered (26 decisions across 12 areas)
+last_updated: "2026-05-08T23:01:27.978Z"
+last_activity: 2026-05-08 -- Phase 31 execution started
 progress:
-  total_phases: 20
-  completed_phases: 6
-  total_plans: 38
-  completed_plans: 38
+  total_phases: 19
+  completed_phases: 5
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -702,9 +702,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-07T19:20:31.636Z
+Last session: 2026-05-08T23:01:27.967Z
 
-Stopped at: context exhaustion at 90% (2026-05-07)
+Stopped at: Phase B-stripe-paywall context gathered (26 decisions across 12 areas)
 
 **Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
 
@@ -728,4 +728,4 @@ Stopped at: context exhaustion at 90% (2026-05-07)
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: None
+Resume file: .planning/phases/B-stripe-paywall/CONTEXT.md
