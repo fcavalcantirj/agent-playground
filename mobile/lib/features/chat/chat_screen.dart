@@ -26,6 +26,8 @@ import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/chat/bubble_widget.dart';
 import 'package:agent_playground/features/chat/chat_providers.dart';
+import 'package:agent_playground/features/chat/chat_stream_error_banner_provider.dart';
+import 'package:agent_playground/features/chat/chat_stream_error_classifier.dart';
 import 'package:agent_playground/features/chat/input_bar.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
 import 'package:agent_playground/features/chat/timestamp_divider.dart';
@@ -128,6 +130,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final agentsAsync = ref.watch(agentsListProvider);
     final agent = _currentAgent(agentsAsync);
     final tgBanner = ref.watch(telegramFailedBannerProvider);
+    // Phase 31 H4 (D-05/D-09 + AMD-01) — chat-stream error banner state.
+    final streamErr = ref.watch(chatStreamErrorProvider);
     final isStopped =
         agent != null && agent.status != 'running' && agent.status.isNotEmpty;
 
@@ -205,6 +209,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   .state = null,
               onTap: () => _retryTelegram(context, tgBanner),
             ),
+          // Phase 31 H4 (D-05/D-08/D-09 + AMD-01 + SPEC AC5/AC6/AC7) —
+          // inline chat-stream error banner. Sibling of the telegram
+          // banner above; reuses the shared RetryBanner widget per
+          // AMD-01 (no parallel banner widget file).
+          if (streamErr != null)
+            RetryBanner(
+              key: const Key('chat-stream-error-banner'),
+              message: _streamErrorCopy(streamErr.errorClass),
+              actionLabel:
+                  streamErr.errorClass == ChatStreamErrorClass.authExpired
+                      ? 'Sign in'
+                      : 'Retry',
+              tone: RetryBannerTone.warning,
+              dismissible: true,
+              onDismiss: () =>
+                  ref.read(chatStreamErrorProvider.notifier).state = null,
+              onTap: () => _handleStreamErrorRetry(context, streamErr),
+            ),
           if (scope.hasOlderMessages)
             _OlderMessagesBanner(onTap: scopeNotifier.loadOlder),
           Expanded(
@@ -233,6 +255,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
     );
+  }
+
+  /// Phase 31 H4 (SPEC AC5/AC6/AC7) — three-class user-facing copy.
+  /// Strings are SPEC-locked; jargon-free per SPEC AC11.
+  String _streamErrorCopy(ChatStreamErrorClass c) {
+    switch (c) {
+      case ChatStreamErrorClass.networkTransient:
+        return 'Connection lost — tap to retry';
+      case ChatStreamErrorClass.authExpired:
+        return 'Session expired — sign in again';
+      case ChatStreamErrorClass.serverError:
+        return 'Server error — try again later';
+    }
+  }
+
+  /// Phase 31 H4 (D-08) — retry-CTA dispatch.
+  /// Auth-class navigates to /login; other classes call retryStreamConnect.
+  Future<void> _handleStreamErrorRetry(
+    BuildContext context,
+    ChatStreamErrorState err,
+  ) async {
+    if (err.errorClass == ChatStreamErrorClass.authExpired) {
+      context.go('/login');
+      return;
+    }
+    // Network/server-error retry — disconnect + reconnect SSE. The
+    // method writes through the same classifier on failure (D-09).
+    await ref
+        .read(chatScopeProvider(widget.agentInstanceId).notifier)
+        .retryStreamConnect();
   }
 
   Future<void> _retryTelegram(
