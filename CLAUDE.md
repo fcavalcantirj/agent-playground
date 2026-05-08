@@ -34,6 +34,19 @@ If you see api_server log lines like `OAuth config oauth_X missing in dev; using
 
 **End-to-end tests on macOS — `make screens-e2e` will fail on native uvicorn.** The inapp_dispatcher resolves agent containers by Docker bridge IP (`172.18.0.x`), and macOS Docker Desktop does not route from host to the bridge network. Symptom: `inapp_dispatcher.ip_lookup_failed` in logs; chat sits at "..." forever; manual sign-in + chat works (different code path). The supported macOS workaround is `make e2e-inapp-docker` which runs the test process inside a container that joins the bridge — the screens spike does NOT yet have an equivalent dockerized harness. Don't burn time chasing this on native; the screens themselves work end-to-end with manual testing. The dockerized screens harness is H8 (CI gating) work.
 
+**Smoke-testing new api_server code locally — DO NOT spin up native uvicorn next to a running deploy stack.** When the deploy stack (`deploy-api_server-1`, `deploy-temporal-worker-1`, `deploy-postgres-1`) is up, you cannot validly side-launch a second native uvicorn on a different port to test new code — it creates a **split-brain** that silently breaks agent start AND message dispatch even though Phase 28 nominally fixed host→bridge routing for messages:
+
+1. **Two postgres**: native uvicorn writes message rows / agent rows to whatever DB its `DATABASE_URL` points at (typically `agent-playground-postgresql-1` from the dev compose). `deploy-temporal-worker-1` is hardcoded to `postgres:5432` (= `deploy-postgres-1`). The `DispatchMessageWorkflow` lands on the SHARED Temporal cluster (yes, you set `AP_TEMPORAL_HOST=localhost:7233` and that's the same `deploy-temporal-1`), the deploy worker dequeues it, queries `deploy-postgres-1` for the row → not present → logs `phase28.mark_message_failed.row_missing` and silently returns. UI spins forever; no failure event ever surfaces.
+2. **Two networks**: agent containers spawned by native uvicorn land on the default `bridge` network (172.17.x.x), not `deploy_default` (172.18.x.x) where the worker lives. Even if the DB matched, the worker's `forward_to_agent` activity can't reach the agent.
+3. **Phase 28 only migrated message FORWARD into the worker; agent START is still an in-process `asyncio.to_thread(run_cell_persistent...)` from the api_server.** That works on macOS for the docker-RPC parts, but anything that requires the api_server process itself to reach an existing container by bridge IP (e.g. starting an agent that was created yesterday by the deploy stack) will 502 with `RuntimeError: container '<cid>' has no IPAddress on network 'deploy_default'`.
+
+**Correct workflow when smoke-testing new api_server code:**
+- **Rebuild the deploy api_server image and bounce that one container**: `docker compose -f deploy/docker-compose.prod.yml build api_server && docker compose -f deploy/docker-compose.prod.yml up -d api_server`. New code, same network, same DB, same worker. Mobile keeps pointing at `:8000`. This is the canonical path.
+- Or tear down the entire deploy stack and bring everything up via `docker-compose.dev.yml` so the worker, postgres, and api_server all share the dev DB and dev network. Heavier but valid.
+- **Never** "just run native uvicorn on a side port" while the deploy stack is up — it is structurally broken, and the failure mode is silent (chat hangs, no error in either log unless you go look at the worker's `row_missing` warning).
+
+The shape of this trap was confirmed by 5 independent investigators on 2026-05-08 during Phase 31 smoke. Documented here so future-Claude doesn't reproduce it.
+
 # ⚠️ Current project state as of 2026-04-15
 
 **READ THIS FIRST. The content below this banner is historical.**
