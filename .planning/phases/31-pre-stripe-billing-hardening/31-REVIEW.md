@@ -34,7 +34,21 @@ findings:
   warning: 5
   info: 6
   total: 12
-status: issues_found
+status: resolved
+resolved:
+  CR-01: 9968f33 — make CREATE DATABASE idempotent (`|| true`)
+  WR-01: c939ac0 — wire mobile D-16 Sentry user-context on sign-in/out
+  WR-02: ae4efe0 — pytest.skip → pytest.fail on missing OPENROUTER_API_KEY
+  WR-03: e5f1ae3 — add D-13 environment + release assertion test
+  WR-04: 4f9db9d — pin httpx upper bound (<0.30)
+  WR-05: e88fdcc — derive _AUTH_ROUTES from _AUTH_ROUTE_KEYS
+deferred_info:
+  IN-01: config typo (`mobile/lib/Makefile` vs `mobile/Makefile`) — orchestrator-side, not code
+  IN-02: redundant `or None` retained — purposeful empty-string-to-None conversion
+  IN-03: `_streamErrorCopy` duplication retained — deliberate drift-detection per test comment
+  IN-04: mobile `profilesSampleRate` defense-in-depth — SDK defaults to 0
+  IN-05: `/v1/runs` 200/201 assertion — endpoint is documented synchronous
+  IN-06: `_onResumed` idempotent banner-clear — perf-cosmetic
 ---
 
 # Phase 31: Code Review Report
