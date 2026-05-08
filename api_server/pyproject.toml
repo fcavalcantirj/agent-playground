@@ -77,6 +77,12 @@ dependencies = [
   # text/event-stream from GZipMiddleware landed in starlette 0.46.0
   # (PR #2871, 2025-02-22). RESEARCH §Q4 RESOLVED.
   "starlette>=0.46",
+  # Phase 31 H6 (D-10/D-12) — errors-only Sentry instrumentation. SDK 2.x
+  # auto-enables FastApiIntegration + StarletteIntegration on import; the
+  # AMD-06 `before_send` filter drops auth-bucket 429s before they hit the
+  # 5K/month free-tier quota. Floor 2.20 aligns with FastAPI 0.136 +
+  # Starlette 0.46 already pinned above.
+  "sentry-sdk[fastapi]>=2.20,<3.0",
 ]
 
 [project.optional-dependencies]
@@ -110,4 +116,5 @@ asyncio_mode = "auto"
 markers = [
   "api_integration: spawn real Postgres + run real recipe; opt-in via pytest -m api_integration",
   "spike: Phase 28 Wave 0 empirical spike against real infra (Temporal/Docker); opt-in via pytest -m spike",
+  "e2e_money_path: Phase 31 H8 — real OpenRouter chat → cost-capture via make e2e-money-path; opt-in via pytest -m e2e_money_path",
 ]
