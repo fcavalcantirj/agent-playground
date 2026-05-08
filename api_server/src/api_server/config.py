@@ -170,6 +170,12 @@ class Settings(BaseSettings):
         "http://localhost:3000", validation_alias="AP_FRONTEND_BASE_URL"
     )
 
+    # Phase 31 H6 (D-10, D-13). DSN unset → graceful no-op (D-14).
+    sentry_dsn_api: str | None = Field(default=None, validation_alias="AP_SENTRY_DSN_API")
+
+    # Phase 31 D-13. Boot-pinned git SHA for prod-error attribution.
+    git_sha: str | None = Field(default=None, validation_alias="GIT_SHA")
+
     # Phase 23 (D-23): CSV → list[str] pre-validator for mobile client IDs.
     # pydantic-settings v2's CSV detection is library-version-dependent;
     # this validator guarantees correct parsing regardless. Idempotent for
