@@ -44,32 +44,23 @@ _log = logging.getLogger("api_server.rate_limit")
 # composite-subject derivation share this regex.
 _AGENT_MESSAGES_PATTERN = re.compile(r"^/v1/agents/([^/]+)/messages$")
 
-# Phase 31 H3 (D-01, D-02): the seven auth route entry points covered
-# by the new `auth` rate-limit bucket. Membership check is exact (method,
-# path) tuple-equality — no regex on the hot path. Source-of-truth lines
-# in routes/auth.py: 138, 157, 222, 237, 378, 449, 542.
-_AUTH_ROUTES: frozenset[tuple[str, str]] = frozenset({
-    ("POST", "/v1/auth/google/mobile"),
-    ("POST", "/v1/auth/github/mobile"),
-    ("POST", "/v1/auth/logout"),
-    ("GET",  "/v1/auth/google"),
-    ("GET",  "/v1/auth/google/callback"),
-    ("GET",  "/v1/auth/github"),
-    ("GET",  "/v1/auth/github/callback"),
-})
-
-# Stable short aliases for composite-subject derivation. A path rename
-# (e.g. /v1/auth → /api/v2/auth) shouldn't invalidate counter rows; this
-# decoupling is the whole point of D-02.
+# Phase 31 H3 (D-01, D-02): the seven auth route entry points covered by
+# the new `auth` rate-limit bucket. The dict maps (method, path) → stable
+# short alias used in composite-subject derivation; a path rename
+# (e.g. /v1/auth → /api/v2/auth) shouldn't invalidate counter rows.
+# `_AUTH_ROUTES` is the membership frozenset derived from the dict's keys
+# so a route added to one structure cannot drift from the other (WR-05).
+# Source-of-truth lines in routes/auth.py: 138, 157, 222, 237, 378, 449, 542.
 _AUTH_ROUTE_KEYS: dict[tuple[str, str], str] = {
-    ("POST", "/v1/auth/google/mobile"): "google_mobile",
-    ("POST", "/v1/auth/github/mobile"): "github_mobile",
-    ("POST", "/v1/auth/logout"):        "logout",
+    ("POST", "/v1/auth/google/mobile"):   "google_mobile",
+    ("POST", "/v1/auth/github/mobile"):   "github_mobile",
+    ("POST", "/v1/auth/logout"):          "logout",
     ("GET",  "/v1/auth/google"):          "google_redirect",
     ("GET",  "/v1/auth/google/callback"): "google_callback",
     ("GET",  "/v1/auth/github"):          "github_redirect",
     ("GET",  "/v1/auth/github/callback"): "github_callback",
 }
+_AUTH_ROUTES: frozenset[tuple[str, str]] = frozenset(_AUTH_ROUTE_KEYS.keys())
 
 # (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05 + §D-42.
 _LIMITS: dict[str, tuple[int, int]] = {
