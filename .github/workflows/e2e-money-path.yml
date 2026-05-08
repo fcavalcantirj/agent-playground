@@ -73,8 +73,10 @@ jobs:
 
       - name: Create app database + run migrations
         run: |
+          # `|| true` swallows the duplicate-DB error on workflow re-runs that reuse
+          # the postgres compose volume (CR-01). alembic upgrade is already idempotent.
           docker compose -f docker-compose.dev.yml exec -T postgresql \
-            psql -U temporal -c "CREATE DATABASE agent_playground_api"
+            psql -U temporal -c "CREATE DATABASE agent_playground_api" || true
           make install-api
           make migrate-api
 
