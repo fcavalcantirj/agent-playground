@@ -45,6 +45,8 @@ import 'package:agent_playground/core/api/messages_stream.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/lifecycle/app_lifecycle_observer.dart';
+import 'package:agent_playground/features/chat/chat_stream_error_banner_provider.dart';
+import 'package:agent_playground/features/chat/chat_stream_error_classifier.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -381,10 +383,19 @@ class ChatScope extends Notifier<ChatState> {
       // Ownership + auth proven by the successful history fetch — safe
       // to subscribe to the SSE stream without risking a retry storm.
       _sseSub = _stream.events.listen(_onSseEvent);
-      // Fire-and-forget SSE connect; failures are silently tolerated
-      // (next resume triggers a reconnect via D-52).
-      // ignore: discarded_futures
-      _stream.connect().catchError((_) {});
+      // Phase 31 H4 (D-05/D-06/D-07/AMD-02) — replace silent-swallow with
+      // classifier-driven banner write. Fire-and-forget catchError chain
+      // is required so SSE-connect runs in the background while history
+      // already painted; the catchError surfaces the failure to the user
+      // via chatStreamErrorProvider instead of vanishing.
+      // ignore: unawaited_futures
+      _stream.connect().catchError((Object e) {
+        ref.read(chatStreamErrorProvider.notifier).state = ChatStreamErrorState(
+          agentInstanceId: agentInstanceId,
+          errorClass: classifyChatStreamError(e),
+          lastFailedAction: 'connect',
+        );
+      });
     }
     // On Err we leave the SSE unstarted. The chat shows whatever state
     // existed (likely empty); the user can pull-to-refresh or back out.
@@ -394,9 +405,42 @@ class ChatScope extends Notifier<ChatState> {
     await _stream.disconnect();
     try {
       await _stream.connect();
+      // Phase 31 H4 (D-09) — success → REPLACE banner state with null.
+      // NOT stacked: clears any prior connect-time banner the user may
+      // have been seeing.
+      ref.read(chatStreamErrorProvider.notifier).state = null;
     // ignore: avoid_catches_without_on_clauses
-    } catch (_) {
-      // intentionally empty — keep prior state visible on reconnect failure.
+    } catch (e) {
+      // Phase 31 H4 (D-09) — failure → REPLACE with new classification.
+      // NOT stacked: prior state (if any) is overwritten with the latest.
+      ref.read(chatStreamErrorProvider.notifier).state = ChatStreamErrorState(
+        agentInstanceId: agentInstanceId,
+        errorClass: classifyChatStreamError(e),
+        lastFailedAction: 'reconnect_on_resume',
+      );
+    }
+  }
+
+  /// Phase 31 H4 — retry CTA dispatch from chat_screen's RetryBanner.
+  ///
+  /// Disconnects + reconnects the SSE stream. On success, the banner
+  /// state is REPLACED with null (D-09 contract). On failure, REPLACED
+  /// with a fresh classification (D-09 — never stacked). Test seam for
+  /// Plan 05 widget tests: spy on ChatStream via `streamBuilder`.
+  Future<void> retryStreamConnect() async {
+    await _stream.disconnect();
+    try {
+      await _stream.connect();
+      ref.read(chatStreamErrorProvider.notifier).state = null;
+    // The classifier accepts any Object so a typed-on clause would lose
+    // generality; the retry path must surface every failure mode.
+    // ignore: avoid_catches_without_on_clauses
+    } catch (e) {
+      ref.read(chatStreamErrorProvider.notifier).state = ChatStreamErrorState(
+        agentInstanceId: agentInstanceId,
+        errorClass: classifyChatStreamError(e),
+        lastFailedAction: 'connect',
+      );
     }
   }
 
