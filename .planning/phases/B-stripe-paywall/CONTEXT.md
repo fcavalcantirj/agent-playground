@@ -106,13 +106,32 @@ Phase B adds a **platform-billed credit tier** (called `ultra`) and a **paid BYO
 These are mechanical conventions; flagged here so downstream agents don't churn on them but no user input was needed:
 
 - **Env var naming** (matches existing `AP_*` convention, MSV-shaped): `AP_STRIPE_API_KEY`, `AP_STRIPE_WEBHOOK_SECRET`, `AP_STRIPE_PRICE_ID_PRO_MONTHLY` (and one `AP_STRIPE_PRICE_ID_*` per credit pack). Loaded via existing pydantic Settings; placeholder fallback in dev mirrors the `oauth_X missing in dev; using placeholder` pattern.
-- **SDK pin**: `stripe>=8.0,<9.0` Python SDK in `api_server/pyproject.toml`. Lockfile via `uv` (consistent with Phase 31 `sentry-sdk` and Phase 28 `temporalio` pins). v8 has Billing Credit Balance + Meter Events APIs we may use later.
+- **SDK pin**: `stripe>=15.0,<16.0` Python SDK in `api_server/pyproject.toml` (see AMD-01 below — research verified PyPI latest=15.1.0 on 2026-05-08; v8 was 2 majors stale). Lockfile via `uv` (consistent with Phase 31 `sentry-sdk` and Phase 28 `temporalio` pins). v15 carries the StripeClient service pattern + Billing Credit Balance + Meter Events APIs.
 - **Reconciliation poller**: 5-min Temporal scheduled workflow (`reconcile_stripe_workflow`); polls Stripe for `payment_intent.succeeded` events older than 5min not yet in `stripe_webhook_events`. Backstops missed webhooks. Mirrors MSV `payment_poller.go` shape but as a Temporal cron rather than a separate scheduler.
 - **Webhook idempotency**: `stripe_webhook_events.stripe_event_id` UNIQUE constraint; on duplicate event id, return 200 immediately (Stripe will stop retrying). Same DB transaction as the side-effect (subscription state flip, ledger insert).
 - **Decimal contract**: `debit_balance` activity preserves the Decimal-to-string return contract from Phase 28 D-22 (Temporal JSON serializer can't handle `Decimal`; stringified-decimal recovers losslessly via `Decimal(str)`).
 - **Tax computation**: Stripe Tax auto-handles VAT/sales-tax. AP doesn't compute tax. Stripe-side config; out-of-band of code.
 - **Receipts**: Stripe's auto-emails are the v1 receipt path. No AP-side branded receipt rendering. Future phase if customers ask.
-- **Webhook handler placement**: `api_server/src/api_server/routes/billing_webhook.py` (new file). Public route, no auth dependency, signature-verified via `stripe.Webhook.construct_event(payload, signature, AP_STRIPE_WEBHOOK_SECRET)`.
+- **Webhook handler placement**: `api_server/src/api_server/routes/billing_webhook.py` (new file). Public route, no auth dependency, signature-verified via the StripeClient service pattern (see AMD-04).
+
+### Amendments (post-research, 2026-05-08)
+
+Per `feedback_amend_context_post_research.md`, research surfaced 5 corrections to the locked decisions before plan-phase consumes this file. Treat each AMD as load-bearing as the original decision.
+
+- **AMD-01 (supersedes "SDK pin" line above):** Pin `stripe>=15.0,<16.0`, NOT `>=8.0,<9.0`. PyPI verified 2026-05-08: latest stable = 15.1.0 (released 2026-04-24). v8 is the legacy module-level static-method API; v9+ introduced the `StripeClient` service pattern. Pinning v8 commits to a deprecation-track surface and misses three years of upstream fixes. The Billing Credit Balance + Meter Events APIs cited in the original line all remain available in v15.
+- **AMD-02 (refines D-22):** Strike "webhook idempotency" from the stripe-mock bullet. stripe-mock validates request shapes only — it does NOT emit webhook events (verified via stripe-mock README + Issue #16, open since 2017). Webhook handler signature-verify + idempotency tests use **hand-rolled signed fixtures**: build a raw JSON payload, compute `Stripe-Signature` header as `t=<unix>,v1=<hmac_sha256(secret, f"{t}.{payload}")>`, POST to the route. stripe-mock keeps the role of validating outbound Stripe SDK calls (Customer/Checkout/Subscription create); it has no part in inbound-webhook tests.
+- **AMD-03 (binds D-21 to a concrete package):** Mobile webview package = **`flutter_inappwebview`** (NOT `webview_flutter`). flutter_inappwebview's `navigationDelegate` URL interception is the documented 2026 community pattern for Stripe Checkout return-URL handshake; webview_flutter has open HTTPS-redirect interception issues (flutter/flutter#70284). Verified neither is in `mobile/pubspec.yaml` today — Phase B introduces. Pin: `flutter_inappwebview: ^6.1.5` (verify latest at planning-time).
+- **AMD-04 (new decision):** Webhook handler MUST use the **service-based SDK pattern** — `StripeClient(api_key).webhooks.construct_event(payload, signature, secret)` — NOT the legacy module-level `stripe.Webhook.construct_event(...)`. Both ship in v15.x; the latter is documented as deprecated. Future-proofs the call site for new endpoints that land only on the StripeClient pattern.
+- **AMD-05 (refines D-14):** For credit-pack top-ups, listen to **`checkout.session.completed` ONLY**, NOT also `payment_intent.succeeded`. Reason: `checkout.session.completed` carries the session-level `metadata` (where `pack_id` lives); `payment_intent.succeeded` does not unless metadata is double-attached. Listening to both creates a double-credit risk that must be defended against in idempotency code. `payment_intent.payment_failed` IS still in the matrix (for failure UX); `payment_intent.succeeded` is acknowledged-without-side-effect or dropped.
+
+**D-14 webhook matrix as amended:**
+- `checkout.session.completed` — credit pack one-time top-up succeeded (sole writer of credit grants)
+- `payment_intent.payment_failed` — top-up failed (UX surface only; no DB mutation)
+- `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted` — Pro tier flips (D-04)
+- `invoice.paid` — Pro renewal succeeded (logged for audit; no DB mutation needed)
+- `invoice.payment_failed` — Pro renewal failed (Stripe smart-retries; final failure → `subscription.deleted`)
+- `charge.refunded` — credit revocation (D-16)
+- ~~`payment_intent.succeeded`~~ — DROPPED per AMD-05 (redundant with `checkout.session.completed`; double-credit risk)
 
 </decisions>
 
@@ -148,7 +167,7 @@ These are mechanical conventions; flagged here so downstream agents don't churn 
 - `api_server/alembic/versions/013_phase29_proxy_columns.py` — last migration; Phase B adds **014_credit_balances_and_ledger.py** (credit_balances + credit_transactions + stripe_webhook_events + users.tier + users.stripe_customer_id + users.refund_writeoff_cents)
 - `api_server/src/api_server/auth/deps.py` — `get_current_user`; D-18 lazy tier read happens here
 - `api_server/src/api_server/routes/auth.py` — Phase 31 buckets; mobile auth path used by tier-aware tests
-- `api_server/pyproject.toml` — add `stripe>=8.0,<9.0`
+- `api_server/pyproject.toml` — add `stripe>=15.0,<16.0` (per AMD-01)
 
 ### Existing AP mobile (Phase B UI extension points)
 
