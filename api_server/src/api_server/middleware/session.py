@@ -88,6 +88,13 @@ class SessionMiddleware:
 
         state = scope.setdefault("state", {})
         state["user_id"] = user_id
+        # Phase 31 H6 (D-16): tag Sentry scope with the resolved user UUID.
+        # ID-only (no email/PII) per project privacy posture. The import
+        # is inside the conditional so unauthenticated requests pay zero
+        # import cost on every call.
+        if user_id is not None:
+            import sentry_sdk
+            sentry_sdk.set_user({"id": str(user_id)})
         await self.app(scope, receive, send)
 
 

@@ -35,6 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware as StarletteSessionM
 from .auth.oauth import get_oauth
 from .config import get_settings
 from .db import close_pool, create_pool
+from .instrumentation.sentry import init_sentry
 from .log import configure_logging
 from .middleware.correlation_id import CorrelationIdMiddleware
 from .middleware.idempotency import IdempotencyMiddleware
@@ -487,6 +488,10 @@ def create_app() -> FastAPI:
     """
     settings = get_settings()
     configure_logging(settings.env)
+    # Phase 31 H6 (D-10): Sentry init BEFORE middleware stack so unhandled
+    # exceptions in middleware are also captured. Graceful no-op when DSN
+    # is unset (D-14).
+    init_sentry(settings)
     app = FastAPI(
         title="Agent Playground API",
         version="0.1.0",
