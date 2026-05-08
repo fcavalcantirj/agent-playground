@@ -44,12 +44,40 @@ _log = logging.getLogger("api_server.rate_limit")
 # composite-subject derivation share this regex.
 _AGENT_MESSAGES_PATTERN = re.compile(r"^/v1/agents/([^/]+)/messages$")
 
+# Phase 31 H3 (D-01, D-02): the seven auth route entry points covered
+# by the new `auth` rate-limit bucket. Membership check is exact (method,
+# path) tuple-equality — no regex on the hot path. Source-of-truth lines
+# in routes/auth.py: 138, 157, 222, 237, 378, 449, 542.
+_AUTH_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/v1/auth/google/mobile"),
+    ("POST", "/v1/auth/github/mobile"),
+    ("POST", "/v1/auth/logout"),
+    ("GET",  "/v1/auth/google"),
+    ("GET",  "/v1/auth/google/callback"),
+    ("GET",  "/v1/auth/github"),
+    ("GET",  "/v1/auth/github/callback"),
+})
+
+# Stable short aliases for composite-subject derivation. A path rename
+# (e.g. /v1/auth → /api/v2/auth) shouldn't invalidate counter rows; this
+# decoupling is the whole point of D-02.
+_AUTH_ROUTE_KEYS: dict[tuple[str, str], str] = {
+    ("POST", "/v1/auth/google/mobile"): "google_mobile",
+    ("POST", "/v1/auth/github/mobile"): "github_mobile",
+    ("POST", "/v1/auth/logout"):        "logout",
+    ("GET",  "/v1/auth/google"):          "google_redirect",
+    ("GET",  "/v1/auth/google/callback"): "google_callback",
+    ("GET",  "/v1/auth/github"):          "github_redirect",
+    ("GET",  "/v1/auth/github/callback"): "github_callback",
+}
+
 # (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05 + §D-42.
 _LIMITS: dict[str, tuple[int, int]] = {
     "runs": (10, 60),    # POST /v1/runs
     "lint": (120, 60),   # POST /v1/lint
     "get":  (300, 60),   # GET /v1/*
     "chat": (4, 60),     # POST /v1/agents/:id/messages — D-42
+    "auth": (5, 60),     # Phase 31 D-04 — auth POSTs + OAuth GET callbacks; per-route via _AUTH_ROUTES
 }
 
 
@@ -73,6 +101,13 @@ def _bucket_for(scope: Scope) -> str | None:
     # quotas don't share a bucket (Pitfall 7).
     if method == "POST" and _AGENT_MESSAGES_PATTERN.match(path):
         return "chat"
+    # Phase 31 H3 (D-01): auth route → auth bucket. Tuple-membership
+    # check; precedence is BEFORE the generic GET branch so the OAuth
+    # callbacks (/v1/auth/google/callback, /v1/auth/github/callback) get
+    # the auth bucket's tighter ceiling (5/min) instead of the get
+    # bucket's 300/min.
+    if (method, path) in _AUTH_ROUTES:
+        return "auth"
     # Any GET under /v1 is the "get" bucket. POSTs we didn't map above
     # are NOT rate-limited (there aren't any in Phase 19 — all v1 POSTs
     # are explicitly mapped above).
@@ -166,6 +201,18 @@ class RateLimitMiddleware:
             agent_id_str = match.group(1) if match else ""
             if agent_id_str:
                 subject = f"chat:{subject}:{agent_id_str}"
+
+        # Phase 31 H3 (D-02): auth bucket gets per-route counters via
+        # composite subject `auth:<ip>:<route_key>`. Stable aliases
+        # decouple the counter row from path strings — a future rename
+        # of /v1/auth/google/mobile to /api/auth/google/mobile would NOT
+        # invalidate the existing counter rows.
+        if bucket == "auth":
+            route_key = _AUTH_ROUTE_KEYS.get(
+                (scope.get("method", ""), scope.get("path", "")),
+                "unknown",
+            )
+            subject = f"auth:{subject}:{route_key}"
 
         try:
             async with app.state.db.acquire() as conn:
