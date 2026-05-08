@@ -224,10 +224,14 @@ async def _truncate_tables(request):
             # TRUNCATE can now include ``users`` directly — integration
             # tests seed their own users via ``authenticated_cookie`` or
             # an inline ``TEST_USER_ID`` literal.
+            # Phase 31 AMD-05: usage_logs added so the H8 e2e money-path query
+            # `SELECT cost_usd FROM usage_logs ORDER BY created_at DESC LIMIT 1`
+            # never matches a stale row from a previous test. RESTART IDENTITY
+            # CASCADE is harmless — no other table FKs into usage_logs.
             await conn.execute(
                 "TRUNCATE TABLE agent_events, runs, agent_containers, "
                 "agent_instances, idempotency_keys, rate_limit_counters, "
-                "sessions, users "
+                "sessions, users, usage_logs "
                 "RESTART IDENTITY CASCADE"
             )
     finally:

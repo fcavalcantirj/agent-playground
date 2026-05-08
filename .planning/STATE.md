@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: context exhaustion at 90% (2026-05-07)
-last_updated: "2026-05-07T19:20:31.649Z"
-last_activity: 2026-05-07
+last_updated: "2026-05-08T14:59:31.015Z"
+last_activity: 2026-05-08 -- Phase 31 execution started
 progress:
   total_phases: 19
   completed_phases: 5
@@ -21,6 +21,7 @@ progress:
 **Pending verification:** test the qwenpaw recipe through the actual mobile/web client (not just curl smokes) before declaring this work area closed.
 
 **Phase 30 main (8 plans, all SHIPPED, PHASE-30-EXIT-GATE-PASSED):**
+
 - 30-00 → `3a3e6aa` — provider-gated OpenRouter inline-cost path
 - 30-01 → `5b053b6` — PROBE-VAL-ANTHROPIC real-money spike ($0.000056)
 - 30-02 → `2310d60` — openclaw YAML flip + regression-guard
@@ -31,16 +32,19 @@ progress:
 - 30-07 → `653ad54` — cutover verification + regression-guard rewrite
 
 **Post-30 followups (all SHIPPED 2026-05-07):**
+
 - `e44f1c2` — openclaw end-to-end fix (3 changes): ready_log_regex updated for openclaw 2026.5.4; `models.providers.anthropic` config block added (the load-bearing knob — ANTHROPIC_BASE_URL env not honored by openclaw plugin); proxy auth extended to also accept `x-api-key`. Real Anthropic request ID `req_011CaoXVkMBnUgkjcSMS44N4` + $0.02964.
 - `03b22f2` — QwenPaw recipe added + new 4th dispatcher contract `agentscope_runtime` (AgentScope Runtime SSE — `POST /api/console/chat`, filter on `object=response` for terminal completion). Live verified end-to-end: 4 chat completions through proxy with real OpenRouter IDs (`gen-1778181771-...` + `gen-1778181839-...` ×2 + `gen-1778181841-...`) and $0.0361.
 - `a989631` — VERIFICATION + ROADMAP doc update for QwenPaw.
 
 **Recipe roster after this work:**
+
 - ✅ nanobot · ✅ openclaw · ✅ nullclaw · ✅ zeroclaw · ✅ hermes · ✅ qwenpaw — 6 recipes e2e-verified through proxy with real upstream cost
 - ⚠️ picoclaw — static-YAML-only (`via_proxy: true` ships but no HTTP chat endpoint; Pico WebSocket channel `/pico/ws` exists per upstream docs but our dispatcher is HTTP-only — adding WebSocket transport is unscoped future work that would also unlock AionUi)
 - **$0.1201 cumulative real-money** spend (under $0.20 followup ceiling)
 
 **Open decisions for next session:**
+
 1. Test qwenpaw through the actual mobile/web client (recipe selector → deploy → chat → usage_logs)
 2. Decide picoclaw: drop, keep static-YAML-only, or invest ~half day in WebSocket dispatcher transport (also unlocks AionUi)
 3. AionUi (24k★ meta-orchestrator) is technically possible but architectural mismatch (WebSocket-only + flattened CLI-choice model) — flagged but not on the queue
@@ -100,14 +104,14 @@ Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring M
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase 30 — recipe-proxy-cutover
+**Current focus:** Phase 31 — pre-stripe-billing-hardening
 
 ## Current Position
 
-Phase: 30 (recipe-proxy-cutover) — EXECUTING
-Plan: 2 of 8
-Status: Ready to execute
-Last activity: 2026-05-07
+Phase: 31 (pre-stripe-billing-hardening) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 31
+Last activity: 2026-05-08 -- Phase 31 execution started
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
