@@ -118,3 +118,24 @@ def test_no_dsn_starts_cleanly(monkeypatch, caplog):
         "Sentry disabled (AP_SENTRY_DSN_API unset)" in rec.message
         for rec in caplog.records
     ), [rec.message for rec in caplog.records]
+
+
+def test_init_sentry_tags_environment_and_release(isolated_sentry_hub):
+    """D-13 / WR-03: environment + release from settings land on the client.
+
+    Exercises the production `init_sentry()` path directly (NOT the
+    `_init_with_capture` shim) so a future refactor that drops `environment=`
+    or `release=` from the init call is caught by this test.
+    """
+    class _S:
+        sentry_dsn_api = "https://test@example.ingest.sentry.io/1"
+        env = "prod"
+        git_sha = "deadbeef"
+
+    init_sentry(_S())
+    client = sentry_sdk.get_client()
+    assert client is not None
+    assert client.options["environment"] == "prod", client.options
+    assert client.options["release"] == "deadbeef", client.options
+
+
