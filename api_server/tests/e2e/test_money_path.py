@@ -52,14 +52,24 @@ pytestmark = [pytest.mark.e2e_money_path, pytest.mark.asyncio]
 
 @pytest.fixture(autouse=True)
 def _require_openrouter_key():
-    """Skip the test if ``OPENROUTER_API_KEY`` isn't set.
+    """Fail the test if ``OPENROUTER_API_KEY`` isn't set (WR-02 / AC24 floor).
 
-    Defense-in-depth on top of the Makefile env-guard. If a developer
-    runs ``pytest -m e2e_money_path`` directly (bypassing the Makefile),
-    the test SKIPS rather than burning money against an empty Bearer.
+    The ``e2e_money_path`` marker is excluded from default ``make test-api``
+    runs, so this fixture only fires for opt-in invocations. In CI, a missing
+    or empty ``secrets.OPENROUTER_CI_KEY`` MUST FAIL the workflow rather than
+    silently SKIP — a skipped test is reported as PASSED by GH Actions, which
+    would defeat SPEC AC24 (regression-PR-fails contract).
+
+    Local opt-in path: ``make e2e-money-path`` already env-guards the key with
+    its own ``test -n "$$OPENROUTER_API_KEY"`` check; bypassing the Makefile
+    is a developer error this fixture surfaces explicitly.
     """
     if not os.environ.get("OPENROUTER_API_KEY"):
-        pytest.skip("OPENROUTER_API_KEY not set; e2e money-path is opt-in")
+        pytest.fail(
+            "OPENROUTER_API_KEY not set. In CI: secrets.OPENROUTER_CI_KEY is "
+            "missing or empty. Locally: this test is opt-in via "
+            "`make e2e-money-path` which env-guards the key."
+        )
 
 
 # ---------------------------------------------------------------------------
