@@ -194,7 +194,7 @@ check: lint-recipes test
 # Phase 19: API server (FastAPI at api_server/)
 # ---------------------------------------------------------------
 .PHONY: install-api test-api test-api-integration migrate-api dev-api \
-        smoke-api smoke-api-live generate-ts-client check-api
+        smoke-api smoke-api-live generate-ts-client check-api e2e-money-path
 
 install-api:
 	pip install -e "api_server/[dev]"
@@ -226,6 +226,16 @@ generate-ts-client:
 	  && echo 'TS client valid'
 
 check-api: test-api
+
+# Phase 31 H8 — real OpenRouter chat → cost-capture in CI (D-17).
+# Spends real money against the OpenRouter dashboard tied to the
+# OPENROUTER_API_KEY. The dashboard $5/mo cap (Manual Gate AC22) is the
+# floor protection. In CI this comes from `secrets.OPENROUTER_CI_KEY`
+# (Manual Gate AC20). Locally, set OPENROUTER_API_KEY in your shell
+# before invoking — the env-guard below fails fast otherwise.
+e2e-money-path:
+	@test -n "$$OPENROUTER_API_KEY" || (echo "ERROR: OPENROUTER_API_KEY not set. Per Phase 31 D-17, this target hits real OpenRouter and spends real money. Set OPENROUTER_API_KEY=<your-CI-key> before invoking; in CI it comes from secrets.OPENROUTER_CI_KEY." && exit 1)
+	cd api_server && pytest -m e2e_money_path -v --tb=short
 
 # ---------------------------------------------------------------
 # Phase 19: production-shaped local stack (Docker compose, prod image, prod compose)

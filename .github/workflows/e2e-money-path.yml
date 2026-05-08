@@ -1,0 +1,87 @@
+name: e2e money path
+
+# Phase 31 H8 — real OpenRouter chat → cost-capture in CI.
+#
+# Triggers on push/PR touching api_server/** or recipes/** (SPEC AC17).
+# Reuses docker-compose.dev.yml for Postgres + Redis (D-19) + native
+# uvicorn-style invocation through `make e2e-money-path` (D-17). Real
+# money is at stake on every run; the OpenRouter dashboard $5/mo cap
+# (Manual Gate AC22) is the floor protection, GitHub auto-masks the
+# secret in logs (Manual Gate AC20), and the concurrency block below
+# (D-21 + SPEC AC21) serializes runs so a parallel-PR storm cannot
+# stack chat completions.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api_server/**'
+      - 'recipes/**'
+      - '.github/workflows/e2e-money-path.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api_server/**'
+      - 'recipes/**'
+      - '.github/workflows/e2e-money-path.yml'
+
+# D-21 + SPEC AC21: serialize real-money runs so a parallel-PR storm
+# cannot blow the OpenRouter $5/mo dashboard cap. cancel-in-progress
+# is FALSE — let queued runs finish; do not abort an in-flight chat.
+concurrency:
+  group: e2e-money-path
+  cancel-in-progress: false
+
+jobs:
+  money-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # SPEC AC20: OPENROUTER_CI_KEY is a dedicated CI key (NOT any dev
+      # BYOK); GitHub auto-masks the secret in logs. Defense-in-depth:
+      # no shell command in this workflow prints any environment variable
+      # to stdout, no debug-tracing flags, no env-file dumps. Manual Gate
+      # AC20 confirms the secret is added to repo settings; this YAML's
+      # job is to reference it via the masked expansion below.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_CI_KEY }}
+      AP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://temporal:temporal@localhost:5432/agent_playground_api
+      AP_REDIS_URL: redis://localhost:6379/0
+      AP_RECIPES_DIR: recipes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Boot Postgres + Redis (D-19 — reuse docker-compose.dev.yml)
+        run: docker compose -f docker-compose.dev.yml up -d postgresql redis
+
+      - name: Wait for Postgres healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose -f docker-compose.dev.yml exec -T postgresql \
+                 pg_isready -U temporal >/dev/null 2>&1; then
+              echo "postgres ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: Create app database + run migrations
+        run: |
+          docker compose -f docker-compose.dev.yml exec -T postgresql \
+            psql -U temporal -c "CREATE DATABASE agent_playground_api"
+          make install-api
+          make migrate-api
+
+      - name: Run e2e money-path test (real OpenRouter)
+        # OPENROUTER_API_KEY comes from the job env above; never printed.
+        run: make e2e-money-path
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v
