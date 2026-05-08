@@ -16,6 +16,7 @@ import 'package:agent_playground/features/login/login_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 class SolvrLabsApp extends ConsumerStatefulWidget {
   const SolvrLabsApp({super.key, this.initialRoute = '/login'});
@@ -40,6 +41,9 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
     // does), set the signed-out banner, route to /login.
     _authSub = ref.read(authEventBusProvider).events.listen((_) {
       ref.read(showSignedOutBannerProvider.notifier).state = true;
+      // D-16 / WR-01 — drop the Sentry user-context tag on sign-out so any
+      // subsequent unauthenticated capture doesn't carry the stale user id.
+      Sentry.configureScope((scope) => scope.setUser(null));
       _router.go('/login');
     });
   }
@@ -62,6 +66,12 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
     // ignore: cascade_invocations
     ref.listen(loginSuccessProvider, (prev, next) {
       if (next != null) {
+        // D-16 / WR-01 — tag Sentry events with the authenticated user id
+        // (ID-only, no PII) so mobile crashes get the same user-context
+        // bridge as the api_server's session middleware.
+        Sentry.configureScope(
+          (scope) => scope.setUser(SentryUser(id: next.id)),
+        );
         ref
           ..read(loginSuccessProvider.notifier).state = null
           ..read(showSignedOutBannerProvider.notifier).state = false;
