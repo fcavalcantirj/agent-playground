@@ -667,7 +667,15 @@ Plans:
 
 **Depends on:** Phase 30 (proxy + 7 recipes routing); Phase 29 (`usage_logs` + cost-capture pipeline that the H8 e2e workflow asserts against).
 
-**Plans:** TBD (locked by /gsd-spec-phase → /gsd-discuss-phase → /gsd-plan-phase)
+**Plans:** 6 plans in 4 waves
+
+Plans:
+- [ ] 31-01-PLAN.md — Wave 0 preflight: register e2e_money_path marker, AMD-05 usage_logs truncate, sentry-sdk + sentry_flutter pins
+- [ ] 31-02-PLAN.md — Wave 1: H3 auth rate-limit bucket (5/min/IP × 7 routes, composite subject) + real-Postgres tests
+- [ ] 31-03-PLAN.md — Wave 1: H6 api_server Sentry init + AMD-06 before_send filter + middleware/session set_user + transport-mock tests
+- [ ] 31-04-PLAN.md — Wave 1: H6 mobile Sentry wrap-runner + H4 chat-stream classifier + provider + AMD-01 inline RetryBanner sibling-block + Makefile dart-defines
+- [ ] 31-05-PLAN.md — Wave 2: H4 classifier unit tests + banner widget tests + H6 mobile init test (depends on 31-04)
+- [ ] 31-06-PLAN.md — Wave 3: H8 CI e2e money-path workflow + tests/e2e/test_money_path.py + Makefile target + 4 manual gates (AC20/22/23/24)
 
 ## Backlog
 
