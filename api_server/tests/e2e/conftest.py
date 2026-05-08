@@ -553,3 +553,47 @@ def pytest_sessionfinish(session, exitstatus):
     # Respect the actual pytest exit status — caller scripts (Makefile,
     # CI) gate on this. exit 0 = all green, non-zero = at least one fail.
     os._exit(int(exitstatus))
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 H8 — money-path e2e fixture (D-22, AMD-03).
+# ---------------------------------------------------------------------------
+#
+# ``e2e_money_path_client`` composes the existing ``async_client``
+# (real-Postgres testcontainer, ASGITransport-bound app) with the canonical
+# ``authenticated_cookie`` fixture from ``tests/conftest.py:610-653``.
+#
+# AMD-03 mandate (CONTEXT.md): NO new auth surface, NO HMAC, NO signing-key
+# machinery. The cookie is a plain UUID from ``gen_random_uuid()`` and
+# security comes from unguessability — exactly the same shape
+# ``tests/auth/test_logout.py``, ``test_users_me.py``, and the cross-user
+# isolation test consume. T-31-03 mitigation is verified by an acceptance
+# grep returning zero hits for the prohibited HMAC-secret env-var name.
+#
+# AMD-05 dependency: ``usage_logs`` is included in the autouse
+# ``_truncate_tables`` TRUNCATE list (Plan 01 Task 2 — committed in
+# 30809c5). This makes the test's poll query
+# ``SELECT cost_usd FROM usage_logs WHERE user_id = $1
+#  ORDER BY created_at DESC LIMIT 1`` unambiguous between runs.
+
+
+@pytest_asyncio.fixture(scope="function")
+async def e2e_money_path_client(async_client, authenticated_cookie):
+    """Compose async_client + authenticated_cookie for the e2e money-path test.
+
+    Yields a dict carrying:
+      * ``client``     — httpx ``AsyncClient`` bound to ``ASGITransport(create_app())``
+      * ``cookie``     — ``ap_session=<uuid>`` ready as a Cookie header value
+      * ``user_id``    — string UUID for the ``usage_logs.user_id`` poll
+      * ``session_id`` — string UUID (defense-in-depth correlation)
+
+    Pure composer — no INSERTs of its own (the parent fixtures own that),
+    no HMAC, no new cookie shape. Tests opt in via the ``e2e_money_path``
+    pytest marker (registered in ``pyproject.toml`` by Plan 01).
+    """
+    yield {
+        "client": async_client,
+        "cookie": authenticated_cookie["Cookie"],
+        "user_id": authenticated_cookie["_user_id"],
+        "session_id": authenticated_cookie["_session_id"],
+    }
