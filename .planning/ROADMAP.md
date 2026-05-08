@@ -657,6 +657,18 @@ Plans:
 
 **Status:** SHIPPED 2026-05-07 (PHASE-30-EXIT-GATE-PASSED) + 2 post-30 followups same day. **7 recipes** now route through the proxy (added qwenpaw 2026-05-07 in `03b22f2` alongside a new 4th `agentscope_runtime` dispatcher contract for the AgentScope Runtime SSE shape — replaces picoclaw as the channel-based personal-AI slot). **6 of 7** e2e-covered recipes verified via deploy-stack live smoke with real upstream cost ($0.1201 cumulative, under $0.20 followup ceiling). openclaw closed via post-30 followup commit `e44f1c2` (ready_log_regex updated for openclaw 2026.5.4, `models.providers.anthropic` config block added, proxy auth extended to also read `x-api-key`). picoclaw e2e cell formally DEFERRED per Phase 22c.3 user direction 2026-04-30 (no channels.inapp block). See 30-VERIFICATION.md for the full per-recipe acceptance gate report.
 
+### Phase 31: Pre-Stripe billing hardening (gates Phase B)
+
+**Goal:** Close the four billing-readiness gaps identified by the 2026-05-04 solidity audit and re-verified against current code 2026-05-07: H3 auth-route rate-limit bucket, H4 mobile silent-SSE error surfacing, H6 Sentry instrumentation (api_server + mobile), H8 CI e2e money-path gate. Phase B (Stripe paywall) is explicitly gated on these landing GREEN.
+
+**Why a separate phase:** real money cannot ship while (a) mobile-auth POSTs are unrate-limited (`POST /v1/auth/google/mobile`, `POST /v1/auth/github/mobile`, `POST /v1/auth/logout` not in any rate-limit bucket per `middleware/rate_limit.py:48-53`), (b) SSE-connect failures are silently swallowed (`mobile/lib/features/chat/chat_providers.dart:387` `catchError((_) {})`), (c) zero error tracking exists in either runtime (no `sentry-sdk` in `api_server/pyproject.toml`, no `sentry_flutter` in `mobile/pubspec.yaml`), and (d) no CI workflow exercises the auth → chat → proxy → debit pipeline end-to-end (`.github/workflows/` has only `mobile.yml` for unit tests + `test-recipes.yml` for recipe lint).
+
+**H7 (Hetzner deploy) is intentionally excluded from this phase** — it's its own multi-week phase (DNS/TLS/observability/alerting) and is the actual prereq for Phase B Stripe webhooks (which can't reach `localhost`). Phase 31 is the local-substrate hardening; H7 will be a separate subsequent phase.
+
+**Depends on:** Phase 30 (proxy + 7 recipes routing); Phase 29 (`usage_logs` + cost-capture pipeline that the H8 e2e workflow asserts against).
+
+**Plans:** TBD (locked by /gsd-spec-phase → /gsd-discuss-phase → /gsd-plan-phase)
+
 ## Backlog
 
 ### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)

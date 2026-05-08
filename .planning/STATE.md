@@ -417,6 +417,7 @@ Read files in this order after /clear:
 
 ### Roadmap Evolution
 
+- Phase 31 added: Pre-Stripe billing hardening (H3 auth rate-limit bucket, H4 mobile SSE error surfacing, H6 Sentry, H8 CI e2e money-path gate) — 2026-05-07 (gates Phase B Stripe paywall; H7 Hetzner deploy is its own subsequent phase)
 - Phase 29 added: LLM egress proxy + provider-agnostic cost capture — 2026-05-05 (driven by 4-agent root-cause confirmation that Phase 27's `_parse_stripped` post-hoc backfill is infeasible without bot cooperation)
 - Phase 02.5 inserted after Phase 2: Recipe Manifest Reshape (URGENT) — 2026-04-14
 - Phase 03 (v0.1 consolidation) completed — 2026-04-15
