@@ -124,4 +124,5 @@ markers = [
   "api_integration: spawn real Postgres + run real recipe; opt-in via pytest -m api_integration",
   "spike: Phase 28 Wave 0 empirical spike against real infra (Temporal/Docker); opt-in via pytest -m spike",
   "e2e_money_path: Phase 31 H8 — real OpenRouter chat → cost-capture via make e2e-money-path; opt-in via pytest -m e2e_money_path",
+  "phase_b_e2e: Phase B — drive Stripe-affecting routes against real Stripe TEST mode (requires AP_STRIPE_TEST_API_KEY); opt-in via pytest -m phase_b_e2e",
 ]
