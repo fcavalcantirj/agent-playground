@@ -20,7 +20,10 @@
 // Per-decision-doc D-25, the AppBar usage ticker stays — it lives on
 // every screen and was not reorganized into the hub.
 
+import 'package:agent_playground/core/api/providers.dart';
+import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
+import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
 import 'package:agent_playground/features/usage/usage_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,6 +31,38 @@ import 'package:go_router/go_router.dart';
 
 class BillingHubScreen extends ConsumerWidget {
   const BillingHubScreen({super.key});
+
+  Future<void> _startProUpgrade(BuildContext context, WidgetRef ref) async {
+    // Subscription Checkout — same shape as topup_screen.dart:_onPackSelected
+    // but mode='subscription' on the server side. Returns a Stripe-hosted URL
+    // we open in the InAppWebView; webhook flips users.tier=pro.
+    final messenger = ScaffoldMessenger.of(context);
+    final api = ref.read(apiClientProvider);
+    final r = await api.createSubscriptionCheckoutSession();
+    if (!context.mounted) return;
+    switch (r) {
+      case Err(:final error):
+        messenger.showSnackBar(
+          SnackBar(content: Text('Couldn\'t start upgrade: ${error.message}')),
+        );
+      case Ok(:final value):
+        final result = await Navigator.of(context).push<PaymentResult>(
+          MaterialPageRoute<PaymentResult>(
+            builder: (_) => CheckoutWebViewScreen(checkoutUrl: value),
+          ),
+        );
+        if (!context.mounted) return;
+        if (result == PaymentResult.success) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Upgrade pending — webhook landing…')),
+          );
+          // Tier flip happens via the webhook handler; refresh on lifecycle
+          // resume will pull it. We invalidate explicitly so the badge flips
+          // as soon as the subscription.created event lands.
+          ref.invalidate(usageSummaryProvider);
+        }
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -75,23 +110,27 @@ class BillingHubScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           _PlanRow(
             name: 'FREE',
+            price: r'$0.00 /mo',
             subtitle: 'BYOK • for tinkerers',
             entitlements: '1 active agent · 7-day chat history',
             current: tier == 'free',
           ),
           _PlanRow(
             name: 'PRO',
+            price: r'$12.00 /mo',
             subtitle: 'BYOK • for hobbyists',
-            entitlements:
-                r'5 active agents · 30-day history · fixed $/mo',
+            entitlements: '5 active agents · 30-day history',
             current: tier == 'pro',
+            onTap: tier == 'pro' ? null : () => _startProUpgrade(context, ref),
           ),
           _PlanRow(
             name: 'ULTRA',
-            subtitle: 'Pay-as-you-go • for serious users',
+            price: 'Pay as you go',
+            subtitle: 'For serious users',
             entitlements:
                 'Unlimited agents · unlimited history · we pay LLM, you reload',
             current: tier == 'ultra',
+            onTap: tier == 'ultra' ? null : () => context.push('/billing/topup'),
           ),
         ],
       ),
@@ -248,19 +287,23 @@ class _ActionTile extends StatelessWidget {
 class _PlanRow extends StatelessWidget {
   const _PlanRow({
     required this.name,
+    required this.price,
     required this.subtitle,
     required this.entitlements,
     required this.current,
+    this.onTap,
   });
 
   final String name;
+  final String price;
   final String subtitle;
   final String entitlements;
   final bool current;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final card = Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -301,6 +344,22 @@ class _PlanRow extends StatelessWidget {
                   ),
                 ),
               ],
+              const Spacer(),
+              Text(
+                price,
+                style: SolvrTextStyles.mono(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 16,
+                  color: SolvrColors.mutedForeground,
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 4),
@@ -318,5 +377,7 @@ class _PlanRow extends StatelessWidget {
         ],
       ),
     );
+    if (onTap == null) return card;
+    return InkWell(onTap: onTap, child: card);
   }
 }

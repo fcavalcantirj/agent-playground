@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-13 SHIPPED (Wave 6 — final exit gate: docker-compose stripe-mock + Makefile target + GH workflow + B-HUMAN-UAT.md + PHASE-B-EXIT-GATE-PASSED marker). Phase B SHIPPED with split-gate (automated CI green; manual UAT pending).
-last_updated: "2026-05-09T13:15:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-13 SHIPPED (Wave 6 final — Phase B exit gate). docker-compose stripe-mock service on 12111/12112 (D-22 dev-only outbound shape; AMD-02 cannot emit webhooks); api_server/Makefile + top-level Makefile both gain `e2e-phase-b-stripe` target with env-guards on AP_STRIPE_TEST_API_KEY + AP_STRIPE_TEST_WEBHOOK_SECRET; new tests/e2e/test_phase_b_money_path.py runs the full Free→Ultra→debit→drained→402 composition against real Stripe TEST mode (`cs_test_*` checkout via real Stripe API + signed-fixture webhook injection per AMD-02 — CI determinism without `stripe listen` dependency); `.github/workflows/e2e-phase-b.yml` PR-gated CI (paths-filtered to api_server/** + mobile/**; concurrency-serialized; secrets.AP_STRIPE_TEST_*); env-doc both `.env.example` + `deploy/.env.prod.example` for the 8 prod AP_STRIPE_* vars + 2 CI-only AP_STRIPE_TEST_* (defense-in-depth split); `B-HUMAN-UAT.md` 4-scenario manual UAT script with test card 4242 4242 4242 4242 (UAT-1 Free→Ultra credit pack; UAT-2 chat drain → 402; UAT-3 promo code; UAT-4 Pro cancel-grace + downgrade); `.planning/PHASE-B-EXIT-GATE-PASSED` split-gate marker (AUTOMATED COVERAGE PASS; manual UAT pending — Phase 31 shape). 2 deviations documented (Rule 1 — debit_user signature alignment caught during TDD; scope-reduction — drained via direct ledger helper to avoid burning real OpenRouter tokens, since the full chat→debit flow is already covered by Phase 31 H8 + Plan 08). Phase B SHIPPED with all 13 plans across 7 waves complete. Manual UAT awaits human walkthrough.
+stopped_at: context exhaustion at 90% (2026-05-09)
+last_updated: "2026-05-09T20:27:09.870Z"
+last_activity: 2026-05-09 -- Plan B-stripe-03 SHIPPED (Wave 2 read-side routes + billing rate-limit bucket); Wave 2 sibling + Wave 3 unblocked
 progress:
-  total_phases: 20
+  total_phases: 19
   completed_phases: 5
-  total_plans: 45
-  completed_plans: 45
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -38,6 +38,7 @@ progress:
 **Phase B is GREEN.** Phase B is open for **manual UAT walk-through** per `B-HUMAN-UAT.md` (4 scenarios, ~30min with deploy stack + Stripe CLI + iOS sim). Once all 4 PASS, append timestamp + outcome lines to `.planning/PHASE-B-EXIT-GATE-PASSED` and (optionally) tag `git tag phase-b-shipped` (NEVER push tags — user pushes manually per global instructions).
 
 **Deferred / next-phase work:**
+
 - Live webhook delivery — gated on H7 (Hetzner HTTPS deploy)
 - Web frontend billing surfaces — Phase B.2
 - Mobile Pro upgrade surface — UAT-4 step 3 is curl-driven for v0.3; surface task is a follow-up
@@ -928,9 +929,9 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-09T04:05:00.000Z
+Last session: 2026-05-09T20:27:09.860Z
 
-Stopped at: Phase B-stripe-11 SHIPPED — Wave 5 mobile billing UI (6 widgets + UAT log; Plan 12 AppBar ticker remains).
+Stopped at: context exhaustion at 90% (2026-05-09)
 
 **Next command:** `/gsd-execute-phase B-stripe-paywall --auto` (continue with Wave 5 tail: Plan B-stripe-12 AppBar ticker tier-branching).
 
@@ -954,4 +955,4 @@ Stopped at: Phase B-stripe-11 SHIPPED — Wave 5 mobile billing UI (6 widgets + 
 - Commit SHAs to pin picoclaw and Hermes to (pick the latest stable at plan-writing time).
 - Extend Spike 1 + Spike 2 for Hermes (currently picoclaw + OpenClaw only covered).
 
-Resume file: .planning/phases/B-stripe-paywall/CONTEXT.md
+Resume file: None
