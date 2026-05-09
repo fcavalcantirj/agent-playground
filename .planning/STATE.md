@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-paywall context gathered (26 decisions across 12 areas)
-last_updated: "2026-05-09T00:12:49.735Z"
-last_activity: 2026-05-09 -- Phase B-stripe-paywall execution started
+stopped_at: Phase B-stripe-01 SHIPPED (Wave 0 spike gate, all 8 spikes PASS)
+last_updated: "2026-05-09T01:30:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-01 SHIPPED (Wave 0 spike gate); Wave 1 unblocked
 progress:
-  total_phases: 19
+  total_phases: 20
   completed_phases: 5
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_plans: 45
+  completed_plans: 33
+  percent: 73
 ---
 
 ## Resume after /clear (2026-05-08 — Phase 31 SHIPPED, Phase B queued)
@@ -137,14 +137,33 @@ Replace the asyncpg-based `inapp_dispatcher` with Temporal workflows mirroring M
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Any agent × any model × any user, in one click — agent-agnostic install pipeline is the differentiator that must work.
-**Current focus:** Phase B-stripe-paywall — Stripe Paywall
+**Current focus:** Phase B-stripe — paywall
 
 ## Current Position
 
-Phase: B-stripe-paywall (Stripe Paywall) — EXECUTING
-Plan: 1 of 13
-Status: Executing Phase B-stripe-paywall
-Last activity: 2026-05-09 -- Phase B-stripe-paywall execution started
+Phase: B-stripe (paywall) — EXECUTING
+Plan: 2 of 13 (Plan 01 SHIPPED — Wave 0 spike gate, all 8 spikes PASS)
+Status: Executing Phase B-stripe
+Last activity: 2026-05-09 -- Plan B-stripe-01 SHIPPED (Wave 0 spike gate); Wave 1 unblocked
+
+### Plan B-stripe-01 SHIPPED 2026-05-08
+
+All 8 Wave 0 spikes PASS. Wave 1 unblocked.
+
+| Spike | Commit | What proved |
+|---|---|---|
+| A — webhook signature | `b61c028` | StripeClient.construct_event round-trip on hand-rolled signed fixture; tampered + stale rejected |
+| B — debit activity contract | `b61c028` | `@activity.defn(name="debit_balance")` returns Decimal-as-string; idempotent on UNIQUE-violation retry |
+| C — atomic ledger | `b61c028` | INSERT credit_transactions + UPDATE credit_balances same-tx is concurrent-safe at 8-way parallelism |
+| D — Temporal schedule | `46c6096` | register_schedules helper idempotent across two boots (typed ScheduleAlreadyRunningError fallback — RESEARCH §Pattern 4 was wrong) |
+| E — mobile webview | `94ec8ff` | flutter_inappwebview ^6.1.5 shouldOverrideUrlLoading intercepts redirect with query-param extraction |
+| F — Stripe CLI deploy stack | `ecc4c06` | `stripe listen --forward-to localhost:8000` delivered to deploy-api_server-1 (NOT side-launched uvicorn); confirmed by source IP 172.18.0.1 + container ID + Stripe/1.0 user-agent |
+| G — lazy customer create | `46c6096` | SELECT FOR UPDATE serializes 2 concurrent first-clicks into 1 fake-Stripe call (counter-example without FOR UPDATE recorded 2 calls) |
+| H — migration round-trip | `46c6096` | Migration `014_phase_b_ledger_and_tier` upgrade → downgrade → re-upgrade idempotent against PG17 testcontainer |
+
+Summary: `.planning/phases/B-stripe-paywall/B-stripe-01-SUMMARY.md`
+Evidence aggregation: `api_server/tests/_spikes/wave0_stripe_paywall.md`
+Draft migration: `api_server/tests/_spikes/draft_014_migration.py` (Wave 1 will copy to `alembic/versions/`)
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
