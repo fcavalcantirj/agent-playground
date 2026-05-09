@@ -3,15 +3,33 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-10 SHIPPED (Wave 5 partial — mobile billing dumb-client substrate; Plans 11+12 remain in Wave 5)
-last_updated: "2026-05-09T03:48:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-10 SHIPPED (Wave 5 — mobile billing data plumbing). 19/19 new tests PASS = 11 model + 8 provider under real Dio + http_mock_adapter + ProviderContainer override; 23/23 usage regression GREEN. New `mobile/lib/features/billing/` carries 4 hand-written-fromJson DTOs (Pack/Balance/Transaction/TransactionsPage per D-34), 5 typed methods on ApiClient (billingPacks/billingBalance/billingTransactions/createPackCheckoutSession/createSubscriptionCheckoutSession; all returning Result<T> envelopes; cancel-token-aware), 3 Riverpod AsyncNotifier providers (PacksNotifier + BalanceNotifier with D-32 lifecycle resume + TransactionsNotifier with loadMore cursor pagination). Router gains 3 new GoRoute entries (/billing/{topup,checkout,transactions}); bodies are PHASE_B_STUB widgets in `_stubs.dart` for Plan 11 to replace atomically. Mobile NEVER hardcodes pack data — single SOT in api_server (GET /v1/billing/packs); golden rule #2 honored (verified zero-hit grep on pack_5/10/25/50/100 outside docstrings). Wave 5 partial — Plans 11 (mobile UI screens) + 12 (AppBar ticker tier-branching) remain.
+stopped_at: Phase B-stripe-11 SHIPPED (Wave 5 partial — mobile billing UI screens; Plan 12 AppBar ticker remains in Wave 5)
+last_updated: "2026-05-09T04:05:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-11 SHIPPED (Wave 5 — mobile billing UI screens). 17/17 new tests PASS = 4 topup-screen + 3 modal + 6 webview/classify + 3 transactions + 1 webview build smoke; 36/36 total billing widget+provider tests GREEN; 0 lints in any of the 6 new lib files. Six widgets land in `mobile/lib/features/billing/`: TopUpScreen (state machine picking/awaitingCheckout/awaitingWebhook + post-Checkout 2s×30s polling), PackPickerWidget (5-card column), TopUpInflightWidget (Stopwatch+Timer.periodic+mm:ss+Cancel lifted verbatim from deploy_step.dart:387-444), CheckoutWebViewScreen (InAppWebView+shouldOverrideUrlLoading + pure classifyNavigationForResult helper for unit tests), InsufficientCreditsModal (BLOCKING AlertDialog barrierDismissible:false with Top-up CTA→ctx.push('/billing/topup')), TransactionsScreen (paginated ledger history + ScrollEndNotification → loadMore). Plan 10's _stubs.dart deleted — PHASE_B_STUB scaffolding fully replaced. app_router.dart imports flipped to real screens. Spike-e webview-internal handshake (host=app.solvrlabs.com + paths /billing/return-{success,cancel}) honored. Wave 5 partial — Plan 12 (AppBar ticker tier-branching wiring balanceProvider into dashboard_providers.dart) remains.
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 42
-  percent: 93
+  completed_plans: 43
+  percent: 96
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-11 SHIPPED)
+
+**Current state:** Phase B-stripe-11 SHIPPED 2026-05-09 (Wave 5 — mobile billing UI screens). **17/17 new tests GREEN** = 4 topup-screen + 3 modal + 6 webview/classify + 3 transactions + 1 webview build smoke; **36/36 total** billing widget+provider tests under real Dio + http_mock_adapter + ProviderContainer override; 0 new lints in any of the 6 new lib files. Six widgets land in `mobile/lib/features/billing/`: **TopUpScreen** (state machine picking/awaitingCheckout/awaitingWebhook + Checkout-URL mint via `api.createPackCheckoutSession` + post-Checkout 2s×30s polling on `balanceProvider` until balance > baseline), **PackPickerWidget** (5-card column with `onSelect(Pack)` callback), **TopUpInflightWidget** (Stopwatch + Timer.periodic + mm:ss + Cancel lifted verbatim from `deploy_step.dart:387-444` per `feedback_inflight_ui_for_long_awaits.md`), **CheckoutWebViewScreen** (`InAppWebView` + `shouldOverrideUrlLoading` + pure top-level `classifyNavigationForResult` helper extracted for unit testing — InAppWebView platform channel can't be exercised in flutter test, but the URL-classification branching can; sentinel host+paths exposed as top-level `const String kCheckoutSentinel{Host,SuccessPath,CancelPath}`), **InsufficientCreditsModal** (BLOCKING AlertDialog `barrierDismissible: false` per D-21; Top-up CTA `unawaited(ctx.push('/billing/topup'))`; explicitly NOT a RetryBanner — D-21 routes 402 through a blocking modal, not the Phase 31 H4 transient-SSE banner), **TransactionsScreen** (`RefreshIndicator(NotificationListener<ScrollNotification>(ListView.separated(...)))` with `_formatAmount(int cents)` returning `+$X.XX`/`-$X.XX`; signed cents come straight from server — golden rule #2 dumb client; infinite scroll via `ScrollEndNotification` with `extentAfter==0 && nextBefore!=null` triggering `transactionsProvider.notifier.loadMore()`). **Plan 10's `_stubs.dart` DELETED** — PHASE_B_STUB scaffolding fully replaced. `app_router.dart` imports flipped to real screens. Spike-e webview-internal handshake (host=app.solvrlabs.com + paths /billing/return-{success,cancel}) honored.
+
+**Plan B-stripe-11 commits:**
+
+- `fdcbd47` — test(B-stripe-11): add failing tests for top-up screen + modal (RED gate)
+- `0faebef` — feat(B-stripe-11): top-up screen + pack picker + inflight + 402 modal (GREEN gate)
+- `209740d` — test(B-stripe-11): add failing tests for webview + transactions screen (RED gate)
+- `220b400` — feat(B-stripe-11): transactions screen + finalize router (GREEN gate)
+- `3e0da14` — docs(B-stripe-11): add UAT log placeholder for manual webview verification
+
+**Truth audit:** 7/7 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-11-SUMMARY.md` for full audit + threat-model audit (4/4 STRIDE entries) + key_links verification + 4 documented deviations (Rule 1 — mm:ss test predicate used regex pattern as literal string; Rule 1 — pumpAndSettle leaks Timer.periodic; Rule 1 — InAppWebView platform-channel exception in flutter test forced relaxed widget-build smoke; Rule 2 — sentinel constants promoted to top-level after extraction). Manual UAT (Task 3 human-verify checkpoint) auto-approved by auto-mode; iPhone-sim Stripe-TEST flow documented in `B-stripe-11-UAT-LOG.md` with PENDING markers; user runs steps 5-10 when an interactive environment is available.
+
+**Wave 5 partial.** Plan 12 (AppBar ticker tier-branching — wires `balanceProvider` into `dashboard_providers.dart` for the tier-aware projection: ultra → `formatCredits(balanceCents)`, free/pro → existing BYOK USD ticker; explicit critical_rule from Plan 11 forbade touching `dashboard_providers.dart`) is the remaining Wave 5 ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto` after /clear.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-10 SHIPPED)
@@ -698,6 +716,7 @@ The original Phase 02 in the roadmap bundled substrate + full hardening. After a
 | Phase 22c.3-inapp-chat-channel P13 | 25 | 1 tasks | 1 files |
 | Phase 22c.3-inapp-chat-channel P14 | 5min | 2 tasks | 1 file |
 | Phase 30 P00 | 12 | 3 tasks | 7 files |
+| Phase B-stripe-11 | ~11min | 3 tasks (2 TDD + 1 human-verify) | 11 created + 1 modified + 1 deleted |
 
 ## Accumulated Context
 
@@ -861,11 +880,11 @@ URLs:
 
 ## Session Continuity
 
-Last session: 2026-05-08T23:01:27.967Z
+Last session: 2026-05-09T04:05:00.000Z
 
-Stopped at: Phase B-stripe-paywall context gathered (26 decisions across 12 areas)
+Stopped at: Phase B-stripe-11 SHIPPED — Wave 5 mobile billing UI (6 widgets + UAT log; Plan 12 AppBar ticker remains).
 
-**Next command:** `/gsd-execute-phase 22c.3-inapp-chat-channel` (continue with Wave 2 tail: Plan 22c.3-07 outbox pump — last Wave 2 plan)
+**Next command:** `/gsd-execute-phase B-stripe-paywall --auto` (continue with Wave 5 tail: Plan B-stripe-12 AppBar ticker tier-branching).
 
 **Primary resume artifact:** `.planning/phases/22c.3-inapp-chat-channel/22c.3-06-SUMMARY.md` — read first after /clear; then `.planning/phases/22c.3-inapp-chat-channel/22c.3-07-PLAN.md` to see the outbox pump contract.
 
