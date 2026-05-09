@@ -284,6 +284,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={"count": _byok_loaded},
     )
 
+    # ====================================================================
+    # Phase B (Plan B-stripe-02) — StripeClient lifespan service (AMD-04)
+    # ====================================================================
+    #
+    # One process-wide ``stripe.StripeClient`` instance owned by the
+    # lifespan; routes read it via ``request.app.state.stripe_client``.
+    # ``build_stripe_client(settings)`` calls ``validate_stripe_config``
+    # which fails loud if any AP_STRIPE_* env var is missing in prod.
+    # Mirrors the OAuth ``get_oauth(settings)`` discipline.
+    #
+    # T-B-LK mitigation (BYOK key never logged): log only the
+    # 7-character key prefix (e.g. ``sk_test_``) — the full key never
+    # enters a log record from this module.
+    from .services.stripe_client import build_stripe_client
+
+    app.state.stripe_client = build_stripe_client(settings)
+    _log.info(
+        "phase_b.lifespan.stripe_client_initialized",
+        extra={"api_key_prefix": settings.stripe_api_key[:7]},
+    )
+
     # Phase 28 — dispatcher_loop is DELETED (D-06). DispatchMessageWorkflow
     # replaces the asyncpg pump. Reaper stays for legacy stuck rows during
     # the transition window (RESEARCH §7 R1); outbox pump unchanged (R7).
