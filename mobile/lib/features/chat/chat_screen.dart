@@ -24,7 +24,9 @@ import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
+import 'package:agent_playground/features/billing/insufficient_credits_modal.dart';
 import 'package:agent_playground/features/chat/bubble_widget.dart';
+import 'package:agent_playground/features/chat/chat_blocking_error_provider.dart';
 import 'package:agent_playground/features/chat/chat_providers.dart';
 import 'package:agent_playground/features/chat/chat_stream_error_banner_provider.dart';
 import 'package:agent_playground/features/chat/chat_stream_error_classifier.dart';
@@ -132,6 +134,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final tgBanner = ref.watch(telegramFailedBannerProvider);
     // Phase 31 H4 (D-05/D-09 + AMD-01) — chat-stream error banner state.
     final streamErr = ref.watch(chatStreamErrorProvider);
+
+    // Phase B Plan 12 (D-21) — when the chat scope flips
+    // chatBlockingErrorProvider to ChatBlockingError.insufficientCredits,
+    // surface the blocking modal. The modal owns the BuildContext path
+    // (which the headless ChatScope notifier can't access). After
+    // dispatch we clear the provider so a future 402 re-arms the
+    // listener. unawaited(...) — the modal Future resolves on
+    // user-dismiss; the listener has nothing to await on.
+    // ignore: cascade_invocations
+    ref.listen<ChatBlockingError?>(chatBlockingErrorProvider, (prev, next) {
+      if (next == ChatBlockingError.insufficientCredits && prev != next) {
+        ref.read(chatBlockingErrorProvider.notifier).state = null;
+        unawaited(showInsufficientCreditsModal(context));
+      }
+    });
     final isStopped =
         agent != null && agent.status != 'running' && agent.status.isNotEmpty;
 

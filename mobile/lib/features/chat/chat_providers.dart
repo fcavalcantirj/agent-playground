@@ -45,6 +45,7 @@ import 'package:agent_playground/core/api/messages_stream.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/lifecycle/app_lifecycle_observer.dart';
+import 'package:agent_playground/features/chat/chat_blocking_error_provider.dart';
 import 'package:agent_playground/features/chat/chat_stream_error_banner_provider.dart';
 import 'package:agent_playground/features/chat/chat_stream_error_classifier.dart';
 import 'package:dio/dio.dart';
@@ -525,6 +526,11 @@ class ChatScope extends Notifier<ChatState> {
   }
 
   /// D-41 — Send: optimistic insert + POST /messages.
+  ///
+  /// Phase B Plan 12 (D-21) — INSUFFICIENT_BALANCE 402 routes through
+  /// `chatBlockingErrorProvider` → modal, NOT through markFailed. The
+  /// modal owns the paywall UX; surfacing the same error as a
+  /// FailedBubble + RetryBanner would double-render.
   Future<void> sendMessage(String content) async {
     final idemKey = const Uuid().v4();
     state = state.insertOptimistic(
@@ -544,8 +550,34 @@ class ChatScope extends Notifier<ChatState> {
       case Ok():
         state = state.markPendingDelivered(idemKey: idemKey);
       case Err(:final error):
-        state = state.markFailed(idemKey: idemKey, error: error.message);
+        if (error.code == ErrorCode.insufficientBalance) {
+          // D-21 — paywall modal owns the UX. Keep the optimistic
+          // pending row in place (so the user sees the message they
+          // tried to send) but evict the assistant typing placeholder
+          // (no reply is coming) and clear inflight so the input bar
+          // regains its idle state. The modal flips
+          // `chatBlockingErrorProvider`; the chat screen widget owns
+          // the BuildContext required to dispatch
+          // showInsufficientCreditsModal.
+          state = _stripTyping(state, idemKey);
+          ref.read(chatBlockingErrorProvider.notifier).state =
+              ChatBlockingError.insufficientCredits;
+        } else {
+          state = state.markFailed(idemKey: idemKey, error: error.message);
+        }
     }
+  }
+
+  /// Internal helper for the 402 path — drops the assistant typing
+  /// placeholder and clears the inflight flag while keeping the user's
+  /// pending row in place. Mirrors the typing-removal slice of
+  /// `markFailed` without flipping the user row's status.
+  static ChatState _stripTyping(ChatState s, String idemKey) {
+    final typingId = 'typing:$idemKey';
+    if (!s.byId.containsKey(typingId) && !s.inflight) return s;
+    final next = Map<String, ChatRow>.of(s.byId)..remove(typingId);
+    final order = s.orderedIds.where((id) => id != typingId).toList();
+    return s.copyWith(byId: next, orderedIds: order, inflight: false);
   }
 
   /// Cancel the in-flight POST (D-51 — cancel-on-spinner-tap).
@@ -554,6 +586,11 @@ class ChatScope extends Notifier<ChatState> {
   }
 
   /// D-45 — retry generates a NEW Uuid().v4(); failed bubble stays.
+  ///
+  /// Phase B Plan 12 (D-21) — same INSUFFICIENT_BALANCE 402 routing as
+  /// sendMessage; the new pending row stays as `pending` (modal owns
+  /// the UX), the typing placeholder is dropped, the blocking
+  /// provider flips to surface the modal.
   Future<void> retryFailed({
     required String failedKey,
     required String content,
@@ -574,7 +611,13 @@ class ChatScope extends Notifier<ChatState> {
       case Ok():
         state = state.markPendingDelivered(idemKey: newKey);
       case Err(:final error):
-        state = state.markFailed(idemKey: newKey, error: error.message);
+        if (error.code == ErrorCode.insufficientBalance) {
+          state = _stripTyping(state, newKey);
+          ref.read(chatBlockingErrorProvider.notifier).state =
+              ChatBlockingError.insufficientCredits;
+        } else {
+          state = state.markFailed(idemKey: newKey, error: error.message);
+        }
     }
   }
 

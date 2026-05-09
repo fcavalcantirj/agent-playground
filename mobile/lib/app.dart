@@ -13,6 +13,8 @@ import 'package:agent_playground/core/lifecycle/app_lifecycle_observer.dart';
 import 'package:agent_playground/core/router/app_router.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
+import 'package:agent_playground/features/usage/usage_models.dart';
+import 'package:agent_playground/features/usage/usage_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -69,14 +71,44 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
         // D-16 / WR-01 — tag Sentry events with the authenticated user id
         // (ID-only, no PII) so mobile crashes get the same user-context
         // bridge as the api_server's session middleware.
-        Sentry.configureScope(
-          (scope) => scope.setUser(SentryUser(id: next.id)),
-        );
+        //
+        // Phase B Plan 12 (AMD-04) — also seed `tier='free'` as the
+        // initial scope tag. The usageSummaryProvider listener below
+        // refines it to the authoritative tier once the first
+        // /v1/usage/summary call lands (5-15s after sign-in typically).
+        // setTag (NOT setExtra/setContexts) so the tier is searchable
+        // in Sentry's issue list — the planning truth's `setData` is
+        // a typo; Sentry Scope's actual surface is setTag/setExtra/
+        // setContexts (sentry-flutter 9.20.0). setTag fits the
+        // low-cardinality enum (free|pro|ultra) shape best.
+        Sentry.configureScope((scope) {
+          scope
+            ..setUser(SentryUser(id: next.id))
+            ..setTag('tier', 'free');
+        });
         ref
           ..read(loginSuccessProvider.notifier).state = null
           ..read(showSignedOutBannerProvider.notifier).state = false;
         _router.go('/dashboard');
       }
+    });
+
+    // Phase B Plan 12 (AMD-04) — refresh Sentry user-context tier on
+    // every usage summary fetch. UsageSummaryProvider polls
+    // /v1/usage/summary on mount + AppLifecycleState.resumed, so a tier
+    // flip (D-04 — Stripe webhook → users.tier mutation) is reflected
+    // in Sentry within the latency of the next foreground refresh
+    // (5-15s typical, backstopped by the dashboard ticker's poll
+    // cadence). Tier is one of `free | pro | ultra` per D-01 — not
+    // PII, safe to surface in crash reports per the threat model
+    // T-B-LK disposition.
+    // ignore: cascade_invocations
+    ref.listen<AsyncValue<UsageSummary>>(usageSummaryProvider, (prev, next) {
+      next.whenData((summary) {
+        Sentry.configureScope(
+          (scope) => scope.setTag('tier', summary.tier),
+        );
+      });
     });
 
     return MaterialApp.router(

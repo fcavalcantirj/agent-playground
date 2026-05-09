@@ -54,6 +54,13 @@ enum ErrorCode {
   concurrentPollLimit,
   eventStreamUnavailable,
 
+  // Phase B Plan B-stripe-03 — billing error code surfaced to mobile.
+  // Only INSUFFICIENT_BALANCE is mirrored today: Plan 12 routes 402 on
+  // POST /v1/agents/<id>/messages through a blocking modal (D-21).
+  // TIER_LIMIT_EXCEEDED / INVALID_PACK_ID / STRIPE_WEBHOOK_INVALID are
+  // server-side concerns that don't need typed mobile counterparts.
+  insufficientBalance,
+
   // Client-only (no backend equivalent — dio raised before/after wire).
   network,
   timeout,
@@ -156,6 +163,7 @@ class ApiError {
         'CHANNEL_INPUTS_INVALID' => ErrorCode.channelInputsInvalid,
         'CONCURRENT_POLL_LIMIT' => ErrorCode.concurrentPollLimit,
         'EVENT_STREAM_UNAVAILABLE' => ErrorCode.eventStreamUnavailable,
+        'INSUFFICIENT_BALANCE' => ErrorCode.insufficientBalance,
         _ => ErrorCode.unknownServer,
       };
 
