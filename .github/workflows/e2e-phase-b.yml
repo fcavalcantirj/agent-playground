@@ -1,0 +1,110 @@
+name: e2e phase b
+
+# Phase B-stripe-13 Wave 6 — real Stripe TEST mode end-to-end gate.
+#
+# Triggers on push/PR touching api_server/** or mobile/** (D-25). The
+# Phase B exit gate is split per Phase 31's shape: this workflow is the
+# **automated** half; the **manual** half lives in B-HUMAN-UAT.md.
+#
+# Cost: $0. Stripe TEST mode is always free; no real money flows. The
+# webhook-injection step uses the hand-rolled signed-fixture helper
+# (AMD-02) so this job does NOT need `stripe listen` running — that's
+# the manual UAT path. Both paths verify the same route code.
+#
+# Concurrency: serialized via the group below. cancel-in-progress is
+# FALSE so a queued PR run lets the in-flight one complete cleanly
+# (the test cleans up its Stripe Customer at end-of-test; cancelling
+# mid-run risks stranding a customer in the TEST dashboard).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api_server/**'
+      - 'mobile/**'
+      - '.github/workflows/e2e-phase-b.yml'
+      - 'docker-compose.dev.yml'
+      - 'Makefile'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api_server/**'
+      - 'mobile/**'
+      - '.github/workflows/e2e-phase-b.yml'
+      - 'docker-compose.dev.yml'
+      - 'Makefile'
+
+concurrency:
+  group: e2e-phase-b-stripe
+  cancel-in-progress: false
+
+jobs:
+  phase-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # GH auto-masks secrets in logs. Defense-in-depth: no shell command
+      # in this workflow prints any environment variable to stdout, no
+      # debug-tracing flags, no env-file dumps. Manual Gate (B-HUMAN-UAT.md
+      # prerequisites) confirms the secret is added to repo settings;
+      # this YAML's job is to reference them via the masked expansion.
+      AP_STRIPE_TEST_API_KEY: ${{ secrets.AP_STRIPE_TEST_API_KEY }}
+      AP_STRIPE_TEST_WEBHOOK_SECRET: ${{ secrets.AP_STRIPE_TEST_WEBHOOK_SECRET }}
+      AP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://temporal:temporal@localhost:5432/agent_playground_api
+      AP_REDIS_URL: redis://localhost:6379/0
+      AP_RECIPES_DIR: recipes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip if Stripe TEST secrets unavailable
+        # If the repo doesn't have the secrets wired yet, skip cleanly
+        # rather than failing — this lets the workflow land in a PR
+        # before the secrets are minted (B-HUMAN-UAT.md prerequisite).
+        # NOTE: this is not the regression contract — once secrets are
+        # set, the test fixture's autouse env-guard fails the test loud
+        # (per SPEC AC24-style logic; see test_phase_b_money_path.py).
+        if: env.AP_STRIPE_TEST_API_KEY == '' || env.AP_STRIPE_TEST_WEBHOOK_SECRET == ''
+        run: |
+          echo "::warning::AP_STRIPE_TEST_* secrets not set — Phase B e2e gate skipped."
+          echo "Add secrets.AP_STRIPE_TEST_API_KEY and secrets.AP_STRIPE_TEST_WEBHOOK_SECRET"
+          echo "to repo settings to enable this gate."
+          exit 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Boot Postgres + Redis (D-19 — reuse docker-compose.dev.yml)
+        run: docker compose -f docker-compose.dev.yml up -d postgresql redis
+
+      - name: Wait for Postgres healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose -f docker-compose.dev.yml exec -T postgresql \
+                 pg_isready -U temporal >/dev/null 2>&1; then
+              echo "postgres ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: Create app database + run migrations
+        run: |
+          # `|| true` swallows the duplicate-DB error on workflow re-runs
+          # (alembic upgrade is already idempotent).
+          docker compose -f docker-compose.dev.yml exec -T postgresql \
+            psql -U temporal -c "CREATE DATABASE agent_playground_api" || true
+          make install-api
+          make migrate-api
+
+      - name: Run Phase B e2e gate (real Stripe TEST mode)
+        # AP_STRIPE_TEST_API_KEY + AP_STRIPE_TEST_WEBHOOK_SECRET come from
+        # the job env above; never printed.
+        run: make e2e-phase-b-stripe
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v

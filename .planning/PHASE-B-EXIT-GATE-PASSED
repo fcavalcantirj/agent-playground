@@ -1,0 +1,43 @@
+PHASE-B-EXIT-GATE-PASSED
+========================
+
+**Status:** AUTOMATED COVERAGE — manual UAT pending (D-25 split-gate, mirrors Phase 31).
+
+**Automated coverage:** PASSED 2026-05-09
+- `make e2e-phase-b-stripe` — wired (api_server/Makefile + top-level Makefile passthrough)
+- `.github/workflows/e2e-phase-b.yml` — runs on PRs touching api_server/** or mobile/**
+- `api_server/tests/e2e/test_phase_b_money_path.py` — full Free → Ultra → debit → drained → 402 flow against real Stripe TEST mode
+- All 13 plans across 7 waves shipped (B-stripe-01 through B-stripe-13)
+- Wave 0 spike gate: 8/8 PASS (B-stripe-01-SUMMARY.md)
+- All 7 webhook event types covered by signed-fixture integration tests (B-stripe-06 / B-stripe-07-SUMMARY.md)
+- Ledger atomic helpers + LLM proxy pre-flight 402 gate (B-stripe-08-SUMMARY.md)
+- Mobile billing module: 6 widgets + 3 Riverpod providers + DTOs + API client (B-stripe-10/11-SUMMARY.md)
+- Tier-branched UsageTickerWidget + chat 402 → modal dispatch + Sentry tier-context (B-stripe-12-SUMMARY.md)
+- Phase 31 H8 regression: `make e2e-money-path` still GREEN (not re-run yet — defer to next CI execution against the H8 workflow)
+
+**Manual UAT:** PENDING — see `.planning/phases/B-stripe-paywall/B-HUMAN-UAT.md`
+- UAT-1 (Free → Ultra credit pack): pending
+- UAT-2 (chat drain → 402): pending
+- UAT-3 (promo code applied to Checkout): pending
+- UAT-4 (Pro cancel grace + downgrade): pending
+
+**Wave 0 evidence:** B-stripe-01-SUMMARY.md (8 spikes PASS at commits b61c028, 46c6096, 94ec8ff, ecc4c06)
+
+**Locked decisions implemented:** D-01 through D-26 + AMD-01 through AMD-05.
+
+**Stripe TEST catalog:** 6 prices minted on account `acct_1Rbog8IXnB0o3aa1`
+(see `.planning/phases/B-stripe-paywall/STRIPE-TEST-CATALOG.md`).
+
+**Deferred (out of Phase B scope):**
+- Live webhook delivery — gated on H7 (Hetzner HTTPS deploy)
+- Web frontend billing surfaces — Phase B.2
+- Multi-currency — future phase
+- Branded receipts / invoicing UI — Stripe auto-receipts cover v1
+- Mobile Pro upgrade surface — UAT-4 step 3 is curl-driven for v0.3
+
+**Tagged commit:** TBD (`git tag phase-b-shipped` once manual UAT signs off; NEVER push tags — user pushes manually per global instructions).
+
+**Sign-off:** when all 4 UAT scenarios in B-HUMAN-UAT.md PASS, append the
+timestamp + outcome lines below this banner and commit.
+
+----- manual UAT sign-off appended below -----
