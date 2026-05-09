@@ -129,5 +129,41 @@ void main() {
       expect(err.code, ErrorCode.unknownServer);
       expect(err.statusCode, 500);
     });
+
+    test('500 with no envelope surfaces HTTP status in message (B-stripe regression)', () {
+      // Phase B UAT regression: when api_server raised UndefinedColumnError
+      // on a missing migration, mobile showed opaque "malformed error envelope"
+      // instead of the actual 500 status. The message must surface the status
+      // code so the user / on-call sees something actionable.
+      final response = Response<dynamic>(
+        requestOptions: RequestOptions(path: '/v1/agents/abc/start'),
+        statusCode: 500,
+        data: 'Internal Server Error',
+      );
+      final err = ApiError.fromDioException(makeException(response: response));
+      expect(err.message, contains('500'));
+      expect(err.message, isNot(equals('malformed error envelope')));
+    });
+
+    test('502 bad gateway with no envelope surfaces HTTP status', () {
+      final response = Response<dynamic>(
+        requestOptions: RequestOptions(path: '/v1/runs'),
+        statusCode: 502,
+        data: '<html>Bad Gateway</html>',
+      );
+      final err = ApiError.fromDioException(makeException(response: response));
+      expect(err.message, contains('502'));
+      expect(err.statusCode, 502);
+    });
+
+    test('400 with no envelope surfaces HTTP status', () {
+      final response = Response<dynamic>(
+        requestOptions: RequestOptions(path: '/v1/agents'),
+        statusCode: 400,
+        data: '',
+      );
+      final err = ApiError.fromDioException(makeException(response: response));
+      expect(err.message, contains('400'));
+    });
   });
 }

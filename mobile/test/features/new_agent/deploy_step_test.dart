@@ -423,6 +423,54 @@ void main() {
   );
 
   testWidgets(
+    'B-stripe regression: TIER_LIMIT_EXCEEDED renders plan-limit copy, '
+    'not technical "agent cap reached for tier ..." jargon',
+    (tester) async {
+      // Server message is informative for logs — but the user should see
+      // human-readable copy, not "agent cap reached for tier 'free' (1 active, cap 1)".
+      DeployStep.orchestratorBuilder = (api) => _FakeOrchestrator(
+            api,
+            const DeployOutcome.inappFail(
+              error: ApiError(
+                code: ErrorCode.tierLimitExceeded,
+                message: "agent cap reached for tier 'free' (1 active, cap 1)",
+                statusCode: 403,
+              ),
+            ),
+          );
+      final container = ProviderContainer(
+        overrides: [apiClientProvider.overrideWithValue(_apiNoAgents())],
+      );
+      addTearDown(container.dispose);
+      _populateScope(
+        container,
+        recipe: _inappOnlyRecipe(),
+        agentName: 'my-agent',
+      );
+      await tester.pumpWidget(_harness(container));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Deploy'));
+      await tester.pumpAndSettle();
+
+      // Title must NOT be the technical "Couldn't start in-app channel" —
+      // the user knows nothing about "in-app channels".
+      expect(find.text("Couldn't start in-app channel"), findsNothing);
+
+      // Title should communicate the actual situation.
+      expect(find.text('Plan limit reached'), findsOneWidget);
+
+      // Body must NOT echo the raw technical message.
+      expect(
+        find.textContaining("agent cap reached for tier 'free'"),
+        findsNothing,
+      );
+
+      // Body should explain what to do next, in plain English.
+      expect(find.textContaining('Stop'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
       'D-60: success → context.go(/chat/<id>) + wizardScope cleared + banner '
       'remains null', (tester) async {
     DeployStep.orchestratorBuilder = (api) => _FakeOrchestrator(

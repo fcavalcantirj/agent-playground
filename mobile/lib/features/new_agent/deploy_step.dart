@@ -245,8 +245,18 @@ class _DeployStepState extends ConsumerState<DeployStep> {
       case DeployInappFail(:final error):
         setState(() {
           _state = _DeployStateKind.inappFail;
-          _errorTitle = "Couldn't start in-app channel";
-          _errorBody = error.message;
+          if (error.code == ErrorCode.tierLimitExceeded) {
+            // B-stripe regression fix: don't leak "agent cap reached for
+            // tier 'free' (1 active, cap 1)" jargon. Map to plain English.
+            _errorTitle = 'Plan limit reached';
+            _errorBody =
+                "You've used your free plan's only agent slot. Stop "
+                'an existing agent to deploy a new one, or upgrade to '
+                'Pro for 5 active agents.';
+          } else {
+            _errorTitle = "Couldn't start in-app channel";
+            _errorBody = error.message;
+          }
         });
         return;
       case DeployCancelled():

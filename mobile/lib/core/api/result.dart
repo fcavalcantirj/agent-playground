@@ -55,11 +55,13 @@ enum ErrorCode {
   eventStreamUnavailable,
 
   // Phase B Plan B-stripe-03 — billing error code surfaced to mobile.
-  // Only INSUFFICIENT_BALANCE is mirrored today: Plan 12 routes 402 on
-  // POST /v1/agents/<id>/messages through a blocking modal (D-21).
-  // TIER_LIMIT_EXCEEDED / INVALID_PACK_ID / STRIPE_WEBHOOK_INVALID are
-  // server-side concerns that don't need typed mobile counterparts.
+  // INSUFFICIENT_BALANCE — Plan 12 routes 402 on POST messages through
+  // a blocking modal (D-21).
+  // TIER_LIMIT_EXCEEDED — UAT regression fix: deploy_step.dart maps this
+  // to a friendly "Plan limit reached" panel instead of leaking the raw
+  // server message ("agent cap reached for tier 'free' (1 active, cap 1)").
   insufficientBalance,
+  tierLimitExceeded,
 
   // Client-only (no backend equivalent — dio raised before/after wire).
   network,
@@ -128,10 +130,14 @@ class ApiError {
         statusCode: response.statusCode,
       );
     }
+    final status = response.statusCode;
+    final statusLabel = status != null
+        ? 'Server error (HTTP $status)'
+        : 'Server error (no status)';
     return ApiError(
       code: ErrorCode.unknownServer,
-      message: 'malformed error envelope',
-      statusCode: response.statusCode,
+      message: statusLabel,
+      statusCode: status,
     );
   }
 
@@ -164,6 +170,7 @@ class ApiError {
         'CONCURRENT_POLL_LIMIT' => ErrorCode.concurrentPollLimit,
         'EVENT_STREAM_UNAVAILABLE' => ErrorCode.eventStreamUnavailable,
         'INSUFFICIENT_BALANCE' => ErrorCode.insufficientBalance,
+        'TIER_LIMIT_EXCEEDED' => ErrorCode.tierLimitExceeded,
         _ => ErrorCode.unknownServer,
       };
 
