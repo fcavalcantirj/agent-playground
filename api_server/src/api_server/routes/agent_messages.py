@@ -42,6 +42,7 @@ from ..auth.deps import require_user
 from ..models.errors import ErrorCode, make_error_envelope
 from ..services import inapp_messages_store as ims
 from ..services.run_store import fetch_agent_instance
+from ..services.tier_enforcement import retention_window_days
 from ..temporal.workflows.dispatch_message import (
     DispatchMessageInput,
     DispatchMessageWorkflow,
@@ -400,10 +401,30 @@ async def get_messages(
             f"agent {agent_id} not found", param="agent_id",
         )
 
-    # --- Step 4: read terminal-state history (single SQL seam) ---
+    # --- Step 4 (Phase B Plan B-stripe-07, D-05) — per-tier retention ---
+    #
+    # Read users.tier (lazy re-read per D-18 — no caching) and compute
+    # the retention cutoff. ``ultra`` returns None from the helper =
+    # no SQL filter applied = unlimited retention. ``free``/``pro`` get
+    # 7d/30d cutoffs computed from UTC-now. The pruner workflow (Plan
+    # B-stripe-09) hard-deletes rows past the window; this filter is
+    # the read-time mirror so a window-shrinking tier downgrade
+    # IMMEDIATELY hides the older rows even before the next pruner run.
+    async with pool.acquire() as conn:
+        tier = await conn.fetchval(
+            "SELECT tier FROM users WHERE id = $1", user_id,
+        )
+    days = retention_window_days(tier or "free")
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+        if days is not None
+        else None
+    )
+
+    # --- Step 5: read terminal-state history (single SQL seam) ---
     async with pool.acquire() as conn:
         rows = await ims.list_history_for_agent(
-            conn, agent_id=agent_id, limit=effective_limit,
+            conn, agent_id=agent_id, limit=effective_limit, since=since,
         )
 
     # --- Step 5: row → event mapping (D-03) ---

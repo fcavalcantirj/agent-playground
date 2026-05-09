@@ -7,6 +7,12 @@ takes ``user_id`` includes ``WHERE user_id=$N`` even when the route layer
 already validated ownership (defense-in-depth — mirrors
 ``run_store.fetch_agent_instance`` discipline at run_store.py:430-464).
 
+Phase B Plan B-stripe-07 extension — :func:`list_history_for_agent` accepts
+an optional ``since: datetime | None``. When non-None the SQL filter
+``AND created_at >= $N`` clips rows older than the per-tier retention
+window (free=7d / pro=30d / ultra=∞ unlimited). The retention catalog
+lives in ``services.tier_enforcement.retention_window_days`` (single SOT).
+
 The dispatcher (Plan 22c.3-05) consumes :func:`fetch_pending_for_dispatch`
 + :func:`mark_forwarded` + :func:`mark_done` + :func:`mark_failed`. The
 reaper (Plan 22c.3-06) consumes :func:`fetch_stuck_forwarded` + the same
@@ -33,6 +39,7 @@ this module.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -390,6 +397,7 @@ async def list_history_for_agent(
     *,
     agent_id: UUID,
     limit: int,
+    since: datetime | None = None,
 ) -> list[dict]:
     """Phase 23-03 (D-03 + D-04) — terminal-state chat history, oldest first.
 
@@ -412,6 +420,21 @@ async def list_history_for_agent(
         intentionally NOT filtered on here so future shared-agent
         designs need not refactor this seam).
 
+    Phase B Plan B-stripe-07 (D-05) — optional ``since`` parameter:
+
+      * ``since=None`` (default) — no time filter; every terminal-state
+        row for the agent is candidate for return.
+      * ``since=<datetime>`` — adds ``AND created_at >= since`` to the
+        SQL. Used by the route handler to apply the per-tier retention
+        window (free=7d / pro=30d). The handler computes the cutoff via
+        :func:`api_server.services.tier_enforcement.retention_window_days`;
+        ``ultra`` returns ``None`` from that helper which threads through
+        as ``since=None`` here = unlimited retention.
+
+    Filter semantics: ``created_at >= since`` is INCLUSIVE on the cutoff
+    boundary. A row at exactly ``now - 7d`` is kept; a row 1ms older is
+    excluded.
+
     Returns rows shaped::
 
         [{id, content, status, bot_response, last_error, created_at}, ...]
@@ -419,17 +442,31 @@ async def list_history_for_agent(
     Returned as ``list[dict]`` (not asyncpg.Record) so the handler can
     iterate without coupling to driver-record semantics.
     """
-    rows = await conn.fetch(
-        """
-        SELECT id, content, status, bot_response, last_error, created_at
-        FROM inapp_messages
-        WHERE agent_id = $1
-          AND status IN ('done', 'failed')
-        ORDER BY created_at ASC
-        LIMIT $2
-        """,
-        agent_id, limit,
-    )
+    if since is None:
+        rows = await conn.fetch(
+            """
+            SELECT id, content, status, bot_response, last_error, created_at
+            FROM inapp_messages
+            WHERE agent_id = $1
+              AND status IN ('done', 'failed')
+            ORDER BY created_at ASC
+            LIMIT $2
+            """,
+            agent_id, limit,
+        )
+    else:
+        rows = await conn.fetch(
+            """
+            SELECT id, content, status, bot_response, last_error, created_at
+            FROM inapp_messages
+            WHERE agent_id = $1
+              AND status IN ('done', 'failed')
+              AND created_at >= $3
+            ORDER BY created_at ASC
+            LIMIT $2
+            """,
+            agent_id, limit, since,
+        )
     return [dict(r) for r in rows]
 
 
