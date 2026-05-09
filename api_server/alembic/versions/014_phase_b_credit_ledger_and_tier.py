@@ -89,6 +89,42 @@ def upgrade() -> None:
             server_default=sa.text("0"),
         ),
     )
+    # Phase B Plan B-stripe-06 extension — subscription state cache.
+    # Populated by the customer.subscription.updated webhook handler so
+    # mobile / web can show "cancels on <date>" without round-tripping
+    # to Stripe. ``cancel_at_period_end`` flips back to false on
+    # customer.subscription.updated when the user re-subscribes.
+    op.add_column(
+        "users",
+        sa.Column(
+            "subscription_cancel_at_period_end",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
+    op.add_column(
+        "users",
+        sa.Column(
+            "subscription_current_period_end",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
+    )
+
+    # ---- agent_containers — extend ck_agent_containers_status to allow
+    # 'auto_paused' (D-15 — Pro→Free downgrade auto-pauses 4 oldest non-
+    # paused agents). Migration 003 added the constraint with 6 enum
+    # labels; we drop and recreate with 'auto_paused' as the 7th value.
+    op.drop_constraint(
+        "ck_agent_containers_status", "agent_containers", type_="check",
+    )
+    op.create_check_constraint(
+        "ck_agent_containers_status",
+        "agent_containers",
+        "container_status IN ('starting', 'running', 'stopping', "
+        "'stopped', 'start_failed', 'crashed', 'auto_paused')",
+    )
 
     # ---- credit_balances (D-17 cache) --------------------------------
     op.create_table(
@@ -220,6 +256,27 @@ def downgrade() -> None:
     )
     op.drop_table("credit_transactions")
     op.drop_table("credit_balances")
+    # Phase B Plan B-stripe-06 reverse — restore the migration-003
+    # ck_agent_containers_status constraint (drop the 'auto_paused' label
+    # added in upgrade()). Any rows currently at 'auto_paused' would
+    # violate the original constraint; defensive UPDATE flips them to
+    # 'stopped' first so the constraint creation succeeds.
+    op.execute(
+        "UPDATE agent_containers SET container_status = 'stopped' "
+        "WHERE container_status = 'auto_paused'"
+    )
+    op.drop_constraint(
+        "ck_agent_containers_status", "agent_containers", type_="check",
+    )
+    op.create_check_constraint(
+        "ck_agent_containers_status",
+        "agent_containers",
+        "container_status IN ('starting', 'running', 'stopping', "
+        "'stopped', 'start_failed', 'crashed')",
+    )
+    # Phase B Plan B-stripe-06 reverse — drop subscription state columns.
+    op.drop_column("users", "subscription_current_period_end")
+    op.drop_column("users", "subscription_cancel_at_period_end")
     op.drop_column("users", "refund_writeoff_cents")
     op.drop_column("users", "stripe_customer_id")
     op.drop_constraint("ck_users_tier", "users", type_="check")

@@ -228,10 +228,17 @@ async def _truncate_tables(request):
             # `SELECT cost_usd FROM usage_logs ORDER BY created_at DESC LIMIT 1`
             # never matches a stale row from a previous test. RESTART IDENTITY
             # CASCADE is harmless — no other table FKs into usage_logs.
+            # Phase B Plan B-stripe-06: Stripe webhook + ledger tables
+            # added so the integration tests for /v1/billing/webhook are
+            # isolated from one another (signed-fixture event ids are
+            # deterministic across tests). FK to users via ON DELETE
+            # CASCADE means TRUNCATE users CASCADE would already clear
+            # them, but listing them explicitly keeps the intent obvious.
             await conn.execute(
                 "TRUNCATE TABLE agent_events, runs, agent_containers, "
                 "agent_instances, idempotency_keys, rate_limit_counters, "
-                "sessions, users, usage_logs "
+                "sessions, users, usage_logs, "
+                "stripe_webhook_events, credit_transactions, credit_balances "
                 "RESTART IDENTITY CASCADE"
             )
     finally:

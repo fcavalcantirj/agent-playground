@@ -48,6 +48,7 @@ from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
 from .routes import billing as billing_route
+from .routes import billing_webhook as billing_webhook_route
 from .routes import health
 from .routes import llm_proxy as llm_proxy_route
 from .routes import models as models_route
@@ -625,6 +626,13 @@ def create_app() -> FastAPI:
     # require_user-gated; stripe_price_id is intentionally omitted from
     # the response model (T-B-PRC).
     app.include_router(billing_route.router, prefix="/v1", tags=["billing"])
+    # Phase B Plan B-stripe-06 — POST /v1/billing/webhook (Stripe → AP).
+    # Sole writer of users.tier (D-04). Auth via Stripe-Signature HMAC,
+    # NOT session cookie. Rate-limit middleware EXCLUDES this path so
+    # Stripe is never throttled (T-B-DOS accept).
+    app.include_router(
+        billing_webhook_route.router, prefix="/v1", tags=["billing"],
+    )
     # Phase 29-04 — POST /v1/llm/forward/{path:path} egress proxy.
     app.include_router(llm_proxy_route.router, prefix="/v1", tags=["llm"])
     return app

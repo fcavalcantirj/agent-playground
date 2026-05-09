@@ -160,10 +160,15 @@ async def _seed_agent_container(
     """Insert an ``agent_containers`` row (ties to a fresh agent_instance)."""
     async with pool.acquire() as conn:
         # agent_instances FK is NOT NULL; mint a row to point at.
+        # model is NOT NULL too (migration 001 baseline) so always set it.
         ai_id = await conn.fetchval(
-            "INSERT INTO agent_instances (id, user_id, recipe_name, name) "
-            "VALUES (gen_random_uuid(), $1, 'hermes', $2) RETURNING id",
-            user_id, f"agent-{uuid4().hex[:8]}",
+            "INSERT INTO agent_instances "
+            "  (id, user_id, recipe_name, model, name) "
+            "VALUES (gen_random_uuid(), $1, 'hermes', $2, $3) "
+            "RETURNING id",
+            user_id,
+            "openrouter/anthropic/claude-3-haiku",
+            f"agent-{uuid4().hex[:8]}",
         )
         row_id = await conn.fetchval(
             "INSERT INTO agent_containers "

@@ -180,6 +180,69 @@ async def test_upgrade_users_extra_columns(migrated):
 
 
 @pytest.mark.asyncio
+async def test_upgrade_users_subscription_state_columns(migrated):
+    """Phase B Plan B-stripe-06 extension — ``users.subscription_cancel_at_period_end``
+    (boolean, NOT NULL, default false) + ``users.subscription_current_period_end``
+    (timestamptz, NULL) added on top of the wave-1 014 surface."""
+    conn = await _connect(migrated)
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='users'
+              AND column_name IN ('subscription_cancel_at_period_end',
+                                  'subscription_current_period_end')
+            ORDER BY column_name
+            """
+        )
+        by_name = {r["column_name"]: r for r in rows}
+
+        assert "subscription_cancel_at_period_end" in by_name, (
+            "Plan 06 migration extension missing — column not found"
+        )
+        cancel_col = by_name["subscription_cancel_at_period_end"]
+        assert cancel_col["data_type"] == "boolean"
+        assert cancel_col["is_nullable"] == "NO"
+        assert "false" in (cancel_col["column_default"] or "").lower()
+
+        assert "subscription_current_period_end" in by_name
+        period_end_col = by_name["subscription_current_period_end"]
+        # asyncpg/Postgres reports timestamp with time zone as
+        # 'timestamp with time zone'.
+        assert "timestamp" in period_end_col["data_type"]
+        assert "time zone" in period_end_col["data_type"]
+        assert period_end_col["is_nullable"] == "YES"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_extends_agent_containers_status_to_include_auto_paused(
+    migrated,
+):
+    """Phase B Plan B-stripe-06 extension — ``ck_agent_containers_status``
+    constraint includes ``'auto_paused'`` (D-15 — Pro→Free downgrade
+    auto-pauses the 4 oldest non-paused agents)."""
+    conn = await _connect(migrated)
+    try:
+        ck = await conn.fetchval(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname='ck_agent_containers_status'"
+        )
+        assert ck is not None, "ck_agent_containers_status missing"
+        for label in (
+            "starting", "running", "stopping",
+            "stopped", "start_failed", "crashed", "auto_paused",
+        ):
+            assert label in ck, (
+                f"ck_agent_containers_status missing {label!r}: {ck!r}"
+            )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_upgrade_creates_credit_balances_with_pk_and_fk_cascade(
     migrated,
 ):
@@ -410,7 +473,9 @@ async def test_round_trip_downgrade_and_re_upgrade(pg):
             WHERE table_schema='public'
               AND ((table_name='users'
                     AND column_name IN ('tier','stripe_customer_id',
-                                        'refund_writeoff_cents'))
+                                        'refund_writeoff_cents',
+                                        'subscription_cancel_at_period_end',
+                                        'subscription_current_period_end'))
                    OR table_name IN ('credit_balances','credit_transactions',
                                      'stripe_webhook_events'))
             ORDER BY table_name, column_name
@@ -429,14 +494,32 @@ async def test_round_trip_downgrade_and_re_upgrade(pg):
         assert head == PRIOR_REVISION_ID, (
             f"post-downgrade head {head!r} != {PRIOR_REVISION_ID!r}"
         )
-        # The 3 user columns must be GONE.
-        for col in ("tier", "stripe_customer_id", "refund_writeoff_cents"):
+        # The 5 user columns must be GONE (3 from Wave 1 + 2 from Plan 06).
+        for col in (
+            "tier", "stripe_customer_id", "refund_writeoff_cents",
+            "subscription_cancel_at_period_end",
+            "subscription_current_period_end",
+        ):
             still = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='users' AND column_name=$1",
                 col,
             )
             assert still is None, f"users.{col} still present after downgrade"
+        # ck_agent_containers_status must NOT contain 'auto_paused'
+        # (Plan 06 extension reverted on downgrade).
+        ck = await conn.fetchval(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname='ck_agent_containers_status'"
+        )
+        assert ck is not None, (
+            "ck_agent_containers_status disappeared on downgrade — "
+            "Plan 06 reverse forgot to recreate the original constraint"
+        )
+        assert "auto_paused" not in ck, (
+            f"ck_agent_containers_status still has 'auto_paused' after "
+            f"downgrade: {ck!r}"
+        )
         # The 3 new tables must be GONE.
         for t in ("credit_balances", "credit_transactions",
                   "stripe_webhook_events"):
@@ -476,7 +559,9 @@ async def test_round_trip_downgrade_and_re_upgrade(pg):
             WHERE table_schema='public'
               AND ((table_name='users'
                     AND column_name IN ('tier','stripe_customer_id',
-                                        'refund_writeoff_cents'))
+                                        'refund_writeoff_cents',
+                                        'subscription_cancel_at_period_end',
+                                        'subscription_current_period_end'))
                    OR table_name IN ('credit_balances','credit_transactions',
                                      'stripe_webhook_events'))
             ORDER BY table_name, column_name
