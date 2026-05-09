@@ -13,6 +13,7 @@
 // `initialLocation` is resolved at boot by main.dart's resolveInitialRoute
 // against GET /v1/users/me (D-01..D-02).
 
+import 'package:agent_playground/features/billing/_stubs.dart';
 import 'package:agent_playground/features/chat/chat_screen.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/dashboard/dashboard_screen.dart';
@@ -92,6 +93,31 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
           builder: (_, state) => AgentUsageScreen(
             agentId: state.pathParameters['id']!,
           ),
+        ),
+        // Phase B Plan 10 — billing surface routes.
+        // Bodies are PHASE_B_STUB widgets (lib/features/billing/_stubs.dart);
+        // Plan 11 replaces them with real TopUpScreen /
+        // CheckoutWebViewScreen / TransactionsScreen.
+        GoRoute(
+          path: '/billing/topup',
+          builder: (_, _) => const TopUpScreen(),
+        ),
+        GoRoute(
+          path: '/billing/checkout',
+          builder: (_, state) {
+            // success_url returns /billing/checkout?session_id=<cs>
+            // (D-21 webview-internal sentinel) — the URL itself is read
+            // here when the screen builds. Plan 11's CheckoutWebViewScreen
+            // takes the Stripe-hosted URL as a constructor arg via
+            // `state.extra`; the stub takes the query param so the route
+            // is wired today and Plan 11 can switch on either shape.
+            final url = state.uri.queryParameters['url'] ?? '';
+            return CheckoutWebViewScreen(checkoutUrl: url);
+          },
+        ),
+        GoRoute(
+          path: '/billing/transactions',
+          builder: (_, _) => const TransactionsScreen(),
         ),
       ],
     );
