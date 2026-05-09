@@ -3,15 +3,32 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-06 SHIPPED (Wave 3 — POST /v1/billing/webhook handler)
-last_updated: "2026-05-09T02:39:05.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-06 SHIPPED (Wave 3 — Stripe webhook handler; 15/15 new + 12/12 migration 014 + 34/34 sibling Phase B = 61/61 PASS under real Postgres; sole writer of users.tier per D-04; 7-event matrix per D-14/AMD-05; idempotent same-tx ON CONFLICT (stripe_event_id); side-effect-rollback safe); Wave 3 sibling Plan 07 (tier_enforcement) is the remaining ticket
+stopped_at: Phase B-stripe-07 SHIPPED (Wave 3 complete — tier_enforcement service + agent.create cap + messages.list retention)
+last_updated: "2026-05-09T03:25:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-07 SHIPPED (Wave 3 final — D-05 entitlement enforcement; 33/33 new tests under real Postgres = 17 service unit + 8 route cap + 8 retention; race-safe FOR UPDATE row-lock + early read-only pre-flight cap gate; per-tier retention via additive since= param on list_history_for_agent; 67/67 regression PASS); Wave 3 complete; Wave 4 (Plans 08/09 — debit_balance Temporal activity + prune workflow) next
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 38
-  percent: 84
+  completed_plans: 39
+  percent: 87
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-07 SHIPPED)
+
+**Current state:** Phase B-stripe-07 SHIPPED 2026-05-09 (Wave 3 final — D-05 tier entitlement enforcement). 33 new tests all GREEN under real Postgres testcontainer = **17 service unit + 8 route cap + 8 retention = 33/33 PASS** + 67/67 regression on existing test_agent_messages_{get,post,delete,sse} + test_agent_delete + test_messages_idempotency_required. New `services/tier_enforcement.py` is the single source of truth for per-tier limits (free=1/pro=5/ultra=10M agent slots; 7d/30d/None retention; active_statuses=('starting','running')). `routes/agent_lifecycle.start_agent` carries TWO cap gates: (a) early read-only pre-flight rejecting 403 BEFORE the BYOK validator network probe (UX/cost), (b) transactional FOR-UPDATE-row-lock gate inside same tx as `insert_pending_agent_container` (race-safety; 2-way concurrent /start race test asserts COUNT(active)<=1). `routes/agent_messages.get_messages` lazy re-reads `users.tier` per D-18 and computes `since=now-Xd` (or None for ultra) passed to `list_history_for_agent(..., since=...)`; the SQL seam grew an additive optional param so every existing Phase 23 caller stays byte-identical.
+
+**Plan B-stripe-07 commits:**
+
+- `20dd94f` — test(B-stripe-07): add failing tests for tier_enforcement service + agent.create cap (RED gate)
+- `59fc8bc` — feat(B-stripe-07): tier_enforcement service + agent.create cap gate (GREEN gate)
+- `6f0a325` — test(B-stripe-07): add failing tests for messages.list per-tier retention window (RED gate)
+- `4c0061e` — feat(B-stripe-07): per-tier retention window on GET /v1/agents/:id/messages (GREEN gate)
+
+**Truth audit:** 4/4 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-07-SUMMARY.md` for full audit + 3 documented deviations (Rule 3 cap-check repositioning before BYOK; Rule 1 docstring merge collision self-fix; Rule 2 function name correction `list_history_for_agent` not `get_messages_for_agent`).
+
+**Wave 3 complete.** Wave 4 (Plans 08 + 09 — `debit_balance` Temporal activity body replacement + `prune_messages_workflow` retention pruner) is the next ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-06 SHIPPED)
