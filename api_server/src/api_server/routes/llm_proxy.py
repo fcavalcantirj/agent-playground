@@ -303,6 +303,40 @@ async def forward(path: str, request: Request) -> StreamingResponse | JSONRespon
     if spec is None:
         return _err(500, ErrorCode.INTERNAL, f"unknown provider: {provider}")
 
+    # ---------- 2.5. Phase B pre-flight 402 (D-12) ----------
+    # Platform-billed users (tier='ultra') must have a non-zero balance
+    # before we forward to upstream. BYOK tiers (free/pro) bypass this
+    # gate — they pay the upstream provider directly per D-02.
+    #
+    # Predicate ``balance_cents < 1`` is satisfied by 0 AND any negative
+    # value — D-16 allows refunds to drain the balance below zero, and
+    # those negative-balance users MUST also be blocked from further
+    # spend (RESEARCH §Pitfall 6 cross-check).
+    #
+    # The query uses LEFT JOIN so a user without a credit_balances row
+    # (Free / Pro that never topped up; Ultra pre-first-topup) coalesces
+    # to 0. NEW conn from the pool — does NOT piggy-back on any existing
+    # transaction; the read is short-lived and the predicate is trivial.
+    async with request.app.state.db.acquire() as conn:
+        tier_row = await conn.fetchrow(
+            """
+            SELECT u.tier, COALESCE(b.balance_cents, 0)::BIGINT AS balance_cents
+            FROM users u
+            LEFT JOIN credit_balances b ON b.user_id = u.id
+            WHERE u.id = $1
+            """,
+            user_id,
+        )
+    if (
+        tier_row is not None
+        and tier_row["tier"] == "ultra"
+        and int(tier_row["balance_cents"]) < 1
+    ):
+        return _err(
+            402, ErrorCode.INSUFFICIENT_BALANCE,
+            "Out of credits. Top up to continue.",
+        )
+
     # ---------- 3. Body mutation (D-08 + D-14) ----------
     body_bytes = await request.body()
     try:
