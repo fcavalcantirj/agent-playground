@@ -697,7 +697,7 @@ Plans:
 - [x] B-stripe-03-PLAN.md — Wave 2: read routes (GET /v1/billing/{packs,balance,transactions}) + rate-limit billing bucket (excludes webhook) — **SHIPPED 2026-05-09**, 19/19 tests green (12 route + 7 middleware), commits `57518da`/`cadfd24`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-03-SUMMARY.md`
 - [x] B-stripe-04-PLAN.md — Wave 2: tier-aware projection in /v1/usage/summary (balance_cents only when tier='ultra'; backward-compatible) — **SHIPPED 2026-05-09**, 27/27 tests green (6 new tier-projection + 9 Phase A regression + 12 sibling billing read-route), commits `7033932`/`2d92b61`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-04-SUMMARY.md`
 - [x] B-stripe-05-PLAN.md — Wave 3: POST /v1/billing/checkout + /v1/billing/subscription (lazy customer create + race-defense) — **SHIPPED 2026-05-09**, 9 new TDD route tests + 12 sibling read-route + 25 Wave 1 substrate = 46/46 PASS under real Postgres testcontainer; commits `e0e29e9`/`7a254e0`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-05-SUMMARY.md`
-- [ ] B-stripe-06-PLAN.md — Wave 3: POST /v1/billing/webhook (signature verify + idempotency + 7-event matrix per D-14-amended) + migration 014 extension (subscription state columns) + sole writer of users.tier
+- [x] B-stripe-06-PLAN.md — Wave 3: POST /v1/billing/webhook (signature verify + idempotency + 7-event matrix per D-14-amended) + migration 014 extension (subscription state columns + agent_containers `auto_paused`) + sole writer of users.tier — **SHIPPED 2026-05-09**, 15 new TDD route tests + 12 migration 014 tests + 34 sibling Phase B = 61/61 PASS under real Postgres testcontainer; commits `c5170cf`/`2953c3d`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-06-SUMMARY.md`
 - [ ] B-stripe-07-PLAN.md — Wave 3: services/tier_enforcement.py + agent.create cap (free=1/pro=5/ultra=∞) + messages.list retention window (free=7d/pro=30d/ultra=unlimited)
 - [ ] B-stripe-08-PLAN.md — Wave 4: debit_balance activity body replacement (class-bound, ledger-as-truth, idempotent) + pre-flight 402 in llm_proxy.py
 - [ ] B-stripe-09-PLAN.md — Wave 4: 3 Temporal scheduled workflows (prune_messages daily, reconcile_stripe 5-min, reconcile_ledger nightly) + idempotent register_schedules helper
@@ -708,7 +708,7 @@ Plans:
 
 **Out of scope (deferred):** Web frontend parity (Phase B.2); pro-rata partial-stream debit; multi-currency; branded receipts; multiple paid tiers above Pro; live webhook delivery (gated on H7); admin write-off UI; token-count pre-flight estimation.
 
-**Status:** EXECUTING — Plan 01 (Wave 0 spike gate) SHIPPED 2026-05-08 + Plan 02 (Wave 1 substrate) SHIPPED 2026-05-09 + Plans 03+04 (Wave 2 — read routes + billing bucket + tier-aware /v1/usage/summary projection) SHIPPED 2026-05-09. **Wave 2 complete.** Wave 3 (Plans 05/06/07 — POST checkout endpoints + Stripe webhook handler + services/tier_enforcement.py) is the next ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+**Status:** EXECUTING — Plan 01 (Wave 0 spike gate) SHIPPED 2026-05-08 + Plan 02 (Wave 1 substrate) SHIPPED 2026-05-09 + Plans 03+04 (Wave 2 — read routes + billing bucket + tier-aware /v1/usage/summary projection) SHIPPED 2026-05-09 + Plans 05+06 (Wave 3 — POST checkout endpoints + Stripe webhook handler) SHIPPED 2026-05-09. **Wave 3 in progress** (2 of 3 SHIPPED). Sibling Plan 07 (`services/tier_enforcement.py` — D-05 agent slot count + retention gate) is the remaining Wave 3 ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
 
 ## Backlog
 

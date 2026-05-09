@@ -3,15 +3,30 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-05 SHIPPED (Wave 3 — POST /v1/billing/{checkout,subscription} endpoints)
-last_updated: "2026-05-09T02:20:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-05 SHIPPED (Wave 3 — POST checkout endpoints; 9/9 new + 12/12 sibling read routes + 25/25 Wave 1 substrate = 46/46 PASS under real Postgres; race-defense test mirrors spike-g at the route layer); Wave 3 sibling Plans 06 (Stripe webhook handler) + 07 (tier_enforcement) unblocked
+stopped_at: Phase B-stripe-06 SHIPPED (Wave 3 — POST /v1/billing/webhook handler)
+last_updated: "2026-05-09T02:39:05.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-06 SHIPPED (Wave 3 — Stripe webhook handler; 15/15 new + 12/12 migration 014 + 34/34 sibling Phase B = 61/61 PASS under real Postgres; sole writer of users.tier per D-04; 7-event matrix per D-14/AMD-05; idempotent same-tx ON CONFLICT (stripe_event_id); side-effect-rollback safe); Wave 3 sibling Plan 07 (tier_enforcement) is the remaining ticket
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 37
-  percent: 82
+  completed_plans: 38
+  percent: 84
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-06 SHIPPED)
+
+**Current state:** Phase B-stripe-06 SHIPPED 2026-05-09 (Wave 3 — POST `/v1/billing/webhook`). 15 new TDD route tests + 12 migration 014 tests + 34 sibling Phase B tests all GREEN under real Postgres testcontainer = **61/61 PASS**. Webhook is the **sole writer of `users.tier`** per D-04; signature-verify via `StripeClient.construct_event` (AMD-04); idempotent on `stripe_webhook_events.stripe_event_id` UNIQUE; same-tx wraps dedupe-row INSERT + side-effect (Pitfall 2 — failure rolls dedupe row back so Stripe retries cleanly). 7-event matrix per D-14/AMD-05: `checkout.session.completed` (credit + tier flip free→ultra), `customer.subscription.{created,updated,deleted}`, `charge.refunded` (delta-aware partial-refund key), `invoice.{paid,payment_failed}` (ack-only), `payment_intent.succeeded` (explicitly ack-only — AMD-05 prevents double-credit). Migration 014 extended in-place: `users.subscription_cancel_at_period_end` + `users.subscription_current_period_end` + `ck_agent_containers_status` rebuilt to include `'auto_paused'` for D-15 downgrade auto-pause.
+
+**Plan B-stripe-06 commits:**
+
+- `c5170cf` — test(B-stripe-06): add failing tests for POST /v1/billing/webhook (RED gate)
+- `2953c3d` — feat(B-stripe-06): POST /v1/billing/webhook handler (GREEN gate)
+
+**Truth audit:** 12/12 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-06-SUMMARY.md` for full audit + 4 auto-fixed deviations (5xx-on-side-effect-failure ASGI shape, StripeObject `.to_dict()` v15 API, conftest TRUNCATE list extension, agent_instances.model NOT NULL seed fix).
+
+**Wave 3 in progress.** Sibling Plan 07 (`services/tier_enforcement.py` — D-05 agent slot count + retention gate) is the remaining Wave 3 ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-05 SHIPPED)
