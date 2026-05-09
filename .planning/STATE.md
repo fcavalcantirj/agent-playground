@@ -3,15 +3,30 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-04 SHIPPED (Wave 2 — tier-aware /v1/usage/summary projection)
-last_updated: "2026-05-09T01:59:49.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-04 SHIPPED (Wave 2 sibling — tier-aware /v1/usage/summary projection; 6/6 new + 9/9 Phase A regression + 12/12 sibling billing routes = 27/27 PASS); Wave 2 complete; Wave 3 (B-stripe-05/06/07 — POST checkout + webhook + tier_enforcement) unblocked
+stopped_at: Phase B-stripe-05 SHIPPED (Wave 3 — POST /v1/billing/{checkout,subscription} endpoints)
+last_updated: "2026-05-09T02:20:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-05 SHIPPED (Wave 3 — POST checkout endpoints; 9/9 new + 12/12 sibling read routes + 25/25 Wave 1 substrate = 46/46 PASS under real Postgres; race-defense test mirrors spike-g at the route layer); Wave 3 sibling Plans 06 (Stripe webhook handler) + 07 (tier_enforcement) unblocked
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 36
-  percent: 80
+  completed_plans: 37
+  percent: 82
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-05 SHIPPED)
+
+**Current state:** Phase B-stripe-05 SHIPPED 2026-05-09 (Wave 3 — POST `/v1/billing/checkout` and POST `/v1/billing/subscription`). 9 new TDD route tests + 12 sibling read-route tests + 25 Wave 1 substrate tests all GREEN under real Postgres testcontainer = **46/46 PASS**. Both endpoints lazy-create the Stripe Customer race-safely (D-11; spike-g `SELECT ... FOR UPDATE` proven at the HTTP layer via `asyncio.gather` 2-way concurrent test); both carry `allow_promotion_codes=True` + `automatic_tax` (D-24); default success_url embeds `{CHECKOUT_SESSION_ID}` for the mobile webview handshake (D-21). T-B-LK leak defense: Stripe SDK exceptions logged via `_log.exception` (Phase 29 redacted) but only generic 502 INVALID_REQUEST returned. `phase_b_e2e` pytest marker registered for Plan 13's real-Stripe-TEST CI gate.
+
+**Plan B-stripe-05 commits:**
+
+- `e0e29e9` — test(B-stripe-05): add failing tests for POST /v1/billing/{checkout,subscription} (RED gate)
+- `7a254e0` — feat(B-stripe-05): POST /v1/billing/{checkout,subscription} endpoints (GREEN gate)
+
+**Truth audit:** 6/6 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-05-SUMMARY.md` for full audit + threat-model audit (5/5 STRIDE entries) + key-decisions log (FakeStripeClient over stripe-mock per RESEARCH Pitfall 10). NO deviations from plan.
+
+**Wave 3 in progress.** Sibling Plans 06 (Stripe webhook handler — `routes/billing_webhook.py` + AMD-04 service-pattern signature verify + AMD-05 `checkout.session.completed` only) and 07 (`services/tier_enforcement.py` — D-05 agent slot count + retention gate) are the remaining Wave 3 tickets. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-04 SHIPPED)
