@@ -250,6 +250,14 @@ async def test_returns_zero_when_usage_logs_status_is_failed(
 async def test_returns_zero_when_usage_logs_cost_usd_is_null(
     db_pool: asyncpg.Pool,
 ) -> None:
+    """``usage_logs.cost_usd`` is NOT NULL with default 0 (migration 011).
+
+    The "null cost_usd" intent in the plan's behavior list maps to
+    ``cost_usd = 0`` here — the column is NOT NULL with a 0 default and
+    the activity's ``cost_cents <= 0`` guard returns "0" for both. We
+    seed an explicit 0 to exercise the same branch as the original null
+    intent without violating the schema's NOT NULL.
+    """
     user_id = await _seed_user(db_pool, tier="ultra")
     agent_id = await _seed_agent(db_pool, user_id=user_id)
     await _seed_topup(db_pool, user_id=user_id, amount_cents=10_000)
@@ -257,7 +265,7 @@ async def test_returns_zero_when_usage_logs_cost_usd_is_null(
     await _seed_usage_log(
         db_pool,
         user_id=user_id, agent_instance_id=agent_id,
-        message_id=message_id, cost_usd=None,
+        message_id=message_id, cost_usd=Decimal("0"),
     )
 
     acts = DebitBalanceActivities(db_pool=db_pool)
@@ -267,8 +275,21 @@ async def test_returns_zero_when_usage_logs_cost_usd_is_null(
     ))
 
     assert result == "0", (
-        f"null cost_usd MUST return '0'; got {result!r}"
+        f"zero cost_usd MUST return '0'; got {result!r}"
     )
+    # No ledger row, balance unchanged.
+    async with db_pool.acquire() as conn:
+        debits = await conn.fetchval(
+            "SELECT COUNT(*) FROM credit_transactions "
+            "WHERE user_id = $1 AND kind = 'debit'",
+            user_id,
+        )
+        bal = await conn.fetchval(
+            "SELECT balance_cents FROM credit_balances WHERE user_id = $1",
+            user_id,
+        )
+    assert debits == 0
+    assert bal == 10_000
 
 
 # ---------------------------------------------------------------------------

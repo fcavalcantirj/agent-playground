@@ -63,7 +63,7 @@ from ..services.inapp_recipe_index import InappRecipeIndex
 from ..services.proxy_byok_cache import ProxyBYOKCache
 from .activities.backfill_openrouter_cost import BackfillOpenRouterCostActivities
 from .activities.check_container_ready import ReadinessActivities
-from .activities.debit_balance import debit_balance
+from .activities.debit_balance import DebitBalanceActivities
 from .activities.emit_inapp_outbound import emit_inapp_outbound
 from .activities.forward_to_agent import ForwardActivities
 from .activities.mark_message_done import MarkActivities
@@ -181,6 +181,11 @@ async def main() -> None:
         usage_acts = RecordUsageActivities(db_pool=db_pool)
         mark_acts = MarkActivities(db_pool=db_pool)
         mark_failed_acts = MarkFailedActivities(db_pool=db_pool)
+        # Phase B Plan B-stripe-08 — class-bound debit_balance with the
+        # process-wide asyncpg pool injected (the standalone D-22 stub
+        # previously held this slot; Phase B replaces the body with the
+        # real ledger-as-truth debit and the class lets us inject db_pool).
+        debit_acts = DebitBalanceActivities(db_pool=db_pool)
         # Phase 29 Plan 07 — class-bound backfill activity. Uses the
         # process-wide proxy_upstream_http (AMD-05) and the rehydrated
         # ProxyBYOKCache so the activity can read the per-deploy BYOK
@@ -234,7 +239,7 @@ async def main() -> None:
                 emit_inapp_outbound,            # standalone no-op
                 mark_acts.mark_message_done,
                 mark_failed_acts.mark_message_failed,
-                debit_balance,                  # standalone D-22 no-op
+                debit_acts.debit_balance,       # Phase B class-bound (Plan B-stripe-08)
                 backfill_acts.backfill,         # Phase 29 Plan 07
             ],
             max_concurrent_activities=10,
