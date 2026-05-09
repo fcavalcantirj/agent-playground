@@ -679,6 +679,37 @@ Plans:
 
 **Status:** SHIPPED 2026-05-08 (PHASE-31-EXIT-GATE-PASSED for automated coverage). All 4 must_haves green: H3 auth bucket live (`6th call → 429` empirically verified against deploy stack), H4 chat-stream classifier + RetryBanner with 3 SPEC-locked copy strings + 15/15 mobile tests PASS, H6 errors-only Sentry initialized in both runtimes (DSNs wired 2026-05-08; AMD-06 4xx-drop verified by transport-mock test), H8 e2e money-path workflow + Makefile target + test landed (4 manual gates AC20/22/23/24 persist in 31-HUMAN-UAT.md until user runs them on GH/OpenRouter dashboards). Code review (31-REVIEW.md) found 1 critical + 5 warnings, all resolved in commits `9968f33`–`c939ac0` + `72503ef` (deploy Dockerfile sentry-sdk install). Phase B (Stripe paywall) unblocked from a code standpoint.
 
+### Phase B: Stripe Paywall (platform-billed credit tier `ultra` + paid BYOK subscription `pro`)
+
+**Goal:** Add Stripe-backed monetization on top of the existing AP substrate. Two surfaces: (1) **Pro subscription product** (fixed $/mo; unlocks 5 active agents + 30d retention; LLM still BYOK); (2) **Credit Checkout** for `ultra` (one-time top-up packs $5/$10/$25/$50/$100; AP fronts the LLM key; pre-flight 402 + atomic debit gates every call). BYOK Free + Pro tiers stay free of LLM-call money flow — Phase A's USD ticker remains canonical for them.
+
+**Why now:** Phase 31 closed the four billing-readiness gaps (auth rate-limit, mobile error surfacing, Sentry, CI money-path). Phase B local-substrate work lands now against Stripe TEST mode + Stripe CLI webhook forwarding. **Live webhook delivery requires HTTPS/H7** (Hetzner deploy) — that's the production gate, not a code gate.
+
+**Locked decisions:** D-01 through D-26 + AMD-01 through AMD-05 captured in `.planning/phases/B-stripe-paywall/CONTEXT.md`. SDK pin `stripe>=15.0,<16.0` (AMD-01); webhook signed-fixture test substrate (AMD-02); `flutter_inappwebview ^6.1.5` (AMD-03); StripeClient service pattern (AMD-04); single-event listening for top-ups — `checkout.session.completed` only, NOT `payment_intent.succeeded` (AMD-05).
+
+**Depends on:** Phase 31 (Sentry + rate limit + e2e money-path harness); Phase 28 (Temporal `debit_balance` activity contract — Phase B replaces body, preserves D-22 lock); Phase 30 (proxy cost capture pipeline that Phase B's debit reads).
+
+**Plans:** 13 plans in 7 waves
+
+Plans:
+- [ ] B-stripe-01-PLAN.md — Wave 0 BLOCKING spike gate: 8 spikes (signature round-trip, debit activity contract, atomic ledger, Temporal schedule idempotency, mobile webview interception, Stripe CLI deploy-stack delivery, lazy customer race-defense, migration round-trip)
+- [ ] B-stripe-02-PLAN.md — Wave 1: migration 014 (tier + 3 tables + ap_multiplier 1.0→1.15) + Settings extension (9 AP_STRIPE_* fields) + StripeClient lifespan + billing_packs PACKS + ledger.py atomic helpers
+- [ ] B-stripe-03-PLAN.md — Wave 2: read routes (GET /v1/billing/{packs,balance,transactions}) + rate-limit billing bucket (excludes webhook)
+- [ ] B-stripe-04-PLAN.md — Wave 2: tier-aware projection in /v1/usage/summary (balance_cents only when tier='ultra'; backward-compatible)
+- [ ] B-stripe-05-PLAN.md — Wave 3: POST /v1/billing/checkout + /v1/billing/subscription (lazy customer create + race-defense)
+- [ ] B-stripe-06-PLAN.md — Wave 3: POST /v1/billing/webhook (signature verify + idempotency + 7-event matrix per D-14-amended) + migration 014 extension (subscription state columns) + sole writer of users.tier
+- [ ] B-stripe-07-PLAN.md — Wave 3: services/tier_enforcement.py + agent.create cap (free=1/pro=5/ultra=∞) + messages.list retention window (free=7d/pro=30d/ultra=unlimited)
+- [ ] B-stripe-08-PLAN.md — Wave 4: debit_balance activity body replacement (class-bound, ledger-as-truth, idempotent) + pre-flight 402 in llm_proxy.py
+- [ ] B-stripe-09-PLAN.md — Wave 4: 3 Temporal scheduled workflows (prune_messages daily, reconcile_stripe 5-min, reconcile_ledger nightly) + idempotent register_schedules helper
+- [ ] B-stripe-10-PLAN.md — Wave 5: mobile billing module substrate (DTOs + Dio API methods + 3 Riverpod notifiers + router entries + stub screens)
+- [ ] B-stripe-11-PLAN.md — Wave 5: mobile billing screens (TopUpScreen + PackPickerWidget + CheckoutWebViewScreen with InAppWebView interception + TopUpInflightWidget mm:ss timer + InsufficientCreditsModal blocking + TransactionsScreen) + manual UAT
+- [ ] B-stripe-12-PLAN.md — Wave 5: mobile tier-aware ticker render (USD vs credits) + chat 402 → modal dispatch (NOT RetryBanner) + Sentry user-context tier wiring
+- [ ] B-stripe-13-PLAN.md — Wave 6 exit gate: docker-compose stripe-mock + Makefile e2e-phase-b-stripe target + GH workflow + B-HUMAN-UAT.md + PHASE-B-EXIT-GATE-PASSED marker
+
+**Out of scope (deferred):** Web frontend parity (Phase B.2); pro-rata partial-stream debit; multi-currency; branded receipts; multiple paid tiers above Pro; live webhook delivery (gated on H7); admin write-off UI; token-count pre-flight estimation.
+
+**Status:** PLANNED 2026-05-08; execute via `/gsd-execute-phase B-stripe-paywall` after Wave 0 spike sign-off.
+
 ## Backlog
 
 ### Phase 999.2: Go API rewrite (BACKLOG, deferred until v0.3 validates)
