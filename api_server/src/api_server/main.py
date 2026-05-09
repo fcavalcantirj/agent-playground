@@ -245,6 +245,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
 
+    # Phase B Plan B-stripe-09 — redundant register_schedules call.
+    # The worker also calls register_schedules at boot; the api_server's
+    # call here ensures schedules exist even if the worker boots later
+    # (or vice versa). The helper is idempotent across boots — second
+    # invocation falls into the update branch via the spike-d-proven
+    # typed ScheduleAlreadyRunningError path (Pitfall 8). Failure here
+    # is non-fatal: a try/except keeps api_server boot moving and lets
+    # the worker's canonical registration take over. We log a warning
+    # so ops can investigate, but the route surface stays available.
+    from .temporal.schedules import register_schedules as _register_schedules
+    try:
+        await _register_schedules(
+            app.state.temporal_client, settings.temporal_task_queue,
+        )
+        _log.info(
+            "phase_b.lifespan.schedules_registered",
+            extra={"task_queue": settings.temporal_task_queue},
+        )
+    except Exception as _e:  # noqa: BLE001 — best-effort by design
+        _log.warning(
+            "phase_b.lifespan.schedule_register_failed_fallback_to_worker",
+            extra={"error": str(_e)},
+        )
+
     # ====================================================================
     # Phase 29-04 — LLM egress proxy resources (lifespan-managed)
     # ====================================================================

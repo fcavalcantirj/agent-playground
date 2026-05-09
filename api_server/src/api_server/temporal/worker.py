@@ -54,6 +54,7 @@ from contextlib import AsyncExitStack
 import docker
 import httpx
 import redis.asyncio as redis_async
+import stripe
 from temporalio.worker import Worker
 
 from ..config import get_settings
@@ -68,10 +69,17 @@ from .activities.emit_inapp_outbound import emit_inapp_outbound
 from .activities.forward_to_agent import ForwardActivities
 from .activities.mark_message_done import MarkActivities
 from .activities.mark_message_failed import MarkFailedActivities
+from .activities.prune_messages import PruneMessagesActivities
+from .activities.reconcile_ledger import ReconcileLedgerActivities
+from .activities.reconcile_stripe import ReconcileStripeActivities
 from .activities.record_usage import RecordUsageActivities
 from .client import make_client
+from .schedules import register_schedules
 from .workflows.backfill_openrouter_cost import BackfillOpenRouterCostWorkflow
 from .workflows.dispatch_message import DispatchMessageWorkflow
+from .workflows.prune_messages import PruneMessagesWorkflow
+from .workflows.reconcile_ledger import ReconcileLedgerWorkflow
+from .workflows.reconcile_stripe import ReconcileStripeWorkflow
 
 
 async def main() -> None:
@@ -195,6 +203,24 @@ async def main() -> None:
             upstream_client=proxy_upstream_http,
             byok_cache=byok_cache,
         )
+        # Phase B Plan B-stripe-09 — three scheduled-workflow activities.
+        # Each owns one cron-driven workflow; class-bound so the worker can
+        # inject the process-wide asyncpg pool (and the StripeClient for
+        # the reconcile-stripe activity).
+        prune_acts = PruneMessagesActivities(db_pool=db_pool)
+        # Construct a process-wide stripe.StripeClient for the
+        # reconcile-stripe activity. The api_server lifespan already
+        # builds one via services.stripe_client.build_stripe_client; we
+        # mirror the construction shape here so the worker has its own
+        # client (separate process, no shared state with api_server).
+        stripe_client_for_reconcile = stripe.StripeClient(
+            settings.stripe_api_key,
+        )
+        reconcile_stripe_acts = ReconcileStripeActivities(
+            db_pool=db_pool,
+            stripe_client=stripe_client_for_reconcile,
+        )
+        reconcile_ledger_acts = ReconcileLedgerActivities(db_pool=db_pool)
 
         # 6. Connect to Temporal with outer 5×5s retry (RESEARCH §7 R5).
         #    The compose ``depends_on: temporal: service_healthy`` gate
@@ -231,6 +257,9 @@ async def main() -> None:
             workflows=[
                 DispatchMessageWorkflow,
                 BackfillOpenRouterCostWorkflow,    # Phase 29 Plan 07
+                PruneMessagesWorkflow,              # Phase B Plan B-stripe-09
+                ReconcileStripeWorkflow,            # Phase B Plan B-stripe-09
+                ReconcileLedgerWorkflow,            # Phase B Plan B-stripe-09
             ],
             activities=[
                 ready_acts.check_container_ready,
@@ -241,11 +270,27 @@ async def main() -> None:
                 mark_failed_acts.mark_message_failed,
                 debit_acts.debit_balance,       # Phase B class-bound (Plan B-stripe-08)
                 backfill_acts.backfill,         # Phase 29 Plan 07
+                prune_acts.prune_messages,            # Phase B Plan B-stripe-09
+                reconcile_stripe_acts.reconcile,      # Phase B Plan B-stripe-09
+                reconcile_ledger_acts.reconcile,      # Phase B Plan B-stripe-09
             ],
             max_concurrent_activities=10,
             max_activities_per_second=5,
         )
         log.info("phase28.worker.registered")
+
+        # 7b. Phase B Plan B-stripe-09 — register the 3 cron schedules.
+        # Idempotent: a second worker boot updates instead of crashing
+        # (Pitfall 8; spike-d-proven typed ScheduleAlreadyRunningError
+        # path). Runs AFTER the worker is built but BEFORE worker.run()
+        # so the schedules exist in Temporal before the cron tick fires.
+        # Failure here is fail-loud: schedule registration is part of
+        # the worker's contract, not best-effort.
+        await register_schedules(client, settings.temporal_task_queue)
+        log.info(
+            "phase_b.worker.schedules_registered",
+            extra={"task_queue": settings.temporal_task_queue},
+        )
 
         # 8. SIGTERM / SIGINT graceful drain.
         loop = asyncio.get_running_loop()
