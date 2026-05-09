@@ -237,6 +237,13 @@ e2e-money-path:
 	@test -n "$$OPENROUTER_API_KEY" || (echo "ERROR: OPENROUTER_API_KEY not set. Per Phase 31 D-17, this target hits real OpenRouter and spends real money. Set OPENROUTER_API_KEY=<your-CI-key> before invoking; in CI it comes from secrets.OPENROUTER_CI_KEY." && exit 1)
 	cd api_server && pytest -m e2e_money_path -v --tb=short
 
+# Phase B-stripe-13 Wave 6 — top-level passthrough to api_server/Makefile.
+# Real Stripe TEST mode (no money spent). See api_server/Makefile target
+# header for env-var contract. Mirrors `e2e-money-path` shape above.
+.PHONY: e2e-phase-b-stripe
+e2e-phase-b-stripe:
+	$(MAKE) -C api_server e2e-phase-b-stripe
+
 # ---------------------------------------------------------------
 # Phase 19: production-shaped local stack (Docker compose, prod image, prod compose)
 #

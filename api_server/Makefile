@@ -1,4 +1,4 @@
-.PHONY: e2e-inapp e2e-inapp-docker
+.PHONY: e2e-inapp e2e-inapp-docker e2e-phase-b-stripe
 
 e2e-inapp:  ## Phase 22c.3 SC-03 5-recipe end-to-end inapp gate; requires OPENROUTER_API_KEY.
 	@test -n "$$OPENROUTER_API_KEY" || (echo "ERROR: OPENROUTER_API_KEY not set in env" && exit 1)
@@ -76,3 +76,23 @@ e2e-inapp-docker:  ## Phase 22c.3.1-01-AC01: dockerized 5-cell route gate (macOS
 	  rc=1; \
 	fi; \
 	exit $$rc
+
+# Phase B-stripe-13 Wave 6 — real Stripe TEST mode end-to-end gate (D-22, D-25).
+# Spends $0 (Stripe TEST mode is always free; no money flow). The webhook
+# injection step uses the hand-rolled signed-fixture helper (AMD-02), so this
+# target does NOT require `stripe listen` running — that's the manual UAT
+# path (B-HUMAN-UAT.md). Both paths verify the SAME route code: the
+# webhook handler's StripeClient.construct_event signature-verify + the
+# tier flip + the ledger top-up.
+#
+# Env contract:
+#   AP_STRIPE_TEST_API_KEY        — sk_test_* (Stripe TEST mode secret key)
+#   AP_STRIPE_TEST_WEBHOOK_SECRET — whsec_*   (signs the synthetic event)
+#
+# CI: GH workflow .github/workflows/e2e-phase-b.yml supplies these from
+# repo secrets of the same name. Locally: source deploy/.env.prod (which
+# carries the TEST keys minted in B-stripe-01 spike F + STRIPE-TEST-CATALOG.md).
+e2e-phase-b-stripe:  ## Phase B integration: real Stripe TEST mode (D-22, D-25)
+	@test -n "$$AP_STRIPE_TEST_API_KEY" || (echo "ERROR: AP_STRIPE_TEST_API_KEY not set. Per Phase B D-22, this target hits real Stripe TEST mode. Set AP_STRIPE_TEST_API_KEY=sk_test_<...> before invoking; in CI it comes from secrets.AP_STRIPE_TEST_API_KEY." && exit 1)
+	@test -n "$$AP_STRIPE_TEST_WEBHOOK_SECRET" || (echo "ERROR: AP_STRIPE_TEST_WEBHOOK_SECRET not set. The webhook injection step needs the whsec_* value to sign the synthetic event. Set AP_STRIPE_TEST_WEBHOOK_SECRET=whsec_<...> before invoking; in CI it comes from secrets.AP_STRIPE_TEST_WEBHOOK_SECRET." && exit 1)
+	uv run pytest tests/e2e/test_phase_b_money_path.py -m phase_b_e2e -v --tb=short

@@ -63,6 +63,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # Phase B (Stripe Paywall) — stripe-mock for unit tests (D-22).
+  # State-less Stripe API surface; speaks HTTP on 12111 + HTTPS on 12112.
+  # Used by route tests that exercise the StripeClient outbound path
+  # (Customer create / Checkout Session create / Subscription create).
+  # AMD-02: stripe-mock CANNOT emit webhook events — webhook tests use
+  # the hand-rolled signed-fixture helper (tests/_fixtures/sign_webhook.py).
+  # Dev-only — production talks to real Stripe over the public API.
+  stripe-mock:
+    image: stripe/stripe-mock:latest
+    container_name: agent-playground-stripe-mock
+    ports:
+      - "127.0.0.1:12111:12111"   # http
+      - "127.0.0.1:12112:12112"   # https
+    restart: unless-stopped
+
   # Phase 19 api_server — opt-in via `docker compose --profile api up`.
   # Native dev path is `make dev-api` (uvicorn --reload against host postgres).
   # This service is for container-mode local dev and for CI smoke tests.
