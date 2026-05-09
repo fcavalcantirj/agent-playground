@@ -33,7 +33,15 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'dashboard_providers.g.dart';
 
-@riverpod
+// #16 — keepAlive prevents the autoDispose disposal race when navigating
+// /chat/:id → /dashboard via context.go (sibling-route swap). Without this,
+// chat tear-down drops the only listener, autoDispose schedules the
+// provider for disposal, and the dashboard's first frame after remount
+// can flicker stale state via AsyncLoading.copyWithPrevious(stopped).
+// Memory cost is trivial (a list of agent summaries — same data the
+// dashboard already holds in widget state). Matches the precedent set
+// by `recipesProvider` two declarations below.
+@Riverpod(keepAlive: true)
 class AgentsList extends _$AgentsList {
   CancelToken? _cancel;
 

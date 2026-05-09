@@ -20,7 +20,7 @@ final class AgentsListProvider
         argument: null,
         retry: null,
         name: r'agentsListProvider',
-        isAutoDispose: true,
+        isAutoDispose: false,
         dependencies: null,
         $allTransitiveDependencies: null,
       );
@@ -33,7 +33,7 @@ final class AgentsListProvider
   AgentsList create() => AgentsList();
 }
 
-String _$agentsListHash() => r'27e8af4de5cf285b1e59c1b924bdfc0131c05bc1';
+String _$agentsListHash() => r'fc2ce4787bb13e8b16088c96a61f06ffb055765f';
 
 abstract class _$AgentsList extends $AsyncNotifier<List<AgentSummary>> {
   FutureOr<List<AgentSummary>> build();

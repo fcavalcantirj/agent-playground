@@ -13,6 +13,7 @@
 // `initialLocation` is resolved at boot by main.dart's resolveInitialRoute
 // against GET /v1/users/me (D-01..D-02).
 
+import 'package:agent_playground/features/billing/billing_hub_screen.dart';
 import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
 import 'package:agent_playground/features/billing/topup_screen.dart';
 import 'package:agent_playground/features/billing/transactions_screen.dart';
@@ -38,8 +39,8 @@ import 'package:go_router/go_router.dart';
 /// back-gesture path during the wizard's deploy step. Reading is
 /// cheap because Riverpod caches; the network round-trip only fires
 /// when the dashboard widget is actually visible.
-class _DashboardRefreshObserver extends NavigatorObserver {
-  _DashboardRefreshObserver(this._ref);
+class DashboardRefreshObserver extends NavigatorObserver {
+  DashboardRefreshObserver(this._ref);
 
   final WidgetRef _ref;
 
@@ -51,12 +52,39 @@ class _DashboardRefreshObserver extends NavigatorObserver {
     // subscribing (i.e. visible). Off-screen no network round-trip.
     _ref.invalidate(agentsListProvider);
   }
+
+  // #16 — Phase B post-UAT fix: go_router's context.go() between sibling
+  // top-level routes (e.g. /chat/:id → /dashboard, /new-agent/* →
+  // /dashboard, /new-agent/name-deploy → /chat/:id) fires didReplace,
+  // NOT didPop. Without this override, every chat-back / wizard-close /
+  // deploy-success transition fails to refresh the dashboard's agent
+  // list. Symptom: status icon stayed stale after a chat-side restart
+  // until the user re-entered + re-exited the chat. Same handler as
+  // didPop — invalidate, the watching dashboard refetches, off-screen
+  // no-op.
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    _ref.invalidate(agentsListProvider);
+  }
+
+  // go_router fires didPush (NOT didReplace) for sibling-route swaps
+  // when both routes are top-level peers (verified by Phase B post-UAT
+  // tracing: /a → /b → /a fires didPush twice, didReplace zero times).
+  // Skip the very first push (initial route mount) — there's nothing
+  // stale on first paint and we want to avoid an unnecessary fetch.
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    if (previousRoute == null) return;
+    _ref.invalidate(agentsListProvider);
+  }
 }
 
 GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
     GoRouter(
       initialLocation: initialLocation,
-      observers: ref == null ? const [] : [_DashboardRefreshObserver(ref)],
+      observers: ref == null ? const [] : [DashboardRefreshObserver(ref)],
       routes: [
         GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
         GoRoute(
@@ -95,6 +123,13 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
           builder: (_, state) => AgentUsageScreen(
             agentId: state.pathParameters['id']!,
           ),
+        ),
+        // Track 2 (#18) — billing hub. Entry point from the AppBar
+        // tier badge + dashboard/chat overflow menu. Surfaces tier
+        // status, balance (Ultra), top-up CTA, transactions tile.
+        GoRoute(
+          path: '/billing',
+          builder: (_, _) => const BillingHubScreen(),
         ),
         // Phase B Plan 11 — billing surface routes.
         // TopUpScreen + CheckoutWebViewScreen + TransactionsScreen are
