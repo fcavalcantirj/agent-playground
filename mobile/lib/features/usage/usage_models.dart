@@ -16,6 +16,10 @@ class UsageSummary {
     required this.totalUsd,
     required this.messageCount,
     required this.byAgent,
+    this.tier = 'free',
+    this.balanceCents,
+    this.displayBalanceCents,
+    this.isNegative,
   });
 
   factory UsageSummary.fromJson(Map<String, dynamic> json) => UsageSummary(
@@ -24,11 +28,42 @@ class UsageSummary {
         byAgent: ((json['by_agent'] as List<dynamic>?) ?? const <dynamic>[])
             .map((e) => AgentBreakdownEntry.fromJson(e as Map<String, dynamic>))
             .toList(growable: false),
+        // Phase B Plan 12 — tier projection (D-25). Server returns
+        // `tier` (always) + `balance_cents` / `display_balance_cents` /
+        // `is_negative` (only when tier='ultra'; stripped by
+        // response_model_exclude_none=True for free/pro per Plan 04).
+        // Legacy payload (rolled-back server) → tier defaults to 'free'.
+        tier: (json['tier'] as String?) ?? 'free',
+        balanceCents: json['balance_cents'] as int?,
+        displayBalanceCents: json['display_balance_cents'] as int?,
+        isNegative: json['is_negative'] as bool?,
       );
 
   final String totalUsd;
   final int messageCount;
   final List<AgentBreakdownEntry> byAgent;
+
+  /// Phase B Plan 12 — one of `free | pro | ultra` per D-01. Always
+  /// present on the wire (Plan 04 makes `tier` non-optional in the
+  /// projection); defaults to `'free'` for legacy payloads.
+  final String tier;
+
+  /// Phase B Plan 12 — raw ledger balance in cents (only set when
+  /// `tier == 'ultra'`). Can be negative when D-16 refund drives the
+  /// row below zero. Mobile uses [displayBalanceCents] for rendering;
+  /// this field carries the underlying ledger truth.
+  final int? balanceCents;
+
+  /// Phase B Plan 12 — display-clamped balance: `max(balance_cents, 0)`
+  /// server-side. Only set when `tier == 'ultra'`. Pitfall 6 — show
+  /// `0 credits` to the user while [isNegative] flags the underlying
+  /// overdraft for the warning badge.
+  final int? displayBalanceCents;
+
+  /// Phase B Plan 12 — true when the underlying ledger balance is
+  /// negative (D-16 refund-driven overdraft). Only set when
+  /// `tier == 'ultra'`. Mobile shows a `$0.00 ⚠` badge in the ticker.
+  final bool? isNegative;
 }
 
 class AgentBreakdownEntry {
