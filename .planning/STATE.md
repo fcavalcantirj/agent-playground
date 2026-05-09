@@ -3,15 +3,32 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-11 SHIPPED (Wave 5 partial — mobile billing UI screens; Plan 12 AppBar ticker remains in Wave 5)
-last_updated: "2026-05-09T04:05:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-11 SHIPPED (Wave 5 — mobile billing UI screens). 17/17 new tests PASS = 4 topup-screen + 3 modal + 6 webview/classify + 3 transactions + 1 webview build smoke; 36/36 total billing widget+provider tests GREEN; 0 lints in any of the 6 new lib files. Six widgets land in `mobile/lib/features/billing/`: TopUpScreen (state machine picking/awaitingCheckout/awaitingWebhook + post-Checkout 2s×30s polling), PackPickerWidget (5-card column), TopUpInflightWidget (Stopwatch+Timer.periodic+mm:ss+Cancel lifted verbatim from deploy_step.dart:387-444), CheckoutWebViewScreen (InAppWebView+shouldOverrideUrlLoading + pure classifyNavigationForResult helper for unit tests), InsufficientCreditsModal (BLOCKING AlertDialog barrierDismissible:false with Top-up CTA→ctx.push('/billing/topup')), TransactionsScreen (paginated ledger history + ScrollEndNotification → loadMore). Plan 10's _stubs.dart deleted — PHASE_B_STUB scaffolding fully replaced. app_router.dart imports flipped to real screens. Spike-e webview-internal handshake (host=app.solvrlabs.com + paths /billing/return-{success,cancel}) honored. Wave 5 partial — Plan 12 (AppBar ticker tier-branching wiring balanceProvider into dashboard_providers.dart) remains.
+stopped_at: Phase B-stripe-12 SHIPPED (Wave 5 — tier-branched ticker + chat 402 → modal + Sentry tier-context); Plan 13 (Wave 6 exit gate) is the final remaining ticket
+last_updated: "2026-05-09T05:00:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-12 SHIPPED (Wave 5 — mobile tier-branched ticker + chat 402 → modal + Sentry tier-context). 12 new TDD tests GREEN = 8 ticker tier-branch + 4 chat 402 handler; 71/71 across the touched test surface (35 usage + 4 chat 402 + 32 billing) PASS. UsageTickerWidget renders USD for free/pro (Phase 27 path), `<displayBalanceCents> credits` for ultra, `$0.00 ⚠` + tap-to-explain dialog for ultra+isNegative (D-16 / Pitfall 6). New `chatBlockingErrorProvider` bridges headless ChatScope → chat_screen's BuildContext for `showInsufficientCreditsModal(context)` on 402 INSUFFICIENT_BALANCE; explicitly NOT the H4 RetryBanner per D-21. Sentry user-context now carries `tier` as a searchable tag, set on sign-in (seed='free') and refreshed on every `usageSummaryProvider` poll (D-04 webhook-driven flips reflect within D-18 lazy-propagation latency). `setTag` (NOT `setData` — Sentry Scope's actual surface in sentry-flutter 9.20.0 is setTag/setExtra/setContexts; planning truth's regex was a typo, documented inline). Pre-existing dirty `dashboard_providers.dart` trailing-newline cleaned (passthrough — Plan 12's `<read_first>` confirmed the file does not consume `usageSummaryProvider`; tier-aware projection lives directly in UsageTickerWidget per the dumb-client rule).
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 43
-  percent: 96
+  completed_plans: 44
+  percent: 98
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-12 SHIPPED)
+
+**Current state:** Phase B-stripe-12 SHIPPED 2026-05-09 (Wave 5 — mobile tier-branched ticker + chat 402 → modal + Sentry tier-context). **12/12 new tests GREEN** = 8 ticker tier-branch + 4 chat 402 handler; **71/71** across the touched mobile test surface (35 usage + 4 chat 402 + 32 billing) PASS under `fvm flutter test test/features/usage/ test/features/chat/chat_402_handler_test.dart test/features/billing/`. Three byte-additive surfaces extended: (1) **`UsageTickerWidget`** branches on `summary.tier` — free/pro keep Phase 27's USD ticker; ultra renders `<displayBalanceCents> credits`; ultra+isNegative renders `$0.00 ⚠` with a tap-to-explain `AlertDialog` covering D-16 refund-driven overdraft (Pitfall 6); chevron hidden on the ultra-negative surface (a chevron pointing right would mislead — the dialog isn't a drilldown destination). Pure static `labelForSummary(UsageSummary)` helper extracted for unit-test access — mirrors Plan 11's `classifyNavigationForResult` shape. (2) **Chat 402 → modal dispatch** — new `chat_blocking_error_provider.dart` carries a typed `enum ChatBlockingError { insufficientCredits }` StateProvider; `chat_providers.dart` `sendMessage` + `retryFailed` intercept `ErrorCode.insufficientBalance` BEFORE the existing `markFailed` path: drop the assistant typing placeholder, clear inflight, flip the blocking provider; pending user row stays in `pending` state (modal owns the UX, not FailedBubble). `chat_screen.dart` `ref.listen` dispatches `showInsufficientCreditsModal(context)` and clears the provider so the next 402 re-arms. EXPLICITLY NOT the H4 RetryBanner per D-21. (3) **Sentry user-context tier** — `app.dart` adds `setTag('tier', ...)` in two places: sign-in seed (`loginSuccessProvider` listener sets `'free'` alongside the existing `setUser(SentryUser(id: ...))`) and per-poll refresh (`ref.listen<AsyncValue<UsageSummary>>(usageSummaryProvider)` → `whenData` → `setTag('tier', summary.tier)`). D-04 webhook-driven tier flips reflect within D-18 lazy-propagation latency — no new poller, no pub/sub, no H2 revival. `setTag` (NOT `setData`) since sentry-flutter 9.20.0 Scope's actual surface is `setTag`/`setExtra`/`setContexts`; the planning truth's `setData` regex was a typo (verified by inspecting `~/.pub-cache/.../sentry-9.20.0/lib/src/scope.dart`).
+
+**Plan B-stripe-12 commits:**
+
+- `086cd7a` — test(B-stripe-12): add failing tier-branch tests for UsageTickerWidget (RED gate)
+- `dd5a178` — feat(B-stripe-12): tier-branched UsageTickerWidget render (GREEN gate)
+- `74afd3b` — test(B-stripe-12): add failing chat 402 → modal dispatch tests (RED gate)
+- `e08e19b` — feat(B-stripe-12): chat 402 → modal dispatch + Sentry tier-context (GREEN gate)
+
+**Truth audit:** 5/5 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-12-SUMMARY.md` for full audit + threat-model audit (3/3 STRIDE entries: T-B-DSP mitigated via `displayBalanceCents` clamp; T-B-MOD accept — server-side 402 is the authoritative gate; T-B-LK accept — `tier` is non-PII enum) + key_links verification + 2 documented deviations (Rule 1 — sentry-flutter Scope has no `setData` so `setTag` swap with inline doc; Rule 2 — `dashboard_providers.dart` doesn't consume `usageSummaryProvider` so File 3 of Task 1 is a passthrough no-op + the trailing-newline cleanup retired the Plan 11 working-tree dirt). Pre-existing 6 chat_screen_test.dart failures from Phase 25 territory remain documented as out-of-scope per Plan 11 SUMMARY.
+
+**Wave 5 COMPLETE.** Plan 13 (Wave 6 exit gate — docker-compose stripe-mock + Makefile `e2e-phase-b-stripe` target + GH workflow + B-HUMAN-UAT.md + PHASE-B-EXIT-GATE-PASSED marker) is the final remaining ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto` after /clear.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-11 SHIPPED)
