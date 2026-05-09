@@ -3,15 +3,30 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-01 SHIPPED (Wave 0 spike gate, all 8 spikes PASS)
-last_updated: "2026-05-09T01:30:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-01 SHIPPED (Wave 0 spike gate); Wave 1 unblocked
+stopped_at: Phase B-stripe-02 SHIPPED (Wave 1 — migration 014 + Settings + 3 services + lifespan)
+last_updated: "2026-05-09T01:40:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-02 SHIPPED (Wave 1 — schema/settings/services substrate); Wave 2 unblocked
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 33
-  percent: 73
+  completed_plans: 34
+  percent: 75
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-02 SHIPPED)
+
+**Current state:** Phase B-stripe-02 SHIPPED 2026-05-09 (Wave 1 substrate — 25/25 tests green). Migration 014 on alembic head; StripeClient lifespan-owned on `app.state.stripe_client`; PACKS catalog single-SOT; ledger atomic helpers. Phase B Wave 2 (route handlers — POST /v1/billing/checkout/{pack,subscribe} + GET /v1/billing/packs) unblocked.
+
+**Plan B-stripe-02 commits:**
+
+- `235b34e` — feat(B-stripe-02): migration 014 + Settings stripe extension
+- `d30cae3` — feat(B-stripe-02): billing_packs + StripeClient + ledger + lifespan
+
+**Truth audit:** 8/8 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-02-SUMMARY.md` for full audit + decision log + 3 auto-fixed deviations (deferred prod fail-loud, savepoint isolation for UNIQUE-violation, fixture-reload narrowing).
+
+**Pre-existing failures (NOT introduced by Wave 1):** 5 tests on main fail before Wave 1 changes (verified via stash + re-run). Documented in `.planning/phases/B-stripe-paywall/deferred-items.md`.
+
 ---
 
 ## Resume after /clear (2026-05-08 — Phase 31 SHIPPED, Phase B queued)
