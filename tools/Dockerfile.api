@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir --prefix=/install \
       'sse-starlette>=3.4,<4' 'redis>=5.2,<8' \
       'google-auth>=2.40,<3' \
       'temporalio>=1.27.0,<1.28' \
-      'sentry-sdk[fastapi]>=2.20,<3.0'
+      'sentry-sdk[fastapi]>=2.20,<3.0' \
+      'stripe>=15.0,<16.0'
 COPY api_server/src /src/api_server/src
 COPY api_server/alembic /src/api_server/alembic
 COPY api_server/alembic.ini /src/api_server/alembic.ini

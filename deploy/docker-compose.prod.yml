@@ -130,6 +130,13 @@ services:
       temporal:
         condition: service_healthy
     command: ["python", "-m", "api_server.temporal.worker"]
+    # Phase B UAT (2026-05-09) — Docker Desktop on macOS exposes
+    # /var/run/docker.sock inside the container as 0:0 mode 660 regardless
+    # of host ownership. The Dockerfile-baked DOCKER_GID does not match.
+    # Adding root-group membership gives apiuser socket access without
+    # making the process itself root. On Linux deploys with stat-cgroupable
+    # sockets this is a no-op (apiuser already has access via DOCKER_GID).
+    group_add: ["0"]
     # The Dockerfile.api inherited HEALTHCHECK curls localhost:8000/healthz —
     # correct for api_server but bogus here (the worker is a Temporal SDK
     # process, no HTTP listener). Disable the inherited probe; worker health
@@ -191,6 +198,10 @@ services:
       AP_CHANNEL_MASTER_KEY: ${AP_CHANNEL_MASTER_KEY}
     env_file:
       - .env.prod
+    # Phase B UAT (2026-05-09) — see same note on temporal-worker above.
+    # Docker Desktop on macOS forces 0:0 ownership inside the container.
+    # Linux deploys treat this as a no-op (DOCKER_GID already grants access).
+    group_add: ["0"]
     volumes:
       # ACCEPTED trust boundary (D-08) — runner shells out to `docker` CLI.
       - /var/run/docker.sock:/var/run/docker.sock

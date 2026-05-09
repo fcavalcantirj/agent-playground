@@ -5,6 +5,8 @@
 # AP_CHANNEL_MASTER_KEY, AP_SYSADMIN_TOKEN, AP_OAUTH_GOOGLE_* secrets.
 # Template lives in deploy/.env.prod.example.
 deploy/.env.prod
+deploy/.env.prod.*
+!deploy/.env.prod.example
 
 # Runtime state from Claude Code worktree isolation + scheduler
 .claude/worktrees/
