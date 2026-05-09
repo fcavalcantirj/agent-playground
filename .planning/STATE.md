@@ -3,15 +3,32 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-09 SHIPPED (Wave 4 complete — 3 cron-driven Temporal workflows + idempotent register_schedules helper)
-last_updated: "2026-05-09T04:30:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-09 SHIPPED (Wave 4 — daily prune_messages + 5-min reconcile_stripe + nightly reconcile_ledger + register_schedules helper; 13/13 new tests PASS = 3 prune + 4 reconcile_stripe + 4 reconcile_ledger + 2 schedules-idempotency under real Postgres testcontainer + ActivityEnvironment + live deploy-temporal-1 cluster; 49/49 tests/temporal/ regression PASS; 15/15 tests/routes/test_billing_webhook.py regression PASS; 7/7 test_dispatch_message_workflow regression PASS; spike-d typed ScheduleAlreadyRunningError path replaces RESEARCH §Pattern 4's substring match with RPCError fallback as defense-in-depth; reconcile_stripe re-uses billing_webhook._handle_checkout_completed verbatim — same-tx idempotency invariants byte-for-byte; reconcile_ledger emits sentry_sdk.capture_message at error level via Phase 31 H6 + repair-on-detect updates cache to ledger truth per D-17). Wave 4 complete. Wave 5 (mobile UI surfaces) is the next ticket.
+stopped_at: Phase B-stripe-10 SHIPPED (Wave 5 partial — mobile billing dumb-client substrate; Plans 11+12 remain in Wave 5)
+last_updated: "2026-05-09T03:48:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-10 SHIPPED (Wave 5 — mobile billing data plumbing). 19/19 new tests PASS = 11 model + 8 provider under real Dio + http_mock_adapter + ProviderContainer override; 23/23 usage regression GREEN. New `mobile/lib/features/billing/` carries 4 hand-written-fromJson DTOs (Pack/Balance/Transaction/TransactionsPage per D-34), 5 typed methods on ApiClient (billingPacks/billingBalance/billingTransactions/createPackCheckoutSession/createSubscriptionCheckoutSession; all returning Result<T> envelopes; cancel-token-aware), 3 Riverpod AsyncNotifier providers (PacksNotifier + BalanceNotifier with D-32 lifecycle resume + TransactionsNotifier with loadMore cursor pagination). Router gains 3 new GoRoute entries (/billing/{topup,checkout,transactions}); bodies are PHASE_B_STUB widgets in `_stubs.dart` for Plan 11 to replace atomically. Mobile NEVER hardcodes pack data — single SOT in api_server (GET /v1/billing/packs); golden rule #2 honored (verified zero-hit grep on pack_5/10/25/50/100 outside docstrings). Wave 5 partial — Plans 11 (mobile UI screens) + 12 (AppBar ticker tier-branching) remain.
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 41
-  percent: 91
+  completed_plans: 42
+  percent: 93
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-10 SHIPPED)
+
+**Current state:** Phase B-stripe-10 SHIPPED 2026-05-09 (Wave 5 — mobile billing dumb-client substrate). 19/19 new tests GREEN under real Dio + http_mock_adapter + ProviderContainer override = **11 model + 8 provider = 19/19 PASS** + 23/23 regression on `test/features/usage/` (UsageTickerWidget remount, AgentUsageScreen empty/populated/error, UsageChart, usage_providers). New `mobile/lib/features/billing/` ships **billing_models.dart** (Pack/Balance/Transaction/TransactionsPage with hand-written fromJson per D-34, defensive defaults on missing fields, Balance carries the D-16 negative-balance shape `{balance_cents:-250, display_balance_cents:0, is_negative:true}` so Plan 11 can render `$0 ⚠` over the underlying overdraft), **billing_providers.dart** (PacksNotifier + BalanceNotifier with D-32 `ref.listen(appLifecycleProvider)→invalidateSelf` on resume + TransactionsNotifier with `loadMore()` cursor-pagination — no-op when `nextBefore` null, otherwise merges next page into state.value via manual AsyncValue.data assignment), and **_stubs.dart** (PHASE_B_STUB markers for TopUpScreen + CheckoutWebViewScreen + TransactionsScreen so Plan 11's executor can grep + swap atomically). ApiClient grew 5 new methods directly on `class ApiClient` matching the Phase 27 pattern at lines 407-440. ApiEndpoints grew 5 new constants. app_router.dart added 3 GoRoute entries; the `/billing/checkout` route reads `?url=` query param for the webview-internal handshake per D-21 so the route is wired today and Plan 11 can switch to `state.extra` shape when the real screen lands.
+
+**Plan B-stripe-10 commits:**
+
+- `cb20c2e` — test(B-stripe-10): add failing tests for billing DTOs (RED gate)
+- `8b4ac6f` — feat(B-stripe-10): billing DTOs + 5 typed API client methods (GREEN gate)
+- `0846e6a` — test(B-stripe-10): add failing tests for billing Riverpod providers (RED gate)
+- `20a3f99` — feat(B-stripe-10): billing Riverpod providers + router + screen stubs (GREEN gate)
+
+**Truth audit:** 5/5 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-10-SUMMARY.md` for full audit + threat-model audit (3/3 STRIDE entries) + key_links verification + 2 documented deviations (Rule 3 — Riverpod 3.x autoDispose races `read.future` for thrown errors so observe-via-listen + pump-loop pattern landed for the 401 test; Rule 1 — riverpod_generator strips `Notifier` suffix from variable name so `packsProvider` not `packsNotifierProvider`).
+
+**Wave 5 partial.** Plans 11 (mobile UI screens — TopUpScreen + PackPickerWidget + CheckoutWebViewScreen + InsufficientCreditsModal + TopupInflightWidget + TransactionsScreen; replaces the 3 PHASE_B_STUB widgets in `_stubs.dart`) + 12 (AppBar ticker tier-branching — wires `balanceProvider` into `dashboard_providers.dart` for the tier-aware projection) are the remaining Wave 5 tickets. Resume via `/gsd-execute-phase B-stripe-paywall --auto` after /clear.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-09 SHIPPED)
