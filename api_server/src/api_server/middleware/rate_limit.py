@@ -62,13 +62,22 @@ _AUTH_ROUTE_KEYS: dict[tuple[str, str], str] = {
 }
 _AUTH_ROUTES: frozenset[tuple[str, str]] = frozenset(_AUTH_ROUTE_KEYS.keys())
 
+# Phase B Plan B-stripe-03: billing-bucket path predicate. The webhook
+# path is held in a separate constant so the EXCLUDE branch in
+# `_bucket_for` references it — webhook is signed by Stripe and gated by
+# the stripe_event_id UNIQUE constraint (Wave 3); rate-limiting it would
+# escalate Stripe's retry storm into a real outage.
+_BILLING_PATH_PREFIX = "/v1/billing/"
+_BILLING_WEBHOOK_PATH = "/v1/billing/webhook"
+
 # (limit, window_seconds) per bucket — locked in CONTEXT.md §D-05 + §D-42.
 _LIMITS: dict[str, tuple[int, int]] = {
-    "runs": (10, 60),    # POST /v1/runs
-    "lint": (120, 60),   # POST /v1/lint
-    "get":  (300, 60),   # GET /v1/*
-    "chat": (4, 60),     # POST /v1/agents/:id/messages — D-42
-    "auth": (5, 60),     # Phase 31 D-04 — auth POSTs + OAuth GET callbacks; per-route via _AUTH_ROUTES
+    "runs": (10, 60),     # POST /v1/runs
+    "lint": (120, 60),    # POST /v1/lint
+    "get":  (300, 60),    # GET /v1/*
+    "chat": (4, 60),      # POST /v1/agents/:id/messages — D-42
+    "auth": (5, 60),      # Phase 31 D-04 — auth POSTs + OAuth GET callbacks; per-route via _AUTH_ROUTES
+    "billing": (30, 60),  # Phase B Plan B-stripe-03 — /v1/billing/* (excluding webhook)
 }
 
 
@@ -99,6 +108,19 @@ def _bucket_for(scope: Scope) -> str | None:
     # bucket's 300/min.
     if (method, path) in _AUTH_ROUTES:
         return "auth"
+    # Phase B Plan B-stripe-03: any path under /v1/billing/* EXCEPT the
+    # Stripe webhook lands in the `billing` bucket (30/60s per user).
+    # The webhook exclusion is structural — Stripe is the sole caller
+    # there and rate-limiting it escalates Stripe's retry storm; the
+    # abuse-prevention surface is the Stripe-Signature HMAC verify +
+    # stripe_event_id UNIQUE in Wave 3's handler. Precedence is BEFORE
+    # the generic GET branch so the billing routes get the tighter
+    # 30/60 ceiling instead of the generic 300/60 GET ceiling.
+    if (
+        path.startswith(_BILLING_PATH_PREFIX)
+        and path != _BILLING_WEBHOOK_PATH
+    ):
+        return "billing"
     # Any GET under /v1 is the "get" bucket. POSTs we didn't map above
     # are NOT rate-limited (there aren't any in Phase 19 — all v1 POSTs
     # are explicitly mapped above).
