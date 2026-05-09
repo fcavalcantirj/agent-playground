@@ -13,7 +13,10 @@
 // `initialLocation` is resolved at boot by main.dart's resolveInitialRoute
 // against GET /v1/users/me (D-01..D-02).
 
-import 'package:agent_playground/features/billing/_stubs.dart';
+import 'package:agent_playground/features/billing/_stubs.dart'
+    show TransactionsScreen; // Plan 11 Task 2 deletes _stubs.dart entirely.
+import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
+import 'package:agent_playground/features/billing/topup_screen.dart';
 import 'package:agent_playground/features/chat/chat_screen.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/dashboard/dashboard_screen.dart';
@@ -94,10 +97,10 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
             agentId: state.pathParameters['id']!,
           ),
         ),
-        // Phase B Plan 10 — billing surface routes.
-        // Bodies are PHASE_B_STUB widgets (lib/features/billing/_stubs.dart);
-        // Plan 11 replaces them with real TopUpScreen /
-        // CheckoutWebViewScreen / TransactionsScreen.
+        // Phase B Plan 11 — billing surface routes.
+        // TopUpScreen + CheckoutWebViewScreen are real (Task 1);
+        // TransactionsScreen still flows through _stubs.dart until
+        // Task 2 lands the real widget + deletes the stub file.
         GoRoute(
           path: '/billing/topup',
           builder: (_, _) => const TopUpScreen(),

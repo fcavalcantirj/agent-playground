@@ -143,17 +143,21 @@ void main() {
       // Either 00:00 or 00:01 is acceptable — wall-clock granularity
       // depends on Stopwatch's sub-second precision; assert the
       // mm:ss SHAPE rather than the exact second.
+      final mmss = RegExp(r'^\d{2}:\d{2}$');
       expect(
         find.byWidgetPredicate(
-          (w) =>
-              w is Text && (w.data?.startsWith(RegExp(r'\d{2}:').pattern) ?? false),
+          (w) => w is Text && (w.data != null && mmss.hasMatch(w.data!)),
         ),
         findsAtLeastNWidgets(1),
       );
 
       await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(cancelled, isTrue);
+
+      // Drop the inflight widget so its Timer.periodic does not leak
+      // past the test (pumpAndSettle would otherwise loop forever).
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 }
@@ -175,6 +179,9 @@ class _PendingPacksNotifier extends PacksNotifier {
 class _ErrorPacksNotifier extends PacksNotifier {
   @override
   Future<List<Pack>> build() async {
+    // ApiError mirrors the production throw-pattern in PacksNotifier;
+    // matches usage_providers tests.
+    // ignore: only_throw_errors
     throw const ApiError(
       code: ErrorCode.network,
       message: 'no connection (test)',
