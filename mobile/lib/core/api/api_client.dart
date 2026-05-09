@@ -24,6 +24,7 @@
 import 'package:agent_playground/core/api/api_endpoints.dart';
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/result.dart';
+import 'package:agent_playground/features/billing/billing_models.dart';
 import 'package:agent_playground/features/usage/usage_models.dart';
 import 'package:dio/dio.dart';
 
@@ -433,6 +434,117 @@ class ApiClient {
         cancelToken: cancelToken,
       );
       return Result.ok(AgentUsageData.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase B Plan 10 — billing surface (Wave 5 mobile substrate).
+  //
+  // 5 typed methods backing the 5 endpoints in
+  // api_server/src/api_server/routes/billing.py. Mobile NEVER hardcodes the
+  // pack catalog (golden rule #2 — dumb client). Every render path goes
+  // through `billingPacks()`. Aggregations stay server-side; mobile is a
+  // thin terminal that swaps `Result<T>` envelopes into Riverpod state.
+  // ---------------------------------------------------------------------------
+
+  /// `GET /v1/billing/packs` — D-06 single SOT for the 5-pack catalog.
+  /// Server-side `PackEntry` intentionally omits `stripe_price_id`
+  /// (T-B-PRC mitigation — Stripe Price ids stay server-side).
+  Future<Result<List<Pack>>> billingPacks({CancelToken? cancelToken}) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.billingPacks,
+        cancelToken: cancelToken,
+      );
+      final raw = (res.data?['packs'] as List<dynamic>?) ?? const <dynamic>[];
+      final packs = raw
+          .cast<Map<String, dynamic>>()
+          .map(Pack.fromJson)
+          .toList(growable: false);
+      return Result.ok(packs);
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  /// `GET /v1/billing/balance` — tier + raw balance + display-clamped
+  /// balance + is_negative flag (D-21 / Pitfall 6 / D-16).
+  Future<Result<Balance>> billingBalance({CancelToken? cancelToken}) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.billingBalance,
+        cancelToken: cancelToken,
+      );
+      return Result.ok(Balance.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  /// `GET /v1/billing/transactions?limit=N&before=ISO` — paginated ledger
+  /// history. `limit` defaults to 50; the server clamps to [1, 200] and
+  /// returns 422 on out-of-range values (Plan 03 key-decision: validation
+  /// is the right shape — silent clamp would let mobile drift unnoticed).
+  /// `before` is the cursor returned via [TransactionsPage.nextBefore]
+  /// from the previous page.
+  Future<Result<TransactionsPage>> billingTransactions({
+    int limit = 50,
+    DateTime? before,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        ApiEndpoints.billingTransactions,
+        queryParameters: <String, dynamic>{
+          'limit': limit,
+          if (before != null) 'before': before.toUtc().toIso8601String(),
+        },
+        cancelToken: cancelToken,
+      );
+      return Result.ok(TransactionsPage.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  /// `POST /v1/billing/checkout {pack_id}` — mint a Stripe Checkout URL
+  /// for a one-time credit-pack purchase (Plan 05). Server lazy-creates
+  /// the Stripe Customer race-safely (D-11). Mobile loads the returned
+  /// URL in InAppWebView and intercepts success/cancel via
+  /// `shouldOverrideUrlLoading` (AMD-03 / D-21).
+  Future<Result<String>> createPackCheckoutSession({
+    required String packId,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        ApiEndpoints.billingCheckout,
+        data: <String, dynamic>{'pack_id': packId},
+        cancelToken: cancelToken,
+      );
+      return Result.ok(res.data!['checkout_url'] as String);
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  /// `POST /v1/billing/subscription {}` — mint a Stripe Checkout URL for
+  /// the Pro monthly subscription (Plan 05). Same lazy-customer race
+  /// defense as [createPackCheckoutSession]. Server-side `success_url`
+  /// embeds `{CHECKOUT_SESSION_ID}` for the mobile webview handshake
+  /// (D-21).
+  Future<Result<String>> createSubscriptionCheckoutSession({
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        ApiEndpoints.billingSubscription,
+        data: const <String, dynamic>{},
+        cancelToken: cancelToken,
+      );
+      return Result.ok(res.data!['checkout_url'] as String);
     } on DioException catch (e) {
       return Result.err(ApiError.fromDioException(e));
     }

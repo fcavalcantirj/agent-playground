@@ -41,4 +41,28 @@ abstract final class ApiEndpoints {
 
   /// Phase 27 Change 3a — per-agent breakdown screen payload.
   static String agentUsage(String agentId) => '/v1/agents/$agentId/usage';
+
+  // ---------------------------------------------------------------------------
+  // Phase B — billing surface (Plans 03 + 05).
+  //
+  // Mobile NEVER hardcodes the pack catalog (golden rule #2 — dumb client).
+  // Every render path goes through GET /v1/billing/packs.
+  // ---------------------------------------------------------------------------
+
+  /// `GET /v1/billing/packs` — credit-pack catalog (D-06 single SOT).
+  static const String billingPacks = '/v1/billing/packs';
+
+  /// `GET /v1/billing/balance` — tier + balance projection (D-21 / Pitfall 6).
+  static const String billingBalance = '/v1/billing/balance';
+
+  /// `GET /v1/billing/transactions` — paginated ledger history.
+  static const String billingTransactions = '/v1/billing/transactions';
+
+  /// `POST /v1/billing/checkout` — Stripe Checkout session for one-time
+  /// credit pack (D-06 / Plan 05).
+  static const String billingCheckout = '/v1/billing/checkout';
+
+  /// `POST /v1/billing/subscription` — Stripe Checkout session for the
+  /// Pro monthly subscription (D-02 / Plan 05).
+  static const String billingSubscription = '/v1/billing/subscription';
 }
