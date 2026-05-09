@@ -124,7 +124,7 @@ void main() {
   });
 
   group('TopUpInflightWidget', () {
-    testWidgets('shows mm:ss timer + Confirming top-up… copy + Cancel',
+    testWidgets('shows mm:ss timer + CONFIRMING + matrix agent + Cancel',
         (tester) async {
       var cancelled = false;
       await tester.pumpWidget(
@@ -135,7 +135,9 @@ void main() {
         ),
       );
       await tester.pump(); // initial frame.
-      expect(find.text('Confirming top-up…'), findsOneWidget);
+      // #15 — CONFIRMING is the steady label; one of the clawclones agent
+      // names cycles next to it via the 250ms flicker timer.
+      expect(find.textContaining('CONFIRMING'), findsOneWidget);
       // mm:ss starts at 00:00.
       expect(find.text('00:00'), findsOneWidget);
       // Tick once forwards; widget rebuilds via Timer.periodic.

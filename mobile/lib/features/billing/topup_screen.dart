@@ -83,25 +83,34 @@ class _TopUpScreenState extends ConsumerState<TopUpScreen> {
   }
 
   Future<void> _pollUntilTopupReflected() async {
+    // #14 fix: go through apiClient directly. The previous
+    // ref.invalidate(balanceProvider) + ref.read(balanceProvider.future)
+    // path silently no-op'd against the autoDispose AsyncNotifier's cached
+    // future — every "refresh" resolved to the cached AsyncValue, no HTTP
+    // hop, and the user always saw a 30s spinner regardless of webhook.
+    final api = ref.read(apiClientProvider);
     final start = DateTime.now();
     while (mounted &&
         !_cancelledByUser &&
         DateTime.now().difference(start).inSeconds < 30) {
       await Future<void>.delayed(const Duration(seconds: 2));
       if (!mounted || _cancelledByUser) return;
-      ref.invalidate(balanceProvider);
-      try {
-        final fresh = await ref.read(balanceProvider.future);
-        if (fresh.balanceCents > (_baselineBalanceCents ?? 0)) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Top-up confirmed!')),
-          );
-          context.pop();
-          return;
-        }
-      } on Object catch (_) {
-        // Ignore transient errors and retry on the next tick.
+      final r = await api.billingBalance();
+      if (!mounted || _cancelledByUser) return;
+      switch (r) {
+        case Ok(:final value):
+          if (value.balanceCents > (_baselineBalanceCents ?? 0)) {
+            // Make sure widgets watching balanceProvider see the new value.
+            ref.invalidate(balanceProvider);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Top-up confirmed!')),
+            );
+            context.pop();
+            return;
+          }
+        case Err():
+          // Transient error — retry next tick. Do not surface.
+          break;
       }
     }
     if (!mounted) return;
