@@ -1,0 +1,33 @@
+{
+  "id": "evt_test_customer_subscription_created_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "customer.subscription.created",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "sub_test_001",
+      "object": "subscription",
+      "customer": "cus_test_user_a",
+      "status": "active",
+      "cancel_at_period_end": false,
+      "current_period_end": 1749590400,
+      "metadata": {
+        "ap_user_id": "__AP_USER_ID__"
+      },
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_test_001",
+            "price": {
+              "id": "price_test_pro_monthly",
+              "object": "price"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

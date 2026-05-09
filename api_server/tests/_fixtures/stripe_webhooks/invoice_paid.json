@@ -1,0 +1,19 @@
+{
+  "id": "evt_test_invoice_paid_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "invoice.paid",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "in_test_001",
+      "object": "invoice",
+      "customer": "cus_test_user_a",
+      "status": "paid",
+      "amount_paid": 1200,
+      "currency": "usd",
+      "subscription": "sub_test_001"
+    }
+  }
+}

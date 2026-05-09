@@ -1,0 +1,21 @@
+{
+  "id": "evt_test_invoice_payment_failed_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "invoice.payment_failed",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "in_test_002",
+      "object": "invoice",
+      "customer": "cus_test_user_a",
+      "status": "open",
+      "amount_due": 1200,
+      "amount_paid": 0,
+      "attempt_count": 1,
+      "currency": "usd",
+      "subscription": "sub_test_001"
+    }
+  }
+}

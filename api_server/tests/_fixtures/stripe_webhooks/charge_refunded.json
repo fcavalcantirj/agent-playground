@@ -1,0 +1,24 @@
+{
+  "id": "evt_test_charge_refunded_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "charge.refunded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "ch_test_001",
+      "object": "charge",
+      "customer": "cus_test_user_a",
+      "amount": 2500,
+      "amount_captured": 2500,
+      "amount_refunded": 2500,
+      "refunded": true,
+      "currency": "usd",
+      "payment_intent": "pi_test_001",
+      "metadata": {
+        "ap_user_id": "__AP_USER_ID__"
+      }
+    }
+  }
+}

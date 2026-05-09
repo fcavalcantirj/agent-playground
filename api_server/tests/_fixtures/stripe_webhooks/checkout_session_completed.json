@@ -1,0 +1,25 @@
+{
+  "id": "evt_test_checkout_session_completed_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "checkout.session.completed",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "cs_test_checkout_001",
+      "object": "checkout.session",
+      "amount_total": 2500,
+      "currency": "usd",
+      "customer": "cus_test_user_a",
+      "metadata": {
+        "ap_user_id": "__AP_USER_ID__",
+        "pack_id": "pack_25",
+        "credit_cents": "2500"
+      },
+      "mode": "payment",
+      "payment_status": "paid",
+      "status": "complete"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "evt_test_payment_intent_succeeded_001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1746998400,
+  "type": "payment_intent.succeeded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "pi_test_001",
+      "object": "payment_intent",
+      "customer": "cus_test_user_a",
+      "amount": 2500,
+      "amount_received": 2500,
+      "currency": "usd",
+      "status": "succeeded"
+    }
+  }
+}
