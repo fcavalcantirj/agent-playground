@@ -83,6 +83,13 @@ dependencies = [
   # 5K/month free-tier quota. Floor 2.20 aligns with FastAPI 0.136 +
   # Starlette 0.46 already pinned above.
   "sentry-sdk[fastapi]>=2.20,<3.0",
+  # Phase B AMD-01 — Stripe Python SDK v15 (StripeClient service pattern).
+  # PyPI verified 2026-05-08: latest 15.1.0. v8 is two majors stale and uses
+  # the deprecated module-level static-method API (`stripe.Customer.create`).
+  # v15 carries the StripeClient service pattern, Billing Credit Balance,
+  # and Meter Events APIs. Pin floor-and-major-ceiling discipline matches
+  # `temporalio>=1.27.0,<1.28` and `sentry-sdk[fastapi]>=2.20,<3.0` above.
+  "stripe>=15.0,<16.0",
 ]
 
 [project.optional-dependencies]
