@@ -13,6 +13,7 @@ dependencies:
     sdk: flutter
   flutter_appauth: ^12.0.0
   flutter_client_sse: ^2.0.3
+  flutter_inappwebview: ^6.1.5   # AMD-03 — Stripe Checkout webview + shouldOverrideUrlLoading interception
   flutter_markdown_plus: ^1.0.0   # AMD-03 — replaces discontinued flutter_markdown
   flutter_riverpod: ^3.3.1
   flutter_secure_storage: ^10.0.0
