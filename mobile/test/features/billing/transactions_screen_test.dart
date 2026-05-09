@@ -71,7 +71,7 @@ void main() {
   group('TransactionsScreen', () {
     testWidgets('renders list from provider', (tester) async {
       final n = _StaticTxNotifier(
-        TransactionsPage(transactions: [_tx()], nextBefore: null),
+        TransactionsPage(transactions: [_tx()]),
       );
       await tester.pumpWidget(_wrap(n));
       await tester.pumpAndSettle();
