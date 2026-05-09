@@ -18,11 +18,39 @@ of env truth.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_log = logging.getLogger("api_server.config")
+
+# Phase B Plan B-stripe-02 — Stripe placeholder values for AP_ENV=dev. Mirror
+# the OAuth ``oauth_X missing in dev; using placeholder`` discipline so a
+# fresh local checkout boots without ops setup; prod fail-loud below.
+_STRIPE_DEV_PLACEHOLDERS: dict[str, str] = {
+    "stripe_api_key":             "sk_test_DEV_PLACEHOLDER",
+    "stripe_webhook_secret":      "whsec_DEV_PLACEHOLDER",
+    "stripe_price_id_pro_monthly": "price_DEV_PLACEHOLDER_pro_monthly",
+    "stripe_price_id_pack_5":      "price_DEV_PLACEHOLDER_pack_5",
+    "stripe_price_id_pack_10":     "price_DEV_PLACEHOLDER_pack_10",
+    "stripe_price_id_pack_25":     "price_DEV_PLACEHOLDER_pack_25",
+    "stripe_price_id_pack_50":     "price_DEV_PLACEHOLDER_pack_50",
+    "stripe_price_id_pack_100":    "price_DEV_PLACEHOLDER_pack_100",
+}
+# Map field name → AP_STRIPE_* env-var alias for the prod fail-loud message.
+_STRIPE_FIELD_TO_ENV_ALIAS: dict[str, str] = {
+    "stripe_api_key":              "AP_STRIPE_API_KEY",
+    "stripe_webhook_secret":       "AP_STRIPE_WEBHOOK_SECRET",
+    "stripe_price_id_pro_monthly": "AP_STRIPE_PRICE_ID_PRO_MONTHLY",
+    "stripe_price_id_pack_5":      "AP_STRIPE_PRICE_ID_PACK_5",
+    "stripe_price_id_pack_10":     "AP_STRIPE_PRICE_ID_PACK_10",
+    "stripe_price_id_pack_25":     "AP_STRIPE_PRICE_ID_PACK_25",
+    "stripe_price_id_pack_50":     "AP_STRIPE_PRICE_ID_PACK_50",
+    "stripe_price_id_pack_100":    "AP_STRIPE_PRICE_ID_PACK_100",
+}
 
 
 class Settings(BaseSettings):
@@ -176,6 +204,81 @@ class Settings(BaseSettings):
     # Phase 31 D-13. Boot-pinned git SHA for prod-error attribution.
     git_sha: str | None = Field(default=None, validation_alias="GIT_SHA")
 
+    # ------------------------------------------------------------------
+    # Phase B (Plan B-stripe-02) — Stripe substrate (D-11, D-19, AMD-01).
+    # ------------------------------------------------------------------
+    # 8 secrets / price-id config keys. In ``AP_ENV=dev``, missing keys
+    # resolve to deterministic placeholders so a fresh checkout boots
+    # without ops setup. In ``AP_ENV=prod``, ``_resolve_or_warn_stripe``
+    # (model_validator below) raises ``RuntimeError`` listing every
+    # missing key — mirrors the OAuth ``_resolve_or_fail`` discipline.
+    #
+    # Real TEST keys live in ``deploy/.env.prod`` (already populated per
+    # Phase B Wave 0). Real prices were minted on 2026-05-08 via the
+    # ``stripe-projects`` skill and recorded in
+    # ``.planning/phases/B-stripe-paywall/STRIPE-TEST-CATALOG.md``.
+    stripe_api_key: str = Field(
+        default="", validation_alias="AP_STRIPE_API_KEY"
+    )
+    stripe_webhook_secret: str = Field(
+        default="", validation_alias="AP_STRIPE_WEBHOOK_SECRET"
+    )
+    stripe_price_id_pro_monthly: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PRO_MONTHLY"
+    )
+    stripe_price_id_pack_5: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_5"
+    )
+    stripe_price_id_pack_10: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_10"
+    )
+    stripe_price_id_pack_25: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_25"
+    )
+    stripe_price_id_pack_50: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_50"
+    )
+    stripe_price_id_pack_100: str = Field(
+        default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_100"
+    )
+
+    @model_validator(mode="after")
+    def _substitute_stripe_dev_placeholders(self) -> "Settings":
+        """In dev: log a warning per missing AP_STRIPE_* and substitute a
+        deterministic placeholder so a fresh checkout boots without ops
+        setup. In prod the empty strings are LEFT AS IS — the prod
+        fail-loud is the responsibility of ``validate_stripe_config()``,
+        which Phase B's StripeClient lifespan service + billing_packs
+        module call at construction time. This mirrors the OAuth pattern
+        in ``auth/oauth.py::get_oauth`` (deferred fail-loud at service
+        construction, not at Settings instantiation) so unrelated tests
+        that set ``AP_ENV=prod`` to exercise non-Stripe surfaces don't
+        have to set 8 unrelated AP_STRIPE_* placeholders.
+        """
+        if self.env == "prod":
+            # Leave empty strings as-is for explicit prod boot.
+            # validate_stripe_config() (called by Phase B services) is
+            # the fail-loud gate.
+            return self
+
+        # env == "dev" — substitute placeholders + warn (one log line per
+        # missing field). pydantic v2 model_validator(mode='after') allows
+        # in-place attribute writes on the model instance.
+        for field_name in _STRIPE_DEV_PLACEHOLDERS:
+            if getattr(self, field_name):
+                continue
+            placeholder = _STRIPE_DEV_PLACEHOLDERS[field_name]
+            object.__setattr__(self, field_name, placeholder)
+            _log.warning(
+                "config.stripe_missing_in_dev",
+                extra={
+                    "field": field_name,
+                    "env_alias": _STRIPE_FIELD_TO_ENV_ALIAS[field_name],
+                    "placeholder": placeholder,
+                },
+            )
+        return self
+
     # Phase 23 (D-23): CSV → list[str] pre-validator for mobile client IDs.
     # pydantic-settings v2's CSV detection is library-version-dependent;
     # this validator guarantees correct parsing regardless. Idempotent for
@@ -194,3 +297,33 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a fresh Settings snapshot from the current environment."""
     return Settings()
+
+
+def validate_stripe_config(settings: Settings) -> None:
+    """Phase B Plan B-stripe-02 — fail-loud check for production Stripe config.
+
+    Raises ``RuntimeError`` listing every empty ``AP_STRIPE_*`` field when
+    ``settings.env == 'prod'``. Mirrors the OAuth ``get_oauth(settings)``
+    discipline: Settings instantiation stays optional (so dev boots without
+    ops setup AND unrelated prod tests don't have to mint Stripe placeholders),
+    but services that actually need Stripe call this validator at construction
+    time. In dev the validator is a no-op (the model_validator
+    ``_substitute_stripe_dev_placeholders`` already filled in deterministic
+    placeholders). Phase B's StripeClient lifespan service + billing_packs
+    module are the canonical callers.
+
+    For test ergonomics: callable with arbitrary AP_ENV — the prod fail-loud
+    is the only branch that raises; dev / unset env returns silently.
+    """
+    if settings.env != "prod":
+        return
+    missing = [
+        f for f in _STRIPE_DEV_PLACEHOLDERS
+        if not getattr(settings, f)
+    ]
+    if not missing:
+        return
+    env_aliases = sorted(_STRIPE_FIELD_TO_ENV_ALIAS[f] for f in missing)
+    raise RuntimeError(
+        "AP_STRIPE_* required in prod; missing: " + ", ".join(env_aliases)
+    )
