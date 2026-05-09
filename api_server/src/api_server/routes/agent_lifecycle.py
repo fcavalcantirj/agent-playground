@@ -74,6 +74,10 @@ from ..services.runner_bridge import (
     execute_persistent_status,
     execute_persistent_stop,
 )
+from ..services.tier_enforcement import (
+    agent_cap_for_tier,
+    check_can_create_agent,
+)
 from ..util.ulid import new_run_id
 
 # ``decrypt_channel_config`` is imported here but NOT called in this module.
@@ -262,6 +266,38 @@ async def start_agent(
             param="agent_id",
         )
 
+    # --- Step 2a (Phase B Plan B-stripe-07, D-05) — early tier cap pre-flight ---
+    #
+    # Read-only cap check that fires BEFORE the expensive BYOK validator
+    # network probe. Two reasons:
+    #
+    #   * UX: a free user at-cap should see 403 in <100ms, not after a
+    #     50-300ms upstream BYOK round-trip.
+    #   * Cost: BYOK validators hit the real provider; rate-limit budgets
+    #     and per-call billing surfaces should not be touched when we
+    #     KNOW the request is going to be rejected at the cap.
+    #
+    # This is a non-locking read — concurrent /start calls can both pass
+    # this gate. The TRANSACTIONAL cap check (Step 3 below, with
+    # SELECT ... FOR UPDATE) is the correctness-critical race-safe gate.
+    # Treat this early check as a fast-fail optimization, not the
+    # security boundary.
+    async with pool.acquire() as conn:
+        early_allowed, early_count, early_tier = await check_can_create_agent(
+            conn, user_id=user_id,
+        )
+    if not early_allowed:
+        early_cap = agent_cap_for_tier(early_tier)
+        return _err(
+            403,
+            ErrorCode.TIER_LIMIT_EXCEEDED,
+            (
+                f"agent cap reached for tier {early_tier!r} "
+                f"({early_count} active, cap {early_cap})"
+            ),
+            param="tier",
+        )
+
     # --- Step 2b: recipe + channel + required_user_input validation ---
     recipes = request.app.state.recipes
     recipe = recipes.get(agent["recipe_name"])
@@ -447,28 +483,68 @@ async def start_agent(
             "channel config encryption failed",
         )
 
+    # Phase B Plan B-stripe-07 (D-05) — tier cap gate.
+    #
+    # The cap check + the pending INSERT live in ONE transaction so a
+    # concurrent /start cannot bypass the cap. Mechanism: SELECT tier
+    # FROM users WHERE id=$1 FOR UPDATE inside the tx blocks any other
+    # concurrent caller on the same user_id until this tx commits.
+    # When the second caller's tx runs, it sees the new pending row
+    # this caller just inserted and trips the cap correctly.
+    #
+    # The transaction is held only until the pending row commits — the
+    # subsequent long await on execute_persistent_start sits OUTSIDE
+    # any DB scope (Pitfall 4 — pool exhaustion). Cap check + insert
+    # is bounded SQL only; safe to wrap in a tx.
+    cap_tier_label: str = "free"
+    cap_count_label: int = 0
+    cap_blocked: bool = False
     try:
         async with pool.acquire() as conn:
-            try:
-                container_row_id = await insert_pending_agent_container(
-                    conn,
-                    agent_id,
-                    user_id,
-                    agent["recipe_name"],
-                    body.channel,
-                    config_enc,
-                    upstream_provider=upstream_provider,
-                    provider_key_enc=provider_key_enc,
+            async with conn.transaction():
+                allowed, active_count, tier = await check_can_create_agent(
+                    conn, user_id=user_id,
                 )
-            except asyncpg.UniqueViolationError:
-                # Partial unique index fired at pending-insert time —
-                # another running container for this agent already exists.
-                return _err(
-                    409,
-                    ErrorCode.AGENT_ALREADY_RUNNING,
-                    f"agent {agent_id} already has a running container",
-                    param="agent_id",
-                )
+                if not allowed:
+                    cap_blocked = True
+                    cap_tier_label = tier
+                    cap_count_label = active_count
+                    # Raise to roll back the FOR UPDATE row-lock cleanly;
+                    # the surrounding ``try/except Exception`` re-paths
+                    # would mask the cap intent so we propagate via a
+                    # lightweight flag and return AFTER the tx commits.
+                else:
+                    try:
+                        container_row_id = await insert_pending_agent_container(
+                            conn,
+                            agent_id,
+                            user_id,
+                            agent["recipe_name"],
+                            body.channel,
+                            config_enc,
+                            upstream_provider=upstream_provider,
+                            provider_key_enc=provider_key_enc,
+                        )
+                    except asyncpg.UniqueViolationError:
+                        # Partial unique index fired at pending-insert time —
+                        # another running container for this agent already exists.
+                        return _err(
+                            409,
+                            ErrorCode.AGENT_ALREADY_RUNNING,
+                            f"agent {agent_id} already has a running container",
+                            param="agent_id",
+                        )
+        if cap_blocked:
+            cap = agent_cap_for_tier(cap_tier_label)
+            return _err(
+                403,
+                ErrorCode.TIER_LIMIT_EXCEEDED,
+                (
+                    f"agent cap reached for tier {cap_tier_label!r} "
+                    f"({cap_count_label} active, cap {cap})"
+                ),
+                param="tier",
+            )
     except Exception:
         _log.exception(
             "insert_pending_agent_container failed",
