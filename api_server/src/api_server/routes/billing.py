@@ -43,11 +43,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..auth.deps import require_user
 from ..models.errors import ErrorCode, make_error_envelope
-from ..services.billing_packs import PACKS
+from ..services.billing_packs import PACKS, get_pack
+from ..services.stripe_client import (
+    create_pack_checkout_session,
+    create_subscription_checkout_session,
+)
 
 
 _log = logging.getLogger("api_server.billing")
@@ -253,6 +257,178 @@ async def list_transactions(
     ]
     next_before = txs[-1].created_at if len(txs) == limit else None
     return TransactionsResponse(transactions=txs, next_before=next_before)
+
+
+# ===========================================================================
+# Phase B Plan B-stripe-05 — POST /v1/billing/checkout + /v1/billing/subscription
+# ===========================================================================
+#
+# Outbound Stripe-Checkout endpoints. Mobile (Wave 5) POSTs ``{pack_id}`` to
+# ``/v1/billing/checkout`` and ``{}`` to ``/v1/billing/subscription``, then
+# opens the returned ``checkout_url`` inside ``flutter_inappwebview``. Both
+# endpoints lazy-create the Stripe Customer the first time the user touches
+# Stripe (D-11) — race-defended via ``SELECT ... FOR UPDATE`` inside the
+# Wave 1 ``services/stripe_client.lazy_create_or_fetch_customer`` helper
+# (spike_g_lazy_customer_create.py case (b) proved 1 customer per 2-way
+# concurrent first-click).
+#
+# Both routes share these invariants:
+#   * auth-gated via ``require_user`` (UNAUTHORIZED 401 envelope on miss)
+#   * StripeClient instance read from ``request.app.state.stripe_client``
+#     (AMD-04 — never the deprecated module-level static methods)
+#   * Settings read from ``request.app.state.settings`` (subscription path
+#     uses ``stripe_price_id_pro_monthly``)
+#   * ``allow_promotion_codes=true`` on every Checkout session (D-24 —
+#     marketing mints codes Stripe-side; AP carries no per-code state)
+#   * ``automatic_tax: {enabled: true}`` (Stripe Tax handles VAT/sales-tax)
+#   * Default success_url embeds the literal string ``{CHECKOUT_SESSION_ID}``
+#     — Stripe substitutes the real session id at redirect time so the
+#     mobile webview's nav delegate (D-21) can read it off the URL.
+#
+# Failure handling:
+#   * Unknown pack_id → 400 INVALID_PACK_ID (T-B-PCK allow-list defense)
+#   * Stripe SDK raises (network, auth, validation) → 502 INVALID_REQUEST
+#     with a generic message; the underlying exception is logged via
+#     ``_log.exception`` (sanitized through Phase 29 _redact_creds — T-B-LK
+#     mitigation, no Stripe error details leak to the client).
+#
+# The webhook half of the contract lives in Wave 3 (Plan B-stripe-06) —
+# this plan only covers the user-initiated POST half.
+
+
+_DEFAULT_SUCCESS_URL = (
+    "https://app.solvrlabs.com/billing/return-success"
+    "?session_id={CHECKOUT_SESSION_ID}"
+)
+_DEFAULT_CANCEL_URL = "https://app.solvrlabs.com/billing/return-cancel"
+
+
+class CheckoutRequest(BaseModel):
+    """Body for POST /v1/billing/checkout.
+
+    ``pack_id`` is the canonical id from ``services.billing_packs.PACKS``
+    (e.g. ``pack_5``..``pack_100``); validated against the allow-list at
+    request time. ``success_url`` / ``cancel_url`` are optional overrides
+    — the defaults point at the canonical solvrlabs.com return-handshake
+    URLs the mobile webview intercepts.
+    """
+
+    pack_id: str = Field(
+        ..., description="One of pack_5/pack_10/pack_25/pack_50/pack_100",
+    )
+    success_url: str | None = Field(
+        default=None,
+        description="Override success URL (defaults to canonical handshake URL).",
+    )
+    cancel_url: str | None = Field(
+        default=None,
+        description="Override cancel URL (defaults to canonical handshake URL).",
+    )
+
+
+class CheckoutResponse(BaseModel):
+    """Stripe-hosted Checkout URL — mobile loads this in InAppWebView."""
+
+    checkout_url: str
+
+
+class SubscriptionRequest(BaseModel):
+    """Body for POST /v1/billing/subscription. Body is optional; both URL
+    fields default to the canonical handshake URLs."""
+
+    success_url: str | None = None
+    cancel_url: str | None = None
+
+
+@router.post("/billing/checkout", response_model=CheckoutResponse)
+async def create_pack_checkout(request: Request, body: CheckoutRequest):
+    """Create a Stripe Checkout session for one of the 5 credit packs (D-06).
+
+    Returns ``{checkout_url}`` for the mobile webview. Lazy-creates the
+    Stripe Customer if this is the user's first Stripe-affecting click;
+    second sequential click reuses the persisted ``stripe_customer_id``.
+    Concurrent first-clicks for the SAME user produce EXACTLY ONE Stripe
+    Customer (Wave 1 spike-g proof; ``SELECT ... FOR UPDATE`` lock).
+    """
+    result = require_user(request)
+    if isinstance(result, JSONResponse):
+        return result
+    user_id: UUID = result
+
+    # T-B-PCK: validate pack_id against the in-memory PACKS allow-list.
+    if get_pack(body.pack_id) is None:
+        return _err(
+            400, ErrorCode.INVALID_PACK_ID,
+            f"unknown pack_id: {body.pack_id}",
+        )
+
+    client = request.app.state.stripe_client
+    pool = request.app.state.db
+    success_url = body.success_url or _DEFAULT_SUCCESS_URL
+    cancel_url = body.cancel_url or _DEFAULT_CANCEL_URL
+
+    try:
+        async with pool.acquire() as conn:
+            checkout_url = await create_pack_checkout_session(
+                conn=conn,
+                user_id=user_id,
+                pack_id=body.pack_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client=client,
+            )
+    except Exception:
+        # T-B-LK: log full exception (sanitized) but return generic
+        # 502 — never leak Stripe error details to the mobile client.
+        _log.exception(
+            "billing.checkout.create_failed user_id=%s pack_id=%s",
+            user_id, body.pack_id,
+        )
+        return _err(
+            502, ErrorCode.INVALID_REQUEST,
+            "failed to create checkout session",
+        )
+    return CheckoutResponse(checkout_url=checkout_url)
+
+
+@router.post("/billing/subscription", response_model=CheckoutResponse)
+async def create_subscription(request: Request, body: SubscriptionRequest):
+    """Create a Stripe Checkout session for the Pro monthly subscription (D-02).
+
+    The Pro tier price id lives in Settings (``stripe_price_id_pro_monthly``);
+    the actual Pro tier flip happens in Wave 3's webhook handler when
+    ``customer.subscription.created`` lands (D-04 sole-writer rule).
+    """
+    result = require_user(request)
+    if isinstance(result, JSONResponse):
+        return result
+    user_id: UUID = result
+
+    settings = request.app.state.settings
+    client = request.app.state.stripe_client
+    pool = request.app.state.db
+    success_url = body.success_url or _DEFAULT_SUCCESS_URL
+    cancel_url = body.cancel_url or _DEFAULT_CANCEL_URL
+
+    try:
+        async with pool.acquire() as conn:
+            checkout_url = await create_subscription_checkout_session(
+                conn=conn,
+                user_id=user_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client=client,
+                settings=settings,
+            )
+    except Exception:
+        _log.exception(
+            "billing.subscription.create_failed user_id=%s", user_id,
+        )
+        return _err(
+            502, ErrorCode.INVALID_REQUEST,
+            "failed to create subscription session",
+        )
+    return CheckoutResponse(checkout_url=checkout_url)
 
 
 __all__ = ["router"]
