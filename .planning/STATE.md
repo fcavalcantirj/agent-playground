@@ -4,8 +4,8 @@ milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
 stopped_at: Phase B-stripe-paywall context gathered (26 decisions across 12 areas)
-last_updated: "2026-05-08T23:01:27.978Z"
-last_activity: 2026-05-08 -- Phase 31 execution started
+last_updated: "2026-05-09T00:10:23.707Z"
+last_activity: 2026-05-09 -- Phase B-stripe-paywall planning complete
 progress:
   total_phases: 19
   completed_phases: 5
@@ -143,8 +143,8 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Phase: 31 (pre-stripe-billing-hardening) — EXECUTING
 Plan: 1 of 6
-Status: Executing Phase 31
-Last activity: 2026-05-08 -- Phase 31 execution started
+Status: Ready to execute
+Last activity: 2026-05-09 -- Phase B-stripe-paywall planning complete
 **Predecessor work**: Phase 22c.3.1 SHIPPED — runner-inapp-wiring + AC-01 closed via dockerized harness; uniform agent-spawn route proven 5/5 PASS via `make e2e-inapp-docker`. Locked decisions for v0.3 in `.planning/notes/mobile-mvp-decisions.md`. Roadmap at `.planning/ROADMAP.md` (v0.3 section appended after Phase 22c.3.1).
 
 ### Stack of completed work this session (2026-04-19)
