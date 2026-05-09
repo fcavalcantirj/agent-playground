@@ -3,15 +3,32 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-07 SHIPPED (Wave 3 complete — tier_enforcement service + agent.create cap + messages.list retention)
-last_updated: "2026-05-09T03:25:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-07 SHIPPED (Wave 3 final — D-05 entitlement enforcement; 33/33 new tests under real Postgres = 17 service unit + 8 route cap + 8 retention; race-safe FOR UPDATE row-lock + early read-only pre-flight cap gate; per-tier retention via additive since= param on list_history_for_agent; 67/67 regression PASS); Wave 3 complete; Wave 4 (Plans 08/09 — debit_balance Temporal activity + prune workflow) next
+stopped_at: Phase B-stripe-08 SHIPPED (Wave 4 partial — debit_balance Temporal activity body + llm_proxy pre-flight 402)
+last_updated: "2026-05-09T03:11:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-08 SHIPPED (Wave 4 — Temporal debit_balance + LLM proxy pre-flight 402; 15/15 new tests PASS = 9 activity + 6 proxy 402 under real Postgres testcontainer; 7/7 dispatch_message workflow regression PASS; D-22 lock honored — workflow file byte-unchanged; class-bound DebitBalanceActivities with module-level alias preserves Phase 28 import path; pre-flight 402 at section 2.5 catches both 0 AND negative balances per D-12 + D-16); Plan 09 (prune_messages_workflow) is the remaining Wave 4 ticket
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 39
-  percent: 87
+  completed_plans: 40
+  percent: 89
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-08 SHIPPED)
+
+**Current state:** Phase B-stripe-08 SHIPPED 2026-05-09 (Wave 4 — Temporal debit_balance activity body replacement + llm_proxy pre-flight 402 gate). 15 new TDD tests all GREEN under real Postgres testcontainer + ActivityEnvironment = **9 debit_balance activity + 6 llm_proxy 402 = 15/15 PASS** + 7/7 regression on test_dispatch_message_workflow. The Phase 28 D-22 contract is honored byte-for-byte: `git diff workflows/dispatch_message.py` is empty after the Phase B body replacement. New `DebitBalanceActivities` class injects db_pool (mirrors `RecordUsageActivities`); module-level alias `debit_balance = DebitBalanceActivities.debit_balance` preserves the workflow's `from ..activities import debit_balance` + `debit_balance.debit_balance` import path while the worker registers the class-bound bound method via shared activity-name registration. The activity reads `users.tier`, bails to "0" for non-Ultra (BYOK pays upstream directly per D-02), reads the latest `usage_logs` row for the message, returns "0" on status='failed'/cost=0/missing-row (D-13), and otherwise calls `services.ledger.debit_user` for the atomic INSERT debit + balance cache rebuild (D-17). Idempotent on UNIQUE(reference_id=usage_log.id, reference_type='usage_log') so Temporal retry produces no double-debit. **Pre-flight 402** at llm_proxy section 2.5 (between BYOK resolve and body mutation): LEFT JOIN users × credit_balances; predicate `tier='ultra' AND balance_cents < 1` returns INSUFFICIENT_BALANCE 402 BEFORE upstream forward — predicate intentionally catches both 0 AND negative balances (D-16 + Pitfall 6).
+
+**Plan B-stripe-08 commits:**
+
+- `eed8899` — test(B-stripe-08): add failing tests for debit_balance activity body (RED gate)
+- `87c7093` — feat(B-stripe-08): debit_balance activity body + class-bound rewrite (GREEN gate)
+- `331a44f` — test(B-stripe-08): add failing tests for llm_proxy pre-flight 402 (RED gate)
+- `6437297` — feat(B-stripe-08): pre-flight 402 in llm_proxy section 2.5 (GREEN gate)
+
+**Truth audit:** 8/8 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-08-SUMMARY.md` for full audit + 1 documented deviation (Rule 1 — cost_usd null test re-shaped to Decimal('0') because migration 011 schema is NOT NULL; intent preserved by activity's `cost_cents <= 0` guard) + 3 pre-existing test failures from Phase B-stripe-02's 1.15× ap_multiplier shift (deferred-items.md, out-of-scope).
+
+**Wave 4 partial.** Plan 09 (`prune_messages_workflow` — D-05 retention pruner Temporal cron) is the remaining Wave 4 ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-07 SHIPPED)
