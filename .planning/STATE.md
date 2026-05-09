@@ -3,15 +3,30 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-03 SHIPPED (Wave 2 — read-side billing routes + rate-limit billing bucket)
-last_updated: "2026-05-09T01:50:48.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-03 SHIPPED (Wave 2 read routes — packs/balance/transactions + 30/60s rate-limit bucket); Wave 2 sibling (B-stripe-04 POST checkout) unblocked
+stopped_at: Phase B-stripe-04 SHIPPED (Wave 2 — tier-aware /v1/usage/summary projection)
+last_updated: "2026-05-09T01:59:49.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-04 SHIPPED (Wave 2 sibling — tier-aware /v1/usage/summary projection; 6/6 new + 9/9 Phase A regression + 12/12 sibling billing routes = 27/27 PASS); Wave 2 complete; Wave 3 (B-stripe-05/06/07 — POST checkout + webhook + tier_enforcement) unblocked
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 35
-  percent: 78
+  completed_plans: 36
+  percent: 80
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-04 SHIPPED)
+
+**Current state:** Phase B-stripe-04 SHIPPED 2026-05-09 (Wave 2 sibling — tier-aware projection on the existing `/v1/usage/summary`). 6 new tier-projection tests + 9 Phase A regression tests + 12 sibling billing read-route tests all GREEN under real Postgres testcontainer = **27/27 PASS**. The handler now projects `tier` (always; defaults `'free'`) + `balance_cents` / `display_balance_cents` (clamped >= 0) / `is_negative` ONLY when `tier='ultra'` — Phase A consumers see byte-identical key-set via `response_model_exclude_none=True` (T-B-LEAK mitigation). Mobile's UsageTickerWidget (Wave 5) now branches its render on `summary.tier` from a single endpoint — dumb-client rule, golden rule #2.
+
+**Plan B-stripe-04 commits:**
+
+- `7033932` — test(B-stripe-04): add failing tier-projection tests for /v1/usage/summary (RED gate)
+- `2d92b61` — feat(B-stripe-04): tier-aware projection for /v1/usage/summary (GREEN gate)
+
+**Truth audit:** 3/3 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-04-SUMMARY.md` for full audit + key_links verification + threat-model audit + Phase A regression evidence. NO deviations from plan.
+
+**Wave 2 complete.** Wave 3 (Plans 05/06/07 — POST checkout endpoints + Stripe webhook handler + services/tier_enforcement.py) is the next ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-03 SHIPPED)
