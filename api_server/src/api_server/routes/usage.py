@@ -62,11 +62,28 @@ class AgentBreakdownEntry(BaseModel):
 
 
 class UsageSummaryResponse(BaseModel):
-    """Body for GET /v1/usage/summary — the AppBar ticker payload."""
+    """Body for GET /v1/usage/summary — the AppBar ticker payload.
+
+    Phase B (D-02 / D-21) adds tier-aware projection. ``tier`` is always
+    present and defaults to ``'free'`` so Phase A consumers see only
+    one additive field. The other three fields are projected ONLY for
+    ``tier='ultra'``; for free/pro they stay ``None`` and are stripped
+    from the wire response by ``response_model_exclude_none=True`` on
+    the route decorator (T-B-LEAK mitigation — Phase A clients see a
+    byte-identical key-set).
+    """
 
     total_usd: str
     message_count: int
     by_agent: list[AgentBreakdownEntry]
+    # Phase B additions — ALL OPTIONAL so Phase A consumers don't break.
+    # tier defaults to 'free' so the field is always emitted; the other
+    # three are None for free/pro and excluded from the JSON response by
+    # ``response_model_exclude_none=True`` on the GET handler.
+    tier: str = "free"
+    balance_cents: int | None = None
+    display_balance_cents: int | None = None
+    is_negative: bool | None = None
 
 
 class AgentCumulative(BaseModel):
@@ -159,9 +176,26 @@ def _project_series(row: dict[str, Any]) -> AgentSeriesEntry:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/usage/summary", response_model=UsageSummaryResponse)
+@router.get(
+    "/usage/summary",
+    response_model=UsageSummaryResponse,
+    # T-B-LEAK mitigation (Phase B D-02): for free/pro tiers, the ultra-
+    # only fields (balance_cents, display_balance_cents, is_negative) are
+    # left as None on the model and stripped from the JSON wire response.
+    # Phase A consumers see byte-identical keys (plus the new ``tier`` field
+    # which defaults to ``'free'`` and is always emitted).
+    response_model_exclude_none=True,
+)
 async def get_usage_summary(request: Request):
-    """Return total USD + message count + per-agent breakdown for the user."""
+    """Return total USD + message count + per-agent breakdown for the user.
+
+    Phase B addition (D-02 / D-21 — tier-aware projection): the response
+    also carries ``tier`` (always) and, for ``tier='ultra'``,
+    ``balance_cents`` + ``display_balance_cents`` + ``is_negative`` so
+    mobile's ``UsageTickerWidget`` can branch its render on tier (USD
+    cost for free/pro, credit balance for ultra) — single endpoint, no
+    client-side aggregation (dumb-client rule, golden rule #2).
+    """
     result = require_user(request)
     if isinstance(result, JSONResponse):
         return result
@@ -171,12 +205,44 @@ async def get_usage_summary(request: Request):
     async with pool.acquire() as conn:
         total_usd, message_count = await usage_query.fetch_user_total(conn, user_id)
         by_agent_rows = await usage_query.fetch_user_by_agent(conn, user_id)
+        # Phase B (D-02): single LEFT JOIN read for tier + balance projection.
+        # ``users.tier`` is always present (migration 014 set NOT NULL DEFAULT
+        # 'free'); ``credit_balances`` is per-D-17 sparse — only Ultra users
+        # have a row, free/pro return NULL via the LEFT JOIN. COALESCE keeps
+        # the int math safe for the read path. Cross-tenant defense lives in
+        # the ``WHERE u.id = $1`` predicate (no user-supplied id from body).
+        tier_row = await conn.fetchrow(
+            """
+            SELECT u.tier,
+                   COALESCE(b.balance_cents, 0)::BIGINT AS balance_cents
+            FROM users u
+            LEFT JOIN credit_balances b ON b.user_id = u.id
+            WHERE u.id = $1
+            """,
+            user_id,
+        )
 
-    return UsageSummaryResponse(
+    # Defensive default: if the user row vanished between auth and the read
+    # (cookie still valid, user soft-deleted), surface the Phase A shape
+    # rather than 500. ``require_user`` is the auth boundary; the row should
+    # always exist here, but tests assert ``tier`` is always projected.
+    tier = tier_row["tier"] if tier_row else "free"
+    balance_cents_int = int(tier_row["balance_cents"]) if tier_row else 0
+
+    response = UsageSummaryResponse(
         total_usd=_decimal_to_str(total_usd),
         message_count=message_count,
         by_agent=[_project_breakdown(r) for r in by_agent_rows],
+        tier=tier,
     )
+    if tier == "ultra":
+        # D-21 / Pitfall 6: clamp display to >= 0 so the UI never shows a
+        # negative dollar amount; ``is_negative`` flag triggers the
+        # "you owe credits — top up to clear write-off" UX in mobile.
+        response.balance_cents = balance_cents_int
+        response.display_balance_cents = max(balance_cents_int, 0)
+        response.is_negative = balance_cents_int < 0
+    return response
 
 
 # ---------------------------------------------------------------------------
