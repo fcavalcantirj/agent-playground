@@ -694,7 +694,7 @@ Plans:
 Plans:
 - [x] B-stripe-01-PLAN.md — Wave 0 BLOCKING spike gate: 8 spikes (signature round-trip, debit activity contract, atomic ledger, Temporal schedule idempotency, mobile webview interception, Stripe CLI deploy-stack delivery, lazy customer race-defense, migration round-trip) — **SHIPPED 2026-05-08**, all 8 PASS, commits `b61c028`/`46c6096`/`94ec8ff`/`ecc4c06`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-01-SUMMARY.md`; evidence at `api_server/tests/_spikes/wave0_stripe_paywall.md`; draft migration body in `_spikes/draft_014_migration.py` ready to copy to `alembic/versions/` in Wave 1
 - [x] B-stripe-02-PLAN.md — Wave 1: migration 014 (tier + 3 tables + ap_multiplier 1.0→1.15) + Settings extension (8 AP_STRIPE_* fields + validate_stripe_config helper) + StripeClient lifespan + billing_packs PACKS + ledger.py atomic helpers — **SHIPPED 2026-05-09**, 25/25 tests green (10 migration + 7 billing_packs + 8 ledger atomic), commits `235b34e`/`d30cae3`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-02-SUMMARY.md`
-- [ ] B-stripe-03-PLAN.md — Wave 2: read routes (GET /v1/billing/{packs,balance,transactions}) + rate-limit billing bucket (excludes webhook)
+- [x] B-stripe-03-PLAN.md — Wave 2: read routes (GET /v1/billing/{packs,balance,transactions}) + rate-limit billing bucket (excludes webhook) — **SHIPPED 2026-05-09**, 19/19 tests green (12 route + 7 middleware), commits `57518da`/`cadfd24`; SUMMARY at `.planning/phases/B-stripe-paywall/B-stripe-03-SUMMARY.md`
 - [ ] B-stripe-04-PLAN.md — Wave 2: tier-aware projection in /v1/usage/summary (balance_cents only when tier='ultra'; backward-compatible)
 - [ ] B-stripe-05-PLAN.md — Wave 3: POST /v1/billing/checkout + /v1/billing/subscription (lazy customer create + race-defense)
 - [ ] B-stripe-06-PLAN.md — Wave 3: POST /v1/billing/webhook (signature verify + idempotency + 7-event matrix per D-14-amended) + migration 014 extension (subscription state columns) + sole writer of users.tier
@@ -708,7 +708,7 @@ Plans:
 
 **Out of scope (deferred):** Web frontend parity (Phase B.2); pro-rata partial-stream debit; multi-currency; branded receipts; multiple paid tiers above Pro; live webhook delivery (gated on H7); admin write-off UI; token-count pre-flight estimation.
 
-**Status:** EXECUTING — Plan 01 (Wave 0 spike gate) SHIPPED 2026-05-08 + Plan 02 (Wave 1 substrate) SHIPPED 2026-05-09; Wave 2 unblocked (Plans 03/04 — read routes + tier-aware /v1/usage/summary). Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
+**Status:** EXECUTING — Plan 01 (Wave 0 spike gate) SHIPPED 2026-05-08 + Plan 02 (Wave 1 substrate) SHIPPED 2026-05-09 + Plan 03 (Wave 2 read routes + billing bucket) SHIPPED 2026-05-09; Wave 2 sibling (Plan 04 — tier-aware /v1/usage/summary projection) is the next ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto`.
 
 ## Backlog
 

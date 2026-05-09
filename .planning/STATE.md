@@ -3,15 +3,28 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-02 SHIPPED (Wave 1 — migration 014 + Settings + 3 services + lifespan)
-last_updated: "2026-05-09T01:40:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-02 SHIPPED (Wave 1 — schema/settings/services substrate); Wave 2 unblocked
+stopped_at: Phase B-stripe-03 SHIPPED (Wave 2 — read-side billing routes + rate-limit billing bucket)
+last_updated: "2026-05-09T01:50:48.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-03 SHIPPED (Wave 2 read routes — packs/balance/transactions + 30/60s rate-limit bucket); Wave 2 sibling (B-stripe-04 POST checkout) unblocked
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 34
-  percent: 75
+  completed_plans: 35
+  percent: 78
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-03 SHIPPED)
+
+**Current state:** Phase B-stripe-03 SHIPPED 2026-05-09 (Wave 2 read-side routes — 19/19 tests green). 3 GET endpoints under `/v1/billing/*` ship: packs (D-06 single SOT, omits internal stripe_price_id per T-B-PRC), balance (D-21 tier+raw+display+is_negative for D-16/Pitfall 6), transactions (paginated by created_at-DESC cursor). New `billing` rate-limit bucket (30/60s per user) excludes the webhook path so Stripe is never throttled. 4 new ErrorCodes minted: INSUFFICIENT_BALANCE / TIER_LIMIT_EXCEEDED / INVALID_PACK_ID / STRIPE_WEBHOOK_INVALID. Wave 2 sibling (B-stripe-04 POST checkout/{pack,subscribe}) and Wave 3 (B-stripe-04+ webhook handler) unblocked.
+
+**Plan B-stripe-03 commits:**
+
+- `57518da` — feat(B-stripe-03): read-side billing routes (packs/balance/transactions)
+- `cadfd24` — feat(B-stripe-03): rate-limit billing bucket (30/60s, webhook excluded)
+
+**Truth audit:** 6/6 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-03-SUMMARY.md` for full audit + 3 documented refinements (limit→422 not silent clamp, user-not-found→401 not 404, +1 cross-bucket isolation test for thoroughness).
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-02 SHIPPED)
@@ -157,9 +170,9 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Phase: B-stripe (paywall) — EXECUTING
-Plan: 2 of 13 (Plan 01 SHIPPED — Wave 0 spike gate, all 8 spikes PASS)
+Plan: 3 of 13 (Plans 01–03 SHIPPED; Plan 04 next — Wave 2 sibling: POST /v1/billing/checkout/{pack,subscribe})
 Status: Executing Phase B-stripe
-Last activity: 2026-05-09 -- Plan B-stripe-01 SHIPPED (Wave 0 spike gate); Wave 1 unblocked
+Last activity: 2026-05-09 -- Plan B-stripe-03 SHIPPED (Wave 2 read-side routes + billing rate-limit bucket); Wave 2 sibling + Wave 3 unblocked
 
 ### Plan B-stripe-01 SHIPPED 2026-05-08
 
