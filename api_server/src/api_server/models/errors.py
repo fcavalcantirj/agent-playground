@@ -56,6 +56,11 @@ class ErrorCode:
     # Phase 22b-05: event-stream error codes.
     CONCURRENT_POLL_LIMIT = "CONCURRENT_POLL_LIMIT"       # 429 — D-13
     EVENT_STREAM_UNAVAILABLE = "EVENT_STREAM_UNAVAILABLE" # 503 — reserved (watcher-dead future)
+    # Phase B Plan B-stripe-03: billing error codes.
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"     # 402 — pre-flight gate or post-debit drain (D-12)
+    TIER_LIMIT_EXCEEDED = "TIER_LIMIT_EXCEEDED"       # 403 — agent.create cap, retention filter (D-05)
+    INVALID_PACK_ID = "INVALID_PACK_ID"               # 400 — client sent pack_id not in PACKS
+    STRIPE_WEBHOOK_INVALID = "STRIPE_WEBHOOK_INVALID" # 400 — signature failure (D-14 / AMD-04)
 
 
 _CODE_TO_TYPE = {
@@ -81,6 +86,13 @@ _CODE_TO_TYPE = {
     # Phase 22b-05 additions.
     ErrorCode.CONCURRENT_POLL_LIMIT: "rate_limit_error",
     ErrorCode.EVENT_STREAM_UNAVAILABLE: "infra_error",
+    # Phase B Plan B-stripe-03 additions. ``payment_required`` is a new
+    # type for 402-shape balance gates; ``forbidden`` distinguishes tier
+    # cap violations from generic ``UNAUTHORIZED`` (401 vs 403).
+    ErrorCode.INSUFFICIENT_BALANCE: "payment_required",
+    ErrorCode.TIER_LIMIT_EXCEEDED: "forbidden",
+    ErrorCode.INVALID_PACK_ID: "invalid_request",
+    ErrorCode.STRIPE_WEBHOOK_INVALID: "invalid_request",
 }
 
 

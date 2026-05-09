@@ -47,6 +47,7 @@ from .routes import agent_lifecycle as agent_lifecycle_route
 from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
+from .routes import billing as billing_route
 from .routes import health
 from .routes import llm_proxy as llm_proxy_route
 from .routes import models as models_route
@@ -619,6 +620,11 @@ def create_app() -> FastAPI:
     app.include_router(auth_route.router, prefix="/v1", tags=["auth"])
     app.include_router(users_route.router, prefix="/v1", tags=["users"])
     app.include_router(usage_route.router, prefix="/v1", tags=["usage"])
+    # Phase B Plan B-stripe-03 — read-side billing routes (D-06 packs +
+    # D-21 balance + paginated ledger history). All 3 routes are
+    # require_user-gated; stripe_price_id is intentionally omitted from
+    # the response model (T-B-PRC).
+    app.include_router(billing_route.router, prefix="/v1", tags=["billing"])
     # Phase 29-04 — POST /v1/llm/forward/{path:path} egress proxy.
     app.include_router(llm_proxy_route.router, prefix="/v1", tags=["llm"])
     return app
