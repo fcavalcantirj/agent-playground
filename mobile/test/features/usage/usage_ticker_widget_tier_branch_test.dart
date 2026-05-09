@@ -112,8 +112,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('1234 credits'), findsOneWidget);
-      expect(find.text(r'$0.0'), findsNothing);
+      // Track 1 (#17) — "credits" terminology dropped 2026-05-09; ticker
+      // now renders the 1:1 USD balance.
+      expect(find.text(r'$12.34'), findsOneWidget);
+      expect(find.textContaining('credits'), findsNothing);
     });
 
     testWidgets(
@@ -154,7 +156,7 @@ void main() {
     });
 
     testWidgets(
-        'tier="ultra" with balance=0 (not negative) → "0 credits"',
+        'tier="ultra" with balance=0 (not negative) → "\$0.00"',
         (tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -180,7 +182,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('0 credits'), findsOneWidget);
+      expect(find.text(r'$0.00'), findsOneWidget);
     });
   });
 

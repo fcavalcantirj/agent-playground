@@ -113,6 +113,16 @@ GoRouter _router(Widget Function() dashboard, {String initial = '/'}) {
               Center(child: Text('CHAT_ROUTE_${state.pathParameters['id']}')),
         ),
       ),
+      GoRoute(
+        path: '/billing',
+        builder: (_, _) =>
+            const Scaffold(body: Center(child: Text('BILLING_HUB_ROUTE'))),
+      ),
+      GoRoute(
+        path: '/billing/topup',
+        builder: (_, _) =>
+            const Scaffold(body: Center(child: Text('BILLING_TOPUP_ROUTE'))),
+      ),
     ],
   );
 }
@@ -308,6 +318,26 @@ void main() {
       // Still on Dashboard (agent row visible).
       expect(find.byType(AgentRow), findsOneWidget);
     });
+
+    // B-stripe regression fix (#11) — Phase B never shipped a
+    // discoverable entry point. Track 2 (#18) routed the menu to the
+    // /billing hub instead of /billing/topup.
+    testWidgets(
+      'overflow → "Billing" routes to /billing hub',
+      (tester) async {
+        final h = _Harness()
+          ..stubAgents([_agentJson()])
+          ..stubRecipes(const []);
+        await tester.pumpWidget(_wrap(h, _router(DashboardScreen.new)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('More'));
+        await tester.pumpAndSettle();
+        expect(find.text('Billing'), findsOneWidget);
+        await tester.tap(find.text('Billing').last);
+        await tester.pumpAndSettle();
+        expect(find.text('BILLING_HUB_ROUTE'), findsOneWidget);
+      },
+    );
   });
 
   group('DashboardScreen — fetch error post-load (D-19)', () {

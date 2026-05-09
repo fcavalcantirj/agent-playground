@@ -4,10 +4,12 @@
 // of tappable cards. Mobile NEVER hardcodes the catalog — the caller
 // (TopUpScreen) reads packsProvider and forwards the resolved list.
 //
-// Each card shows pack.label (e.g. `$25`) on the leading edge and
-// `<credit_cents> credits` on the trailing edge. Tapping the card
-// fires onSelect(pack) — the parent screen owns the navigation /
-// orchestrator wiring.
+// Each card shows pack.label (e.g. `$25`) on the leading edge and a
+// "+ $X.XX balance" hint on the trailing edge (1:1 USD↔balance per
+// D-07; "credits" terminology dropped 2026-05-09 — masked the fact
+// that 1 credit = 1 cent and confused users on the checkout page).
+// Tapping the card fires onSelect(pack) — the parent screen owns the
+// navigation / orchestrator wiring.
 
 import 'package:agent_playground/features/billing/billing_models.dart';
 import 'package:flutter/material.dart';
@@ -42,7 +44,7 @@ class PackPickerWidget extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       Text(
-                        '${p.creditCents} credits',
+                        '+ \$${(p.creditCents / 100).toStringAsFixed(2)} balance',
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     ],

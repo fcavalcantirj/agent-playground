@@ -37,16 +37,18 @@ class UsageTickerWidget extends ConsumerWidget {
   static const String _placeholder = r'$ —';
 
   /// Phase B Plan 12 (D-25) — tier-aware label projection. Free/Pro
-  /// keep the existing Phase 27 USD ticker shape; Ultra renders
-  /// `<displayBalanceCents> credits` (or `$0.00 ⚠` when the ledger
-  /// row is negative — Pitfall 6).
+  /// keep the existing Phase 27 USD ticker shape; Ultra renders the
+  /// remaining USD balance (1:1 with displayBalanceCents per D-07; the
+  /// "credits" terminology was dropped 2026-05-09 — masked the fact
+  /// that 1 credit = 1 cent and confused users on checkout).
+  /// Negative-balance state still flashes `$0.00 ⚠` (Pitfall 6).
   static String labelForSummary(UsageSummary s) {
     if (s.tier == 'ultra') {
       if (s.isNegative ?? false) {
         return r'$0.00 ⚠';
       }
       final display = s.displayBalanceCents ?? 0;
-      return '$display credits';
+      return '\$${(display / 100).toStringAsFixed(2)}';
     }
     return formatUsd(s.totalUsd);
   }

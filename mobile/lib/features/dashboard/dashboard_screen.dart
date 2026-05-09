@@ -37,6 +37,7 @@ import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/dashboard/agent_row.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
+import 'package:agent_playground/features/usage/tier_badge_widget.dart';
 import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/ascii_agent_banner.dart';
 import 'package:agent_playground/shared/confirm_dialog.dart';
@@ -101,6 +102,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           // 27 yanked a direct ConsumerWidget mount because it triggered a
           // defunct-element race during navigation tear-down.
           Consumer(
+            builder: (context, ref, _) => const TierBadgeWidget(),
+          ),
+          Consumer(
             builder: (context, ref, _) => const UsageTickerWidget(),
           ),
           PopupMenuButton<String>(
@@ -109,9 +113,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             onSelected: (value) async {
               if (value == 'signout') {
                 await _confirmSignOut(context);
+              } else if (value == 'billing') {
+                if (!context.mounted) return;
+                context.push('/billing');
               }
             },
             itemBuilder: (_) => const <PopupMenuEntry<String>>[
+              PopupMenuItem<String>(
+                value: 'billing',
+                child: Text('Billing'),
+              ),
               PopupMenuItem<String>(
                 value: 'signout',
                 child: Text('Sign out'),

@@ -59,14 +59,14 @@ void main() {
       await tester.tap(find.text('TRIGGER'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Out of credits'), findsOneWidget);
+      expect(find.text('Out of balance'), findsOneWidget);
 
       // Tap the barrier (top-left corner, far from the dialog content).
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
 
       // Modal still present.
-      expect(find.text('Out of credits'), findsOneWidget);
+      expect(find.text('Out of balance'), findsOneWidget);
     });
 
     testWidgets('Top up CTA pushes to /billing/topup', (tester) async {
@@ -80,7 +80,7 @@ void main() {
 
       // Landed on the topup stub route.
       expect(find.text('TOP_UP_LANDED'), findsOneWidget);
-      expect(find.text('Out of credits'), findsNothing);
+      expect(find.text('Out of balance'), findsNothing);
     });
 
     testWidgets('Later CTA dismisses', (tester) async {
@@ -92,7 +92,7 @@ void main() {
       await tester.tap(find.text('Later'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Out of credits'), findsNothing);
+      expect(find.text('Out of balance'), findsNothing);
       // Still on the host route (TRIGGER button visible again).
       expect(find.text('TRIGGER'), findsOneWidget);
     });

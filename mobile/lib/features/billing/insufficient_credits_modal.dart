@@ -26,7 +26,7 @@ Future<void> showInsufficientCreditsModal(BuildContext context) async {
     context: context,
     barrierDismissible: false, // BLOCKING per D-21
     builder: (ctx) => AlertDialog(
-      title: const Text('Out of credits'),
+      title: const Text('Out of balance'),
       content: const Text('Top up your balance to keep chatting.'),
       actions: [
         TextButton(

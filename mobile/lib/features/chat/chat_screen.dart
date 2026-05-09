@@ -34,6 +34,7 @@ import 'package:agent_playground/features/chat/input_bar.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
 import 'package:agent_playground/features/chat/timestamp_divider.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
+import 'package:agent_playground/features/usage/tier_badge_widget.dart';
 import 'package:agent_playground/features/usage/usage_ticker_widget.dart';
 import 'package:agent_playground/shared/failed_bubble.dart';
 import 'package:agent_playground/shared/restart_banner.dart';
@@ -178,6 +179,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // tear-down lifetime, avoiding the defunct-element race that
           // yanked the ticker in Phase 27.
           Consumer(
+            builder: (context, ref, _) => const TierBadgeWidget(),
+          ),
+          Consumer(
             builder: (context, ref, _) => const UsageTickerWidget(),
           ),
           if (showStopMenu)
@@ -187,7 +191,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               tooltip: 'Agent actions',
               enabled: !_stopInflight,
               onSelected: (v) {
-                if (v == 'stop') _stopAgent(context, agent);
+                if (v == 'stop') {
+                  _stopAgent(context, agent);
+                } else if (v == 'billing') {
+                  if (!context.mounted) return;
+                  context.push('/billing');
+                }
               },
               itemBuilder: (_) => [
                 PopupMenuItem<String>(
@@ -207,6 +216,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           ],
                         )
                       : const Text('Stop'),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'billing',
+                  child: Text('Billing'),
                 ),
               ],
             ),
