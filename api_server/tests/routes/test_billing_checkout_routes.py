@@ -272,7 +272,12 @@ async def test_checkout_valid_pack_id_returns_200_with_checkout_url(
     sess_params = fake_stripe_client.session_calls[0]
     assert sess_params["mode"] == "payment"
     assert sess_params["allow_promotion_codes"] is True       # D-24
-    assert sess_params["automatic_tax"] == {"enabled": True}
+    # Phase B UAT regression fix (#13): automatic_tax must be OPT-IN.
+    # Stripe Tax is not supported in every account country (e.g. Brazil).
+    # Default: not in params. Opt-in via AP_STRIPE_AUTOMATIC_TAX_ENABLED=true.
+    assert "automatic_tax" not in sess_params, (
+        "automatic_tax must default to off (Stripe Tax country-restricted)"
+    )
     # metadata carries pack_id + ap_user_id for webhook handler (Wave 3).
     assert sess_params["metadata"]["pack_id"] == "pack_25"
     assert sess_params["metadata"]["ap_user_id"] == authenticated_cookie["_user_id"]
@@ -420,7 +425,8 @@ async def test_subscription_authenticated_returns_200_with_checkout_url(
     sess = fake_stripe_client.session_calls[0]
     assert sess["mode"] == "subscription"
     assert sess["allow_promotion_codes"] is True              # D-24
-    assert sess["automatic_tax"] == {"enabled": True}
+    # See test_checkout_valid_pack_id_returns_200_with_checkout_url for #13 details.
+    assert "automatic_tax" not in sess
 
 
 async def test_subscription_uses_pro_monthly_price_id_from_settings(

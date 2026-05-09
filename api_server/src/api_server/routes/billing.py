@@ -367,6 +367,7 @@ async def create_pack_checkout(request: Request, body: CheckoutRequest):
     success_url = body.success_url or _DEFAULT_SUCCESS_URL
     cancel_url = body.cancel_url or _DEFAULT_CANCEL_URL
 
+    settings = request.app.state.settings
     try:
         async with pool.acquire() as conn:
             checkout_url = await create_pack_checkout_session(
@@ -376,6 +377,7 @@ async def create_pack_checkout(request: Request, body: CheckoutRequest):
                 success_url=success_url,
                 cancel_url=cancel_url,
                 client=client,
+                settings=settings,
             )
     except Exception:
         # T-B-LK: log full exception (sanitized) but return generic

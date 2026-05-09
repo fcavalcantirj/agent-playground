@@ -29,6 +29,7 @@ module.
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 import asyncpg
@@ -116,6 +117,7 @@ async def create_pack_checkout_session(
     success_url: str,
     cancel_url: str,
     client: stripe.StripeClient,
+    settings: Settings,
 ) -> str:
     """Create a Stripe Checkout session for a one-time credit pack purchase.
 
@@ -124,8 +126,9 @@ async def create_pack_checkout_session(
     so the ``checkout.session.completed`` webhook handler (Wave 3) can
     grant the right amount of credit to the right user.
 
-    ``automatic_tax`` is enabled — Stripe Tax handles VAT/sales-tax
-    out-of-band per CONTEXT D-24 / Claude's Discretion section.
+    ``automatic_tax`` is included only when ``settings.stripe_automatic_tax_enabled``
+    is True — Stripe Tax is country-restricted (e.g. Brazil unsupported)
+    so it must be opt-in (#13 UAT regression fix).
 
     The Customer is created lazily inside its OWN transaction so the
     Checkout session creation (HTTP call to Stripe) does not hold a
@@ -144,25 +147,25 @@ async def create_pack_checkout_session(
         customer_id = await lazy_create_or_fetch_customer(
             conn, user_id=user_id, client=client,
         )
+    params: dict[str, Any] = {
+        "customer": customer_id,
+        "mode": "payment",
+        "line_items": [
+            {"price": pack.stripe_price_id, "quantity": 1},
+        ],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "allow_promotion_codes": True,                          # D-24
+        "metadata": {
+            "ap_user_id": str(user_id),
+            "pack_id": pack.id,
+            "credit_cents": str(pack.credit_cents),
+        },
+    }
+    if settings.stripe_automatic_tax_enabled:
+        params["automatic_tax"] = {"enabled": True}
     # The Stripe Checkout call is OUTSIDE any DB transaction.
-    session = client.checkout.sessions.create(
-        params={
-            "customer": customer_id,
-            "mode": "payment",
-            "line_items": [
-                {"price": pack.stripe_price_id, "quantity": 1},
-            ],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "allow_promotion_codes": True,                      # D-24
-            "metadata": {
-                "ap_user_id": str(user_id),
-                "pack_id": pack.id,
-                "credit_cents": str(pack.credit_cents),
-            },
-            "automatic_tax": {"enabled": True},                 # Stripe Tax
-        }
-    )
+    session = client.checkout.sessions.create(params=params)
     return session.url
 
 
@@ -189,21 +192,21 @@ async def create_subscription_checkout_session(
         customer_id = await lazy_create_or_fetch_customer(
             conn, user_id=user_id, client=client,
         )
-    session = client.checkout.sessions.create(
-        params={
-            "customer": customer_id,
-            "mode": "subscription",
-            "line_items": [
-                {
-                    "price": settings.stripe_price_id_pro_monthly,
-                    "quantity": 1,
-                },
-            ],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "allow_promotion_codes": True,                      # D-24
-            "metadata": {"ap_user_id": str(user_id)},
-            "automatic_tax": {"enabled": True},
-        }
-    )
+    params: dict[str, Any] = {
+        "customer": customer_id,
+        "mode": "subscription",
+        "line_items": [
+            {
+                "price": settings.stripe_price_id_pro_monthly,
+                "quantity": 1,
+            },
+        ],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "allow_promotion_codes": True,                          # D-24
+        "metadata": {"ap_user_id": str(user_id)},
+    }
+    if settings.stripe_automatic_tax_enabled:
+        params["automatic_tax"] = {"enabled": True}
+    session = client.checkout.sessions.create(params=params)
     return session.url

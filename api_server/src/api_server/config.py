@@ -242,6 +242,16 @@ class Settings(BaseSettings):
         default="", validation_alias="AP_STRIPE_PRICE_ID_PACK_100"
     )
 
+    # Phase B UAT regression fix (#13) — Stripe Tax (`automatic_tax: true` on
+    # Checkout Session create) is not supported in every account country
+    # (e.g. Brazil — see https://stripe.com/docs/tax/supported-countries).
+    # Default OFF so a Stripe TEST account in any country can mint a checkout
+    # session. Operators in supported countries opt in via
+    # AP_STRIPE_AUTOMATIC_TAX_ENABLED=true to let Stripe Tax compute VAT/sales tax.
+    stripe_automatic_tax_enabled: bool = Field(
+        default=False, validation_alias="AP_STRIPE_AUTOMATIC_TAX_ENABLED"
+    )
+
     @model_validator(mode="after")
     def _substitute_stripe_dev_placeholders(self) -> "Settings":
         """In dev: log a warning per missing AP_STRIPE_* and substitute a
