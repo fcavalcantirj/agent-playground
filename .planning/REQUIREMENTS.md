@@ -119,12 +119,12 @@ Requirements for the initial release. Each maps to exactly one roadmap phase.
 
 ### Billing (BIL)
 
-- [ ] **BIL-01**: User can top up their credit balance via Stripe Checkout (one-time payment); completed checkouts credit the user's ledger atomically
-- [ ] **BIL-02**: `webhook_events` table has `UNIQUE (stripe_event_id)`; the webhook handler INSERTs idempotency rows as the first action inside the same transaction as the credit-ledger update (CRIT-5)
-- [ ] **BIL-03**: Stripe webhook signatures are verified on every webhook; events older than 5 minutes are rejected as replay attempts
-- [ ] **BIL-04**: Webhooks for the same user are queued and processed serially to prevent double-credit races
-- [ ] **BIL-05**: User can view a paginated transaction history (credit ledger) for dispute resolution
-- [ ] **BIL-06**: User can see their current balance, lifetime spend, and most recent transaction on the dashboard
+- [x] **BIL-01**: User can top up their credit balance via Stripe Checkout (one-time payment); completed checkouts credit the user's ledger atomically
+- [x] **BIL-02**: `webhook_events` table has `UNIQUE (stripe_event_id)`; the webhook handler INSERTs idempotency rows as the first action inside the same transaction as the credit-ledger update (CRIT-5)
+- [x] **BIL-03**: Stripe webhook signatures are verified on every webhook; events older than 5 minutes are rejected as replay attempts
+- [x] **BIL-04**: Webhooks for the same user are queued and processed serially to prevent double-credit races
+- [x] **BIL-05**: User can view a paginated transaction history (credit ledger) for dispute resolution
+- [x] **BIL-06**: User can see their current balance, lifetime spend, and most recent transaction on the dashboard
 
 ### Persistent Tier (PER)
 
@@ -351,12 +351,12 @@ Explicitly excluded. Documented to prevent scope creep.
 | MET-13 | Phase 6 | Pending |
 | MET-14 | Phase 6 | Pending |
 | MET-15 | Phase 6 | Pending |
-| BIL-01 | Phase 6 | Pending |
-| BIL-02 | Phase 6 | Pending |
-| BIL-03 | Phase 6 | Pending |
-| BIL-04 | Phase 6 | Pending |
-| BIL-05 | Phase 6 | Pending |
-| BIL-06 | Phase 6 | Pending |
+| BIL-01 | Phase B-stripe-paywall | Done |
+| BIL-02 | Phase B-stripe-paywall | Done |
+| BIL-03 | Phase B-stripe-paywall | Done |
+| BIL-04 | Phase B-stripe-paywall | Done |
+| BIL-05 | Phase B-stripe-paywall | Done |
+| BIL-06 | Phase B-stripe-paywall | Done |
 | PER-01 | Phase 7 | Pending |
 | PER-02 | Phase 7 | Pending |
 | PER-03 | Phase 7 | Pending |

@@ -3,15 +3,46 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-12 SHIPPED (Wave 5 — tier-branched ticker + chat 402 → modal + Sentry tier-context); Plan 13 (Wave 6 exit gate) is the final remaining ticket
-last_updated: "2026-05-09T05:00:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-12 SHIPPED (Wave 5 — mobile tier-branched ticker + chat 402 → modal + Sentry tier-context). 12 new TDD tests GREEN = 8 ticker tier-branch + 4 chat 402 handler; 71/71 across the touched test surface (35 usage + 4 chat 402 + 32 billing) PASS. UsageTickerWidget renders USD for free/pro (Phase 27 path), `<displayBalanceCents> credits` for ultra, `$0.00 ⚠` + tap-to-explain dialog for ultra+isNegative (D-16 / Pitfall 6). New `chatBlockingErrorProvider` bridges headless ChatScope → chat_screen's BuildContext for `showInsufficientCreditsModal(context)` on 402 INSUFFICIENT_BALANCE; explicitly NOT the H4 RetryBanner per D-21. Sentry user-context now carries `tier` as a searchable tag, set on sign-in (seed='free') and refreshed on every `usageSummaryProvider` poll (D-04 webhook-driven flips reflect within D-18 lazy-propagation latency). `setTag` (NOT `setData` — Sentry Scope's actual surface in sentry-flutter 9.20.0 is setTag/setExtra/setContexts; planning truth's regex was a typo, documented inline). Pre-existing dirty `dashboard_providers.dart` trailing-newline cleaned (passthrough — Plan 12's `<read_first>` confirmed the file does not consume `usageSummaryProvider`; tier-aware projection lives directly in UsageTickerWidget per the dumb-client rule).
+stopped_at: Phase B-stripe-13 SHIPPED (Wave 6 — final exit gate: docker-compose stripe-mock + Makefile target + GH workflow + B-HUMAN-UAT.md + PHASE-B-EXIT-GATE-PASSED marker). Phase B SHIPPED with split-gate (automated CI green; manual UAT pending).
+last_updated: "2026-05-09T13:15:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-13 SHIPPED (Wave 6 final — Phase B exit gate). docker-compose stripe-mock service on 12111/12112 (D-22 dev-only outbound shape; AMD-02 cannot emit webhooks); api_server/Makefile + top-level Makefile both gain `e2e-phase-b-stripe` target with env-guards on AP_STRIPE_TEST_API_KEY + AP_STRIPE_TEST_WEBHOOK_SECRET; new tests/e2e/test_phase_b_money_path.py runs the full Free→Ultra→debit→drained→402 composition against real Stripe TEST mode (`cs_test_*` checkout via real Stripe API + signed-fixture webhook injection per AMD-02 — CI determinism without `stripe listen` dependency); `.github/workflows/e2e-phase-b.yml` PR-gated CI (paths-filtered to api_server/** + mobile/**; concurrency-serialized; secrets.AP_STRIPE_TEST_*); env-doc both `.env.example` + `deploy/.env.prod.example` for the 8 prod AP_STRIPE_* vars + 2 CI-only AP_STRIPE_TEST_* (defense-in-depth split); `B-HUMAN-UAT.md` 4-scenario manual UAT script with test card 4242 4242 4242 4242 (UAT-1 Free→Ultra credit pack; UAT-2 chat drain → 402; UAT-3 promo code; UAT-4 Pro cancel-grace + downgrade); `.planning/PHASE-B-EXIT-GATE-PASSED` split-gate marker (AUTOMATED COVERAGE PASS; manual UAT pending — Phase 31 shape). 2 deviations documented (Rule 1 — debit_user signature alignment caught during TDD; scope-reduction — drained via direct ledger helper to avoid burning real OpenRouter tokens, since the full chat→debit flow is already covered by Phase 31 H8 + Plan 08). Phase B SHIPPED with all 13 plans across 7 waves complete. Manual UAT awaits human walkthrough.
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 44
-  percent: 98
+  completed_plans: 45
+  percent: 100
+---
+
+## Resume after /clear (2026-05-09 — Phase B SHIPPED)
+
+**Current state:** Phase B-stripe-paywall SHIPPED 2026-05-09 with all 13 plans across 7 waves complete. Plan 13 (Wave 6) closed the final exit gate in **split-gate** shape per Phase 31's pattern: automated CI half PASSES; manual UAT half is documented and awaits human walkthrough. The marker `.planning/PHASE-B-EXIT-GATE-PASSED` is committed at status "AUTOMATED COVERAGE — manual UAT pending"; manual UAT outcomes append below the banner on sign-off.
+
+**What landed in Plan 13:**
+
+- `docker-compose.dev.yml` — stripe-mock service on 12111/12112 (D-22 dev-only StripeClient outbound shape validation; AMD-02 confirmed it cannot emit webhooks, so webhook tests still use the hand-rolled signed-fixture helper from Plan 06)
+- `api_server/Makefile` + root `Makefile` — `e2e-phase-b-stripe` target (env-guard mirrors Phase 31 H8's `e2e-money-path` shape; root passthrough delegates to `$(MAKE) -C api_server`)
+- `api_server/tests/e2e/test_phase_b_money_path.py` — Free → Ultra (real `cs_test_*` checkout) → signed-fixture webhook → tier flip + 500¢ ledger top-up → ledger drain via `services.ledger.debit_user` → assert pre-flight 402 predicate state (`tier='ultra' AND balance < 1`); cleans up the Stripe TEST Customer
+- `.github/workflows/e2e-phase-b.yml` — PR-gated (paths: `api_server/**`, `mobile/**`); concurrency-serialized; skips cleanly without secrets so the workflow can land before secrets are wired; env-guard fails loud once secrets exist (Phase 31 SPEC AC24 discipline)
+- `.env.example` + `deploy/.env.prod.example` — documented the 8 runtime `AP_STRIPE_*` vars + the 2 CI-only `AP_STRIPE_TEST_*` vars (kept separate from runtime to prevent CI/runtime cross-contamination)
+- `B-HUMAN-UAT.md` — 4-scenario manual UAT (Free→Ultra credit pack; chat drain→402; promo code; Pro cancel-grace + downgrade); test card `4242 4242 4242 4242` documented; deploy-stack-only invariant per spike F + CLAUDE.md macOS rule
+- `.planning/PHASE-B-EXIT-GATE-PASSED` — split-gate marker; lists all 13 plans + Wave 0 spike evidence + deferred items (live webhook on H7, web frontend on B.2, mobile Pro upgrade UI as a follow-up)
+
+**Plan B-stripe-13 commits:**
+
+- `e4a3cdf` — test(B-stripe-13): add Phase B e2e gate harness (D-22, D-25)
+- `946e34d` — docs(B-stripe-13): GH workflow + UAT script + exit-gate marker (D-25)
+
+**Truth audit:** 7/7 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-13-SUMMARY.md` for full audit + 2 documented deviations (Rule 1 — `debit_user(cost_cents=...)` signature alignment caught during TDD authoring; scope-reduction — drained via direct ledger helper to avoid burning real OpenRouter tokens, since the full chat→debit flow is already covered by Phase 31 H8 + Plan 08). 0 STRIDE entries needed mitigation work (T-B-CI-LK + T-B-DEV-LK + T-B-MARKER all behaviorally satisfied by the secret-as-env discipline + REPLACE_ME placeholder convention + git-history attribution).
+
+**Phase B is GREEN.** Phase B is open for **manual UAT walk-through** per `B-HUMAN-UAT.md` (4 scenarios, ~30min with deploy stack + Stripe CLI + iOS sim). Once all 4 PASS, append timestamp + outcome lines to `.planning/PHASE-B-EXIT-GATE-PASSED` and (optionally) tag `git tag phase-b-shipped` (NEVER push tags — user pushes manually per global instructions).
+
+**Deferred / next-phase work:**
+- Live webhook delivery — gated on H7 (Hetzner HTTPS deploy)
+- Web frontend billing surfaces — Phase B.2
+- Mobile Pro upgrade surface — UAT-4 step 3 is curl-driven for v0.3; surface task is a follow-up
+- 4 manual gates from Phase 31 (`31-HUMAN-UAT.md`) still pending — independent of Phase B; can clear in parallel
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-12 SHIPPED)
