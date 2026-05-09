@@ -3,15 +3,31 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: "**Goal:** Introduce `apiVersion: ap.recipe/v0.2` requiring full SHA in `source.ref`. Migration script for existing recipes. Clone dir keyed by SHA. Runner records `resolved_upstream_ref` for v0.1 compat. Steal from METR"
 status: executing
-stopped_at: Phase B-stripe-08 SHIPPED (Wave 4 partial — debit_balance Temporal activity body + llm_proxy pre-flight 402)
-last_updated: "2026-05-09T03:11:00.000Z"
-last_activity: 2026-05-09 -- Plan B-stripe-08 SHIPPED (Wave 4 — Temporal debit_balance + LLM proxy pre-flight 402; 15/15 new tests PASS = 9 activity + 6 proxy 402 under real Postgres testcontainer; 7/7 dispatch_message workflow regression PASS; D-22 lock honored — workflow file byte-unchanged; class-bound DebitBalanceActivities with module-level alias preserves Phase 28 import path; pre-flight 402 at section 2.5 catches both 0 AND negative balances per D-12 + D-16); Plan 09 (prune_messages_workflow) is the remaining Wave 4 ticket
+stopped_at: Phase B-stripe-09 SHIPPED (Wave 4 complete — 3 cron-driven Temporal workflows + idempotent register_schedules helper)
+last_updated: "2026-05-09T04:30:00.000Z"
+last_activity: 2026-05-09 -- Plan B-stripe-09 SHIPPED (Wave 4 — daily prune_messages + 5-min reconcile_stripe + nightly reconcile_ledger + register_schedules helper; 13/13 new tests PASS = 3 prune + 4 reconcile_stripe + 4 reconcile_ledger + 2 schedules-idempotency under real Postgres testcontainer + ActivityEnvironment + live deploy-temporal-1 cluster; 49/49 tests/temporal/ regression PASS; 15/15 tests/routes/test_billing_webhook.py regression PASS; 7/7 test_dispatch_message_workflow regression PASS; spike-d typed ScheduleAlreadyRunningError path replaces RESEARCH §Pattern 4's substring match with RPCError fallback as defense-in-depth; reconcile_stripe re-uses billing_webhook._handle_checkout_completed verbatim — same-tx idempotency invariants byte-for-byte; reconcile_ledger emits sentry_sdk.capture_message at error level via Phase 31 H6 + repair-on-detect updates cache to ledger truth per D-17). Wave 4 complete. Wave 5 (mobile UI surfaces) is the next ticket.
 progress:
   total_phases: 20
   completed_phases: 5
   total_plans: 45
-  completed_plans: 40
-  percent: 89
+  completed_plans: 41
+  percent: 91
+---
+
+## Resume after /clear (2026-05-09 — Phase B-stripe-09 SHIPPED)
+
+**Current state:** Phase B-stripe-09 SHIPPED 2026-05-09 (Wave 4 final — three Temporal scheduled workflows + idempotent register_schedules helper). 13 new tests all GREEN under real Postgres testcontainer + ActivityEnvironment + the live deploy-temporal-1 cluster = **3 prune_messages + 4 reconcile_stripe + 4 reconcile_ledger + 2 schedules-idempotency = 13/13 PASS** + 49/49 regression on tests/temporal/ + 15/15 on tests/routes/test_billing_webhook.py + 7/7 on test_dispatch_message_workflow. Three new class-bound activities live alongside the Phase 28/29 set: `PruneMessagesActivities` (D-09 retention pruner — DELETE inapp_messages older than `retention_window_days(tier)` via JOIN on `users.tier`; ultra unlimited, free=7d, pro=30d), `ReconcileStripeActivities` (D-Discretion 5-min poller — calls `stripe.events.list({type:checkout.session.completed,created.gte:now-15min,limit:100})`, dedupes against `stripe_webhook_events`, applies missed events via `routes.billing_webhook._handle_checkout_completed` so the same-tx Pitfall 2 idempotency invariants flow through verbatim), `ReconcileLedgerActivities` (D-17 sentinel — recompute SUM(amount_cents) per `credit_balances` row, drift > 1c emits `sentry_sdk.capture_message(level="error")` via Phase 31 H6 + repair-on-detect UPDATEs cache to ledger truth). Three thin workflow shims wrap each activity with a 3-attempt RetryPolicy. New `temporal/schedules.py` exposes `register_schedules(client, task_queue)` using the spike-D corrected pattern: typed `ScheduleAlreadyRunningError` first, RPCError substring fallback as defense-in-depth (RESEARCH §Pattern 4 was wrong — string-match never fires against temporalio==1.27.x). The helper is called from BOTH `temporal/worker.py` (fail-loud after Worker construction, before `worker.run()`) and `main.py` lifespan (best-effort try/except after Temporal client connect) so schedules exist regardless of which container boots first; idempotency makes the redundancy free of side effects.
+
+**Plan B-stripe-09 commits:**
+
+- `82d0991` — feat(B-stripe-09): 3 scheduled-workflow activities + schedules helper
+- `894e947` — test(B-stripe-09): activity + schedules idempotency tests
+- `f646bc5` — feat(B-stripe-09): register Phase B workflows + schedules in worker + lifespan
+
+**Truth audit:** 5/5 must_haves.truths from PLAN.md satisfied. See `.planning/phases/B-stripe-paywall/B-stripe-09-SUMMARY.md` for full audit + threat-model audit (5/5 STRIDE entries) + key_links verification + the 3 daily/5-min/nightly schedule cadences. NO deviations from plan (the plan body's `RPCError("already exists")` example was superseded by the executor's `<critical_rules>` + spike-d source verbatim).
+
+**Wave 4 complete.** Wave 5 (mobile UI surfaces — Plans 10/11/12 covering /v1/billing/* mobile surfaces, AppBar balance ticker tier-branching, 402 modal flow, top-up webview return handshake) is the next ticket. Resume via `/gsd-execute-phase B-stripe-paywall --auto` after /clear.
+
 ---
 
 ## Resume after /clear (2026-05-09 — Phase B-stripe-08 SHIPPED)
