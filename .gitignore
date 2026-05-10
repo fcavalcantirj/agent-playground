@@ -12,6 +12,48 @@ deploy/.env.prod.*
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 
+# AI-tool local state — every coding agent drops its own dotdir; ignore
+# everything that isn't a known project dotdir. Keep .claude (Claude Code)
+# and skills/ (Claude Code skill index) and explicit project dirs.
+.adal/
+.agents/
+.aider-desk/
+.augment/
+.bob/
+.codeartsdoer/
+.codebuddy/
+.codemaker/
+.codestudio/
+.commandcode/
+.continue/
+.cortex/
+.crush/
+.devin/
+.factory/
+.forge/
+.goose/
+.hermes/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.rovodev/
+.tabnine/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/
+
 # Python
 __pycache__/
 *.egg-info/
