@@ -7,8 +7,7 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/to/reference-keystore
-key.properties
-**/*.keystore
-**/*.jks
+# Keystore secrets ARE committed (mobile/keys/android/*) since this repo
+# is private. key.properties points at the in-repo keystore via a relative
+# path. If you fork this into a public repo, re-add key.properties + *.jks
+# to .gitignore and document the substitute path.

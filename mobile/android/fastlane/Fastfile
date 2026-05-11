@@ -1,0 +1,48 @@
+default_platform(:android)
+
+# Run from `mobile/android/`. Build the AAB first with `flutter build appbundle`,
+# then `bundle exec fastlane <lane>` or `fastlane <lane>`.
+
+AAB_PATH = "../build/app/outputs/bundle/release/app-release.aab".freeze
+
+platform :android do
+  desc "Upload current AAB to Play internal testing track (rollout 100%)"
+  lane :internal do
+    upload_to_play_store(
+      track: "internal",
+      aab: AAB_PATH,
+      release_status: "completed",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: true,
+    )
+  end
+
+  desc "Promote whatever is on `internal` up to `production` (no new AAB)"
+  lane :promote_to_production do
+    upload_to_play_store(
+      track: "internal",
+      track_promote_to: "production",
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: true,
+    )
+  end
+
+  desc "Direct production upload — skip internal. Use sparingly."
+  lane :production do
+    upload_to_play_store(
+      track: "production",
+      aab: AAB_PATH,
+      release_status: "completed",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: true,
+    )
+  end
+end

@@ -13,11 +13,10 @@ ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 ios/Runner/GeneratedPluginRegistrant.*
 
-# Android
+# Android — keystore secrets live in mobile/keys/android/ (private repo).
 android/.gradle/
 android/local.properties
 android/app/google-services.json
-android/key.properties
 
 # FVM (D-05)
 

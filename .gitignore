@@ -58,3 +58,17 @@ deploy/.env.prod.*
 __pycache__/
 *.egg-info/
 *.pyc
+# Android signing secrets — local-only after 2026-05-11 leak rotation.
+# Google flagged the SA JSON via GitHub secret-scanning even on private
+# repos, so we now keep all credentials OUT of git. Only the public
+# play_app_signing.der (X.509 cert) is committed for OAuth client registration.
+# Build still works locally: key.properties + .jks + service-account.json
+# live at mobile/keys/android/ on disk, just not tracked.
+mobile/keys/android/play-service-account.json
+mobile/keys/android/*.jks
+mobile/android/key.properties
+
+# Fastlane runtime artifacts (regenerated each run; not source).
+mobile/android/metadata/
+mobile/android/fastlane/report.xml
+mobile/android/fastlane/README.md
