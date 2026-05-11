@@ -145,7 +145,8 @@ void main() {
       await bus.dispose();
     });
 
-    test('on 401 clears stored session AND emits AuthRequired', () async {
+    test('on 401 WITH cookie clears stored session AND emits AuthRequired',
+        () async {
       final backend = _FakeBackend();
       await backend.write(key: 'session_id', value: 'will-be-cleared');
       final storage = SecureStorage(backend);
@@ -154,10 +155,14 @@ void main() {
       final sub = bus.events.listen(emitted.complete);
       final interceptor = AuthInterceptor(storage, bus);
 
+      final reqOpts = RequestOptions(
+        path: '/v1/users/me',
+        headers: <String, dynamic>{'Cookie': 'ap_session=will-be-cleared'},
+      );
       final err = DioException(
-        requestOptions: RequestOptions(path: '/v1/users/me'),
+        requestOptions: reqOpts,
         response: Response<dynamic>(
-          requestOptions: RequestOptions(path: '/v1/users/me'),
+          requestOptions: reqOpts,
           statusCode: 401,
         ),
         type: DioExceptionType.badResponse,
@@ -174,6 +179,54 @@ void main() {
       await sub.cancel();
       await bus.dispose();
     });
+
+    // RED test — reproduces the Android prod bug observed 2026-05-11:
+    // The AppBar's usage ticker polls /v1/usage/summary on the login screen.
+    // An in-flight pre-auth ticker request (no Cookie header) returns 401
+    // AFTER the user has just signed in and the session_id was written.
+    // The old onError unconditionally cleared session_id on any 401 — wiping
+    // the just-minted session and bouncing the user back to login.
+    // Fix: only clear/emit when WE actually attached a Cookie. A 401 on a
+    // request that didn't carry a session is "you weren't logged in", not
+    // "your session got invalidated".
+    test(
+      'on 401 WITHOUT cookie leaves storage untouched + does NOT emit',
+      () async {
+        final backend = _FakeBackend();
+        await backend.write(key: 'session_id', value: 'fresh-session');
+        final storage = SecureStorage(backend);
+        final bus = AuthEventBus();
+        final events = <AuthRequired>[];
+        final sub = bus.events.listen(events.add);
+        final interceptor = AuthInterceptor(storage, bus);
+
+        // Simulates an in-flight pre-auth request whose response lands
+        // after a fresh login completed: no Cookie was attached at send
+        // time, but session_id is now populated in storage.
+        final reqOpts = RequestOptions(path: '/v1/usage/summary');
+        final err = DioException(
+          requestOptions: reqOpts,
+          response: Response<dynamic>(
+            requestOptions: reqOpts,
+            statusCode: 401,
+          ),
+          type: DioExceptionType.badResponse,
+        );
+        final handler = _CapturingErrorHandler();
+        await interceptor.onError(err, handler);
+
+        // Drain microtasks.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(events, isEmpty, reason: 'must not emit AuthRequired');
+        expect(
+          await storage.readSessionId(),
+          'fresh-session',
+          reason: 'just-minted session_id must survive a cookieless 401',
+        );
+        await sub.cancel();
+        await bus.dispose();
+      },
+    );
 
     test('on non-401 errors leaves storage + bus untouched', () async {
       final backend = _FakeBackend();

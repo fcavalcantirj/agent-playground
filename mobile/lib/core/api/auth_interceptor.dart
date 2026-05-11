@@ -44,8 +44,27 @@ class AuthInterceptor extends Interceptor {
     ErrorInterceptorHandler handler,
   ) async {
     if (err.response?.statusCode == 401 && _isSessionAuthFailure(err)) {
-      await _storage.clearSessionId();
-      _authEvents.emit();
+      // Only clear/emit if WE actually attached a session cookie to this
+      // request. A 401 on a never-authenticated request means "you weren't
+      // logged in" — not "your session got invalidated".
+      //
+      // Race fixed (2026-05-11, Android prod):
+      //   1. AppBar usage ticker polls /v1/usage/summary while the user is
+      //      on the login screen (anonymous; no Cookie attached). Server
+      //      returns 401.
+      //   2. User taps Google sign-in. AuthService writes session_id.
+      //   3. The in-flight ticker request from step 1 lands AFTER step 2's
+      //      write completes. Old code unconditionally cleared session_id
+      //      on that stale 401, wiping the just-minted session and bouncing
+      //      the user back to login.
+      // Empirically confirmed via prod log probe + reproduced by the
+      // `'on 401 WITHOUT cookie ...'` unit test.
+      final cookie = err.requestOptions.headers['Cookie'];
+      final sentSession = cookie is String && cookie.contains('ap_session=');
+      if (sentSession) {
+        await _storage.clearSessionId();
+        _authEvents.emit();
+      }
     }
     handler.next(err);
   }
