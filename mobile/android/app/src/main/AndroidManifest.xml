@@ -24,11 +24,21 @@
             </intent-filter>
         </activity>
 
-        <!-- D-04 + D-15 — solvrlabs://oauth/github redirect for flutter_appauth (Phase 25 wires) -->
+        <!-- D-04 + D-15 — solvrlabs://oauth/github redirect for flutter_appauth (Phase 25 wires).
+             2026-05-11 — Added taskAffinity="" + launchMode="singleTask" to fix Xiaomi/MIUI bug:
+             on stock Android the redirect activity lands in the SAME task as MainActivity, but
+             MIUI's aggressive task isolation was launching it in a brand-new task (proven via
+             adb logcat: RedirectUriReceiverActivity ActivityRecord landed in t3692 while
+             MainActivity ran in t3691). AppAuth's AuthorizationManagementActivity in the main
+             task never received the callback → Future hung forever → silent GitHub sign-in fail.
+             MainActivity already declares taskAffinity="" so binding the receiver to the same
+             empty affinity keeps them in one task. -->
         <activity
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:theme="@style/Theme.AppCompat.Translucent.NoTitleBar"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
             tools:node="replace">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
