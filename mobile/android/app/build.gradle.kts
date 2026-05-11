@@ -40,6 +40,18 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // flutter_appauth (GitHub OAuth) requires this scheme to be
+        // baked into the AppAuth RedirectUriReceiverActivity at build
+        // time. Without it, the Custom Tab redirect to
+        // solvrlabs://oauth/github after a successful GitHub authorize
+        // is never claimed by AppAuth's native listener and the
+        // authorize() Future hangs forever — UI stays stuck on the
+        // login screen with the button disabled.
+        // AndroidManifest.xml lines 27-40 also declare the intent-filter,
+        // but Gradle's manifestPlaceholders is what wires AppAuth's
+        // library activity to that scheme.
+        manifestPlaceholders["appAuthRedirectScheme"] = "solvrlabs"
     }
 
     signingConfigs {
