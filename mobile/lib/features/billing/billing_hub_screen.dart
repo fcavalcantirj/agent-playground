@@ -20,11 +20,14 @@
 // Per-decision-doc D-25, the AppBar usage ticker stays — it lives on
 // every screen and was not reorganized into the hub.
 
+import 'dart:io' show Platform;
+
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
 import 'package:agent_playground/features/usage/usage_providers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -70,6 +73,13 @@ class BillingHubScreen extends ConsumerWidget {
     final tier = summary.value?.tier ?? 'free';
     final balanceCents = summary.value?.displayBalanceCents ?? 0;
     final isNegative = summary.value?.isNegative ?? false;
+    // iOS App Store Guideline 3.1.1: digital subscriptions and credit
+    // top-ups must use StoreKit IAP, not Stripe. Until StoreKit ships,
+    // hide every UI path that initiates a Stripe Checkout flow on iOS:
+    // Top-up tile, Pro upgrade tap, Ultra upgrade tap. Informational
+    // pricing rows remain visible (Apple allows seeing prices, not
+    // tapping to purchase via web/Stripe).
+    final isIOS = !kIsWeb && Platform.isIOS;
 
     return Scaffold(
       appBar: AppBar(
@@ -87,13 +97,14 @@ class BillingHubScreen extends ConsumerWidget {
             isNegative: isNegative,
           ),
           const SizedBox(height: 16),
-          _ActionTile(
-            title: 'Top up',
-            subtitle: tier == 'ultra'
-                ? 'Add to your balance'
-                : 'Switch to Ultra and prepay LLM cost',
-            onTap: () => context.push('/billing/topup'),
-          ),
+          if (!isIOS)
+            _ActionTile(
+              title: 'Top up',
+              subtitle: tier == 'ultra'
+                  ? 'Add to your balance'
+                  : 'Switch to Ultra and prepay LLM cost',
+              onTap: () => context.push('/billing/topup'),
+            ),
           _ActionTile(
             title: 'Transactions',
             subtitle: 'Top-ups, debits, refunds',
@@ -121,7 +132,9 @@ class BillingHubScreen extends ConsumerWidget {
             subtitle: 'BYOK • for hobbyists',
             entitlements: '5 active agents · 30-day history',
             current: tier == 'pro',
-            onTap: tier == 'pro' ? null : () => _startProUpgrade(context, ref),
+            onTap: (isIOS || tier == 'pro')
+                ? null
+                : () => _startProUpgrade(context, ref),
           ),
           _PlanRow(
             name: 'ULTRA',
@@ -130,8 +143,19 @@ class BillingHubScreen extends ConsumerWidget {
             entitlements:
                 'Unlimited agents · unlimited history · we pay LLM, you reload',
             current: tier == 'ultra',
-            onTap: tier == 'ultra' ? null : () => context.push('/billing/topup'),
+            onTap: (isIOS || tier == 'ultra')
+                ? null
+                : () => context.push('/billing/topup'),
           ),
+          if (isIOS) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Subscription and top-up management is currently web-only.',
+              style: SolvrTextStyles.mono(fontSize: 11).copyWith(
+                color: SolvrColors.mutedForeground,
+              ),
+            ),
+          ],
         ],
       ),
     );
