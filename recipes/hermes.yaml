@@ -222,10 +222,24 @@ metadata:
 persistent:
   mode: gateway-daemon
   spec:
+    # 2026-05-12 — wrap `hermes gateway run -v` in a sh-chain so we can
+    # `hermes config set` BEFORE the gateway boots. Gateway mode ignores
+    # OPENROUTER_BASE_URL env (and the OPENAI SDK convention) and reads
+    # `model.base_url` from the persisted /opt/data/config.yaml instead.
+    # Without the pre-step, the hermes config defaults to
+    # `https://openrouter.ai/api/v1` and every LLM call bypasses the AP
+    # proxy → "HTTP 401: Missing Authentication header" because the
+    # OPENROUTER_API_KEY env var (the proxy placeholder) isn't valid
+    # against the real OpenRouter API. The 2026-04-17 verified-cell note
+    # flagged this gap; this is the wiring.
+    entrypoint: sh
     argv:
-      - gateway
-      - run
-      - -v
+      - -c
+      - >-
+        hermes config set model.base_url "$AP_PROXY_BASE_URL" >/dev/null
+        && hermes config set model.default "$MODEL" >/dev/null
+        && hermes config set model.provider openrouter >/dev/null
+        && exec hermes gateway run -v
     # Regex matched against stderr to confirm the daemon is past the LLM/TLS
     # handshake and actively listening for inbound messages. Hermes emits
     # exactly one `connected` line per channel that attached.
@@ -235,19 +249,16 @@ persistent:
     graceful_shutdown_s: 15
     sigterm_handled: true
   argv_note: |
-    `hermes gateway run -v` is the non-interactive persistent daemon. A
-    single gateway process hosts every channel whose env vars are set
-    (confirmed by upstream docs and by the boot log `Gateway running with N
-    platform(s)` where N is the count of detected channels). -v elevates
-    stderr to the same verbosity as the one-shot fix from
-    `.planning/debug/hermes-invoke-fail-silent-stderr.md` — any upstream
-    failure (LLM 4xx, Telegram API timeout, etc.) surfaces on stderr.
-  lifecycle_note: |
-    docker run -d ap-recipe-hermes:latest gateway run -v
-    — image entrypoint still gosu-remaps the uid + execs `hermes "$@"`, so
-    the bare `gateway run -v` becomes `hermes gateway run -v` at PID 1
-    (inside the gosu-dropped user). Container-exit-zero on SIGTERM after
-    ~5s graceful (telegram.ext.Application shutdown hook).
+    Three `hermes config set` calls run before `hermes gateway run -v`:
+      1. model.base_url ← $AP_PROXY_BASE_URL (the via_proxy URL injected
+         by the runner; container points outbound LLM at our proxy).
+      2. model.default ← $MODEL (the user's chosen model — gateway mode
+         doesn't honor a `-m` flag).
+      3. model.provider ← "openrouter" (so the OpenAI-compatible client
+         path is selected; the AP proxy speaks OpenRouter wire format).
+    Each `config set` persists to /opt/data/config.yaml; `exec hermes ...`
+    replaces the sh process so PID 1 is the gateway as before
+    (sigterm/exit semantics unchanged).
 
 # Phase 22b-06 — D-19..D-22 direct_interface for Gate A automation.
 # Spike 01a (2026-04-18) proved this argv surface:
