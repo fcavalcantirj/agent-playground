@@ -26,6 +26,7 @@ import 'package:agent_playground/features/new_agent/deploy_step.dart';
 import 'package:agent_playground/features/new_agent/model_picker_screen.dart';
 import 'package:agent_playground/features/new_agent/model_step.dart';
 import 'package:agent_playground/features/retry_bootstrap/retry_bootstrap_screen.dart';
+import 'package:agent_playground/features/settings/settings_screen.dart';
 import 'package:agent_playground/features/usage/agent_usage_screen.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -155,6 +156,12 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
         GoRoute(
           path: '/billing/transactions',
           builder: (_, _) => const TransactionsScreen(),
+        ),
+        // App Store Guideline 5.1.1(v) — in-app account deletion lives
+        // here, alongside Privacy/Terms/Support links + Sign out.
+        GoRoute(
+          path: '/settings',
+          builder: (_, _) => const SettingsScreen(),
         ),
       ],
     );

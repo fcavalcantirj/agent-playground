@@ -116,12 +116,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               } else if (value == 'billing') {
                 if (!context.mounted) return;
                 context.push('/billing');
+              } else if (value == 'settings') {
+                if (!context.mounted) return;
+                context.push('/settings');
               }
             },
             itemBuilder: (_) => const <PopupMenuEntry<String>>[
               PopupMenuItem<String>(
                 value: 'billing',
                 child: Text('Billing'),
+              ),
+              PopupMenuItem<String>(
+                value: 'settings',
+                child: Text('Settings'),
               ),
               PopupMenuItem<String>(
                 value: 'signout',

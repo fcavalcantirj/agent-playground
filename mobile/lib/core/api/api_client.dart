@@ -347,6 +347,26 @@ class ApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // DELETE /v1/users/me — App Store Guideline 5.1.1(v) account deletion.
+  // ---------------------------------------------------------------------------
+  /// Deletes the authenticated user's account and all owned data
+  /// (sessions, messages, agents, usage, ledger). 204 No Content + the
+  /// server clears the `ap_session` cookie. Caller should immediately
+  /// clear the local session_id from SecureStorage and navigate to
+  /// `/login`.
+  Future<Result<void>> deleteMe({CancelToken? cancelToken}) async {
+    try {
+      await _dio.delete<dynamic>(
+        ApiEndpoints.usersMe,
+        cancelToken: cancelToken,
+      );
+      return const Result.ok(null);
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /v1/auth/google/mobile
   // ---------------------------------------------------------------------------
   Future<Result<MobileAuthResponse>> authGoogleMobile({
