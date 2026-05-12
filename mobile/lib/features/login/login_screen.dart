@@ -159,14 +159,25 @@ class LoginScreen extends ConsumerWidget {
         ref.read(showSignedOutBannerProvider.notifier).state = false;
         ref.read(loginSuccessProvider.notifier).state = value;
       case Err(:final error):
+        // 2026-05-12 — include request_id so a user reporting "I can't
+        // sign in" gives us a grep-able id for prod logs/Sentry.
+        // Format: <friendly headline>\n<server detail>\n(id: <reqid>)
+        final reqId = error.requestId;
+        final tail = reqId == null || reqId.isEmpty
+            ? ''
+            : '\n(id: $reqId)';
         ref.read(loginErrorProvider.notifier).state =
-            "Couldn't sign in. ${_friendly(error)}\n${error.message}".trim();
+            "Couldn't sign in. ${_friendly(error)}\n"
+            "${error.message}$tail".trim();
     }
   }
 
   String _friendly(ApiError e) {
     if (e.code == ErrorCode.network) return 'Check your connection.';
     if (e.code == ErrorCode.timeout) return 'The request timed out.';
+    if (e.code == ErrorCode.unauthorized) {
+      return "The server didn't accept the sign-in.";
+    }
     return 'Try again.';
   }
 }

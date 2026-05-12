@@ -311,10 +311,46 @@ async def verify_google_id_token(
         # crypto failures. Re-raise as ValueError with a redacted
         # message — we never echo the raw token in the error string.
         raise ValueError(f"google id_token rejected: {e}") from e
-    except ValueError:
+    except ValueError as e:
         # google-auth raises ValueError directly for audience mismatch,
         # expiry, missing claims, malformed JWT structure. Pass through
         # so the route handler's existing ValueError handler catches it.
+        # 2026-05-12 — before re-raising, log the unverified `aud` project
+        # prefix at WARN so prod-side config drift (mobile app trusting a
+        # different Google Cloud project than the backend) is visible in
+        # docker logs even when Sentry's _before_send filter drops the
+        # USER_ERROR-bucket 401 envelope. We decode the JWT WITHOUT
+        # verification (signature already failed) and log ONLY the
+        # numeric project prefix (e.g. "303159181051") — never the full
+        # client ID, never the user-identifying sub/email.
+        try:
+            unverified = _pyjwt.decode(
+                id_token,
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_exp": False,
+                    "verify_iss": False,
+                },
+            )
+            raw_aud = unverified.get("aud") or ""
+            project = (
+                raw_aud.split("-", 1)[0] if isinstance(raw_aud, str) else "?"
+            )
+            _log.warning(
+                "google_id_token_verify_failed err=%s aud_project=%s "
+                "configured_projects=%s",
+                str(e)[:200],
+                project,
+                sorted({
+                    cid.split("-", 1)[0]
+                    for cid in mobile_client_ids
+                    if isinstance(cid, str)
+                }),
+            )
+        except Exception:
+            # Defensive — never let logging crash the verify path.
+            _log.warning("google_id_token_verify_failed (aud unparseable)")
         raise
 
 
