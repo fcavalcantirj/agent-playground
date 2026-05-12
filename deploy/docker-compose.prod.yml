@@ -206,6 +206,13 @@ services:
       # ACCEPTED trust boundary (D-08) — runner shells out to `docker` CLI.
       - /var/run/docker.sock:/var/run/docker.sock
       - ../recipes:/app/recipes:ro
+      # 2026-05-12 — share host /tmp with api_server so the runner's
+      # tempfile.mkdtemp() lands on a path the host docker daemon can
+      # bind-mount into agent containers. Without this, mkdtemp() created
+      # a dir inside api_server's container fs ONLY; docker auto-created
+      # an empty ROOT-owned dir on the host for the bind mount → EACCES
+      # for every non-root recipe (openclaw, nanobot, zeroclaw, nullclaw).
+      - /tmp:/tmp
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 15s

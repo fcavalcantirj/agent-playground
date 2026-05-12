@@ -98,16 +98,23 @@ invoke:
   mode: cli-passthrough
   spec:
     entrypoint: zeroclaw
+    # 2026-05-12 — rewrote from `onboard --quick` to direct `agent -m`.
+    # Current zeroclaw CLI splits onboard into subcommands (workspace,
+    # providers, channels, memory, hardware, tunnel, personality). The
+    # `--quick` flag at the top level cascades into all of them but
+    # `personality` has no skip path → blocks asking "Personality file
+    # to edit". The pre-baked `/zeroclaw-data/.zeroclaw/config.toml` in
+    # the image is migrated to schema v2 on first call, after which
+    # `agent -m` works without onboard. OPENROUTER_API_KEY is read from
+    # env (via runtime.process_env.api_key).
     argv:
-      - onboard
-      - --quick
-      - --force
-      - --provider
+      - agent
+      - -m
+      - $PROMPT
+      - -p
       - openrouter
-      - --api-key
-      - "${OPENROUTER_API_KEY}"
       - --model
-      - "$MODEL"
+      - $MODEL
     argv_note: |
       One-shot smoke is two-phase: onboard configures the workspace +
       provider, then a SECOND container invocation (handled by

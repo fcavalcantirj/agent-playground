@@ -412,7 +412,10 @@ def apply_stdout_filter(raw: str, spec: Any) -> str:
     if spec is None:
         return raw
     engine = spec.get("engine")
-    if engine is None:
+    if engine is None or engine == "none":
+        # 2026-05-12 — qwenpaw + goose recipes explicitly declare
+        # `engine: none` to opt out of stdout filtering. Treat the string
+        # the same as a missing field (pass-through), instead of raising.
         return raw
     if engine != "awk":
         raise SystemExit(f"ERROR: unsupported stdout_filter.engine: {engine}")
@@ -805,6 +808,18 @@ def run_cell(
     container_mount = vol["container"]
     entrypoint = recipe["invoke"]["spec"].get("entrypoint")
     data_dir = Path(tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-"))
+    # 2026-05-12 — chmod 0777 the bind-mount so the agent container's user
+    # (e.g. openclaw runs as UID 1000, nanobot as nanobot, zeroclaw as a
+    # non-root user) can write into it even though the api_server process
+    # creating the tmpdir runs as apiuser (UID 1001 in prod). On macOS Docker
+    # Desktop bind-mount UIDs are virtualized so this was a no-op; on Linux
+    # the real UID mismatch caused EACCES on every non-root recipe. Cheap
+    # alternative to chowning to the recipe's `owner_uid` — same effect for
+    # a single-tenant ephemeral tmpdir.
+    try:
+        data_dir.chmod(0o777)
+    except OSError:
+        pass
 
     # Cidfile: fresh UUID path, DO NOT pre-create. Docker errors if file exists.
     # See RESEARCH.md §Pitfall 2 + docker/cli#5954.
@@ -1378,6 +1393,11 @@ def run_cell_persistent(
         data_dir = Path(
             tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-")
         )
+        # 2026-05-12 — see one-shot path above for the EACCES-on-Linux fix.
+        try:
+            data_dir.chmod(0o777)
+        except OSError:
+            pass
         env_file = Path(f"/tmp/ap-env-{uuid.uuid4().hex}")
         env_file.write_text(_build_env_file_content(
             api_key_var, api_key_val,
@@ -1550,6 +1570,11 @@ def run_cell_persistent(
         data_dir = Path(
             tempfile.mkdtemp(prefix=f"ap-recipe-{recipe['name']}-data-")
         )
+        # 2026-05-12 — see one-shot path above for the EACCES-on-Linux fix.
+        try:
+            data_dir.chmod(0o777)
+        except OSError:
+            pass
 
         # AP_DOCKER_NETWORK: same fix as the channel-aware path above.
         docker_network = os.environ.get("AP_DOCKER_NETWORK", "").strip()

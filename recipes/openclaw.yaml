@@ -120,7 +120,12 @@ invoke:
     argv:
       - bash
       - -c
-      - 'openclaw config set agents.defaults.model "$MODEL" >/dev/null && openclaw infer model run --prompt "$PROMPT" --local --json --model "$MODEL"'
+      # 2026-05-12 — DROPPED the double-quotes around $MODEL / $PROMPT.
+      # `substitute_argv` (tools/run_recipe.py:384) already shlex.quote()s
+      # the substitution. Re-wrapping in double-quotes nested the quoting
+      # and broke the prompt arg into multiple shell words ("Too many
+      # arguments for this command"). Trust shlex.quote.
+      - 'openclaw config set agents.defaults.model $MODEL >/dev/null && openclaw infer model run --prompt $PROMPT --local --json --model $MODEL'
     argv_note: |
       Phase 22b-07 rewrite: dropped hardcoded `openrouter/` prefix on
       `config set`; $MODEL now flows verbatim from the caller (already

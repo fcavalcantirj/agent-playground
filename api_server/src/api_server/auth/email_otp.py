@@ -78,7 +78,7 @@ def _otp_email_html(code: str) -> str:
       <p style="font-size:15px;line-height:1.5;margin:0 0 24px 0;">
         Your sign-in code:
       </p>
-      <div style="font-family:'JetBrains Mono',Menlo,Consolas,monospace;font-size:36px;font-weight:700;letter-spacing:8px;color:#fff;background:#000;border:1px solid #333;padding:20px 24px;border-radius:8px;text-align:center;">
+      <div style="font-family:'JetBrains Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:700;letter-spacing:4px;color:#fff;background:#000;border:1px solid #333;padding:20px 16px;border-radius:8px;text-align:center;white-space:nowrap;">
         {code}
       </div>
       <p style="font-size:13px;line-height:1.5;margin:24px 0 0 0;color:#a0a0a0;">
