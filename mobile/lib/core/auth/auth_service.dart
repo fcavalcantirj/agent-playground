@@ -14,5 +14,15 @@ import 'package:agent_playground/core/api/result.dart';
 abstract interface class AuthService {
   Future<Result<SessionUser>> signInWithGoogle();
   Future<Result<SessionUser>> signInWithGithub();
+
+  /// Exchange a GitHub authorization code for a session, then persist
+  /// the session_id. Used when the OAuth dance is driven outside this
+  /// service (e.g. by `GithubOAuthWebViewScreen` on Android, where the
+  /// Chrome-Custom-Tab → `solvrlabs://` dispatch is unreliable).
+  Future<Result<SessionUser>> signInWithGithubCode({
+    required String code,
+    required String codeVerifier,
+  });
+
   Future<void> signOut();
 }

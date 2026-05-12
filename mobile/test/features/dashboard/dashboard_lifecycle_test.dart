@@ -27,6 +27,12 @@ class _FakeAuth implements AuthService {
   Future<Result<SessionUser>> signInWithGithub() async =>
       const Result.err(ApiError(code: ErrorCode.internal, message: 'unset'));
   @override
+  Future<Result<SessionUser>> signInWithGithubCode({
+    required String code,
+    required String codeVerifier,
+  }) async =>
+      const Result.err(ApiError(code: ErrorCode.internal, message: 'unset'));
+  @override
   Future<void> signOut() async {}
 }
 

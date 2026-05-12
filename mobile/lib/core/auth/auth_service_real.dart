@@ -133,17 +133,7 @@ class AuthServiceReal implements AuthService {
       // sends its challenge to the authorize endpoint; the exchange
       // step at /login/oauth/access_token MUST include the same
       // verifier or GitHub returns invalid_grant.
-      final res = await apiClient.authGithubMobile(
-        code: code,
-        redirectUri: githubRedirectUrl,
-        codeVerifier: result.codeVerifier,
-      );
-      if (res case Err(:final error)) {
-        return Result<SessionUser>.err(error);
-      }
-      final ok = (res as Ok<MobileAuthResponse>).value;
-      await storage.writeSessionId(ok.sessionId);
-      return Result<SessionUser>.ok(ok.user);
+      return _exchangeGithubCode(code: code, codeVerifier: result.codeVerifier);
     } on Exception catch (e) {
       return Result.err(
         ApiError(
@@ -152,6 +142,43 @@ class AuthServiceReal implements AuthService {
         ),
       );
     }
+  }
+
+  @override
+  Future<Result<SessionUser>> signInWithGithubCode({
+    required String code,
+    required String codeVerifier,
+  }) async {
+    // Caller (e.g. GithubOAuthWebViewScreen on Android) has already
+    // driven the GitHub authorize step and captured {code, verifier};
+    // we just exchange + persist.
+    try {
+      return await _exchangeGithubCode(code: code, codeVerifier: codeVerifier);
+    } on Exception catch (e) {
+      return Result.err(
+        ApiError(
+          code: ErrorCode.unknownServer,
+          message: 'github auth failed: $e',
+        ),
+      );
+    }
+  }
+
+  Future<Result<SessionUser>> _exchangeGithubCode({
+    required String code,
+    required String? codeVerifier,
+  }) async {
+    final res = await apiClient.authGithubMobile(
+      code: code,
+      redirectUri: githubRedirectUrl,
+      codeVerifier: codeVerifier,
+    );
+    if (res case Err(:final error)) {
+      return Result<SessionUser>.err(error);
+    }
+    final ok = (res as Ok<MobileAuthResponse>).value;
+    await storage.writeSessionId(ok.sessionId);
+    return Result<SessionUser>.ok(ok.user);
   }
 
   @override

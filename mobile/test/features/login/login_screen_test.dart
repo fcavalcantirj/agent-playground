@@ -38,6 +38,13 @@ class _FakeAuth implements AuthService {
   }
 
   @override
+  Future<Result<SessionUser>> signInWithGithubCode({
+    required String code,
+    required String codeVerifier,
+  }) =>
+      signInWithGithub();
+
+  @override
   Future<void> signOut() async {
     signOutCalls++;
   }

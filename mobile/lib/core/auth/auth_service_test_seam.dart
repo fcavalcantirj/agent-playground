@@ -22,6 +22,12 @@ class AuthServiceTestSeam implements AuthService {
   @override
   Future<Result<SessionUser>> signInWithGithub() => _stash('github');
 
+  @override
+  Future<Result<SessionUser>> signInWithGithubCode({
+    required String code,
+    required String codeVerifier,
+  }) => _stash('github');
+
   Future<Result<SessionUser>> _stash(String provider) async {
     await storage.writeSessionId(sessionId);
     return Result.ok(

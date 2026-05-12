@@ -30,3 +30,11 @@ final authServiceProvider = Provider<AuthService>(
     githubClientId: _kGithubClientId.isEmpty ? null : _kGithubClientId,
   ),
 );
+
+/// Exposed for the Android webview-driven GitHub OAuth path
+/// (`LoginScreen` → `GithubOAuthWebViewScreen`). Mirrors the same
+/// `--dart-define GITHUB_CLIENT_ID=...` value `authServiceProvider`
+/// already consumes.
+final githubClientIdProvider = Provider<String?>(
+  (ref) => _kGithubClientId.isEmpty ? null : _kGithubClientId,
+);
