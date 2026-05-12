@@ -6,6 +6,23 @@
 4. **Root cause first, never fix-to-pass.** Investigate before removing code. See `memory/feedback_root_cause_first.md`.
 5. **Test everything. Probe gray areas empirically BEFORE planning.** No PLAN may assume "pattern X in another module will work the same here" — every non-trivial mechanism (new file format, new subprocess lifecycle, new encryption path, new env-var injection, new health check, new container flag, new regex, new HTTP contract, new DB constraint) must be spiked against real infra and the spike result captured as evidence BEFORE the planner consumes it. If the spike fails or surfaces a gray area not considered, the plan goes back. Risk budget: zero untested mechanisms in a sealed PLAN. Rule-1 extended to planning: the plan's own assumptions hit real infra too. See `memory/feedback_test_everything_before_planning.md`.
 
+6. **Always ship to prod once the fix is verified locally.** The mobile (Android) release workflow when a fix lands:
+   ```
+   cd mobile
+   # bump pubspec.yaml version (+N)
+   fvm flutter build appbundle --release \
+     --dart-define BASE_URL=https://agents.solvr.dev \
+     --dart-define GOOGLE_SERVER_CLIENT_ID=<server-client-id>.apps.googleusercontent.com \
+     --dart-define GITHUB_CLIENT_ID=<mobile-github-client-id> \
+     --dart-define SENTRY_DSN_MOBILE=<dsn>
+   # then fastlane:
+   ( cd android && /Users/fcavalcanti/.local/share/gem/ruby/3.4.0/gems/fastlane-2.234.0/bin/fastlane internal )
+   ( cd android && /Users/fcavalcanti/.local/share/gem/ruby/3.4.0/gems/fastlane-2.234.0/bin/fastlane promote_to_production )
+   ```
+   `internal` upload is ~40s, `promote_to_production` is ~7s. Both lanes use `mobile/keys/android/play-service-account.json` (gitignored, rotate if leaked — Google secret-scanning fires). Auto-publishing is NOT on in Play Console — the promote step is mandatory.
+
+   For api_server changes: same model — rebuild + recreate `solvr-labs-api_server-1` on the box (`docker compose -p solvr-labs -f docker-compose.prod.yml ... build api_server && up -d --force-recreate api_server`). Do not run a side-process locally; see the "Smoke-testing new api_server code locally" warning lower in this file.
+
 # 🔌 Local dev — running both web + mobile against the same api_server
 
 There are FOUR OAuth paths (web Google, web GitHub, mobile Google, mobile GitHub). They use FOUR distinct OAuth clients (different IDs and, in GitHub's case, different secrets) because GitHub allows only one callback URL per OAuth App and Google iOS/web are different audiences. **They do not conflict** — `.env` must carry all four, plus `AP_OAUTH_STATE_SECRET` and the two web `*_REDIRECT_URI`s. Required vars (canonical names, never rename):
