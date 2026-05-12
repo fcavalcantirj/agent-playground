@@ -110,7 +110,9 @@ def capture_with_scope(
     Pass the same ErrorCode the response carries — the filter drops
     user-error codes so we don't burn quota on auth chaff or 422s.
     """
-    with sentry_sdk.push_scope() as scope:
+    # 2026-05-12 — sentry-sdk 2.x deprecated push_scope in favor of new_scope;
+    # both yield a Scope context, but new_scope is the forward-compatible path.
+    with sentry_sdk.new_scope() as scope:
         scope.set_tag("endpoint", endpoint)
         if code:
             scope.set_tag("ap_error_code", code)

@@ -396,51 +396,74 @@ async def test_inapp_auth_token_redacted_in_502_response(
         _force_remove_test_containers()
 
 
-async def test_telegram_path_does_not_mint_token(
-    started_api_server, db_pool, authenticated_cookie,
+async def test_via_proxy_telegram_mints_inapp_auth_token(
+    started_api_server, db_pool, authenticated_cookie, monkeypatch,
 ):
-    """D-09 boundary: telegram channel must NOT mint inapp_auth_token.
+    """2026-05-12 — supersedes old test_telegram_path_does_not_mint_token.
 
-    Skipped if no real bot token (we don't want to actually start a telegram
-    long-poll). The DB assertion is `inapp_auth_token IS NULL` — only
-    inapp channels mint per D-09.
+    Every via_proxy=true recipe (hermes + 7 others as of 2026-05-12)
+    requires the agent container to call the AP egress proxy as
+    ``ap-proxy-<inapp_auth_token>`` for cost attribution. The runner at
+    tools/run_recipe.py:1324 refuses to start a via_proxy recipe when
+    ``activation_substitutions`` is missing INAPP_AUTH_TOKEN. The route
+    now mints the token regardless of channel when via_proxy is true.
+
+    The OLD assertion (telegram path → token is NULL) was the bug;
+    every non-inapp channel start crashed with the runner RuntimeError.
+
+    Uses monkeypatched ``execute_persistent_start`` to avoid spawning
+    a real telegram long-poll — we only verify the route's invariant.
     """
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN_TEST")
-    if not bot_token:
-        pytest.skip("TELEGRAM_BOT_TOKEN_TEST not set")
-
     key = _openrouter_key()
+    captured: dict = {}
+
+    import api_server.routes.agent_lifecycle as al
+
+    async def _fake_execute(*args, **kwargs):
+        captured["kwargs"] = dict(kwargs)
+        return {
+            "verdict": "PASS",
+            "container_id": f"fakecid{uuid4().hex[:24]}",
+            "boot_wall_s": 0.1,
+            "pre_start_wall_s": 0.0,
+            "health_check_ok": True,
+            "health_check_kind": "process_alive",
+            "data_dir": "/tmp/fake",
+        }
+
+    monkeypatch.setattr(al, "execute_persistent_start", _fake_execute)
+
     agent_id = await _seed_agent_with_recipe(
-        db_pool, authenticated_cookie["_user_id"], recipe_name="openclaw",
-        model="anthropic/claude-haiku-4-5",
+        db_pool, authenticated_cookie["_user_id"], recipe_name="hermes",
+        model="anthropic/claude-haiku-4.5",
     )
-    try:
-        r = await started_api_server.post(
-            f"/v1/agents/{agent_id}/start",
-            json={
-                "channel": "telegram",
-                "channel_inputs": {
-                    "TELEGRAM_BOT_TOKEN": bot_token,
-                    "TELEGRAM_ALLOWED_USER": "12345",
-                },
+
+    r = await started_api_server.post(
+        f"/v1/agents/{agent_id}/start",
+        json={
+            "channel": "telegram",
+            "channel_inputs": {
+                "TELEGRAM_BOT_TOKEN": "fake-token-not-used",
+                "TELEGRAM_ALLOWED_USERS": "12345",
             },
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Cookie": authenticated_cookie["Cookie"],
-            },
-        )
-        assert r.status_code == 200, r.text
-        body = r.json()
-        async with db_pool.acquire() as conn:
-            tok = await conn.fetchval(
-                "SELECT inapp_auth_token FROM agent_containers WHERE id=$1",
-                UUID(body["container_row_id"]),
-            )
-        assert tok is None, (
-            f"telegram path minted token: {tok!r} (D-09 violated)"
-        )
-    finally:
-        _force_remove_test_containers()
+        },
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Cookie": authenticated_cookie["Cookie"],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    subs = captured["kwargs"].get("activation_substitutions")
+    assert isinstance(subs, dict), (
+        f"telegram + via_proxy=true MUST build activation_substitutions; "
+        f"got {captured!r}"
+    )
+    token = subs.get("INAPP_AUTH_TOKEN")
+    assert token, "INAPP_AUTH_TOKEN missing for telegram + via_proxy=true"
+    assert re.match(r"^[0-9a-f]{32}$", token), (
+        f"INAPP_AUTH_TOKEN wrong shape: {token!r}"
+    )
 
 
 async def test_inapp_substitutions_threaded_to_runner(
