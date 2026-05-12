@@ -36,6 +36,15 @@ abstract final class ApiEndpoints {
   static const String authGoogleMobile = '/v1/auth/google/mobile';
   static const String authGithubMobile = '/v1/auth/github/mobile';
 
+  /// 2026-05-12 — Sign in with Apple (iOS-only mobile path).
+  static const String authAppleMobile = '/v1/auth/apple/mobile';
+
+  /// 2026-05-12 — magic-link OTP request endpoint. Body: {email}.
+  static const String authEmailRequest = '/v1/auth/email/request';
+
+  /// 2026-05-12 — magic-link OTP verify endpoint. Body: {email, code}.
+  static const String authEmailVerify = '/v1/auth/email/verify';
+
   /// Phase 27 Change 3a — AppBar USD ticker payload.
   static const String usageSummary = '/v1/usage/summary';
 

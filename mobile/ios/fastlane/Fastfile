@@ -1,0 +1,64 @@
+default_platform(:ios)
+
+# Run from `mobile/ios/`. The IPA is built by Flutter first:
+#
+#   cd mobile
+#   fvm flutter build ipa --release \
+#     --dart-define BASE_URL=https://agents.solvr.dev \
+#     --dart-define GOOGLE_IOS_CLIENT_ID=... \
+#     --dart-define GOOGLE_SERVER_CLIENT_ID=... \
+#     --dart-define GITHUB_CLIENT_ID=... \
+#     --dart-define SENTRY_DSN_MOBILE=...
+#
+# Then upload from `ios/`:
+#
+#   cd ios && fastlane beta            # → TestFlight (≈ android internal)
+#   cd ios && fastlane release         # → submit to App Store review (≈ android promote_to_production)
+#
+# Auth: an App Store Connect API key at `mobile/keys/ios/asc-api-key.json`.
+# Generate at https://appstoreconnect.apple.com/access/integrations/api
+# (Role: App Manager or Admin). Download the .p8 once; never commit it.
+# Expected JSON shape (fastlane app_store_connect_api_key action):
+#
+#   {
+#     "key_id": "ABCDEFGHIJ",
+#     "issuer_id": "69a6de00-0000-0000-0000-...",
+#     "key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+#     "duration": 1200,
+#     "in_house": false
+#   }
+#
+# (You can also keep the .p8 separately and reference it via "key_filepath"
+# instead of "key" if you prefer.)
+
+IPA_PATH = "../build/ios/ipa/agent_playground.ipa".freeze
+ASC_KEY_PATH = "../keys/ios/asc-api-key.json".freeze
+
+platform :ios do
+  desc "Upload current IPA to TestFlight (no review submission)"
+  lane :beta do
+    upload_to_testflight(
+      api_key_path: ASC_KEY_PATH,
+      ipa: IPA_PATH,
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+    )
+  end
+
+  desc "Submit the latest TestFlight build to App Store review"
+  lane :release do
+    upload_to_app_store(
+      api_key_path: ASC_KEY_PATH,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      skip_metadata: true,
+      force: true,
+      submit_for_review: true,
+      automatic_release: false,
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+      },
+    )
+  end
+end

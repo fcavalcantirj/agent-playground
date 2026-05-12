@@ -72,3 +72,12 @@ mobile/android/key.properties
 mobile/android/metadata/
 mobile/android/fastlane/report.xml
 mobile/android/fastlane/README.md
+mobile/ios/fastlane/report.xml
+mobile/ios/fastlane/README.md
+
+# iOS — App Store Connect API key for fastlane pilot upload.
+# Generate at https://appstoreconnect.apple.com/access/integrations/api
+# Download the .p8 ONCE; if leaked, revoke + reissue. Same posture as
+# the Android SA JSON — kept on local disk only.
+mobile/keys/ios/asc-api-key.json
+mobile/keys/ios/*.p8

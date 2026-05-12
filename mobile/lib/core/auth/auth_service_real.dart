@@ -20,9 +20,9 @@ import 'package:agent_playground/core/auth/auth_service.dart';
 import 'package:agent_playground/core/storage/secure_storage.dart';
 import 'package:agent_playground/features/login/github_oauth_webview_screen.dart'
     show generatePkceVerifier, pkceChallengeFor, generateOAuthState;
-import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 class AuthServiceReal implements AuthService {
   AuthServiceReal({
@@ -46,8 +46,7 @@ class AuthServiceReal implements AuthService {
     // moving the App Link intent filter to MainActivity + handling in
     // onNewIntent + forwarding via MethodChannel.
     this.githubRedirectUrl = 'solvrlabs://oauth/github',
-    FlutterAppAuth? appAuth,
-  }) : _appAuth = appAuth ?? const FlutterAppAuth();
+  });
 
   final ApiClient apiClient;
   final SecureStorage storage;
@@ -57,7 +56,6 @@ class AuthServiceReal implements AuthService {
   final String githubAuthEndpoint;
   final String githubTokenEndpoint;
   final String githubRedirectUrl;
-  final FlutterAppAuth _appAuth;
 
   bool _googleInitialized = false;
 
@@ -214,6 +212,87 @@ class AuthServiceReal implements AuthService {
       redirectUri: githubRedirectUrl,
       codeVerifier: codeVerifier,
     );
+    if (res case Err(:final error)) {
+      return Result<SessionUser>.err(error);
+    }
+    final ok = (res as Ok<MobileAuthResponse>).value;
+    await storage.writeSessionId(ok.sessionId);
+    return Result<SessionUser>.ok(ok.user);
+  }
+
+  @override
+  Future<Result<SessionUser>> signInWithApple() async {
+    // 2026-05-12 — Sign in with Apple via sign_in_with_apple 6.x.
+    // The native iOS SDK pops the system sheet, prompts Face ID, and
+    // returns an `identityToken` (JWT signed by appleid.apple.com).
+    // Apple sends the user's name ONLY on the very first sign-in;
+    // subsequent sign-ins return null for givenName/familyName.
+    try {
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+      );
+      final idToken = credential.identityToken;
+      if (idToken == null) {
+        return const Result.err(
+          ApiError(
+            code: ErrorCode.unknownServer,
+            message: 'no identity_token from Apple',
+          ),
+        );
+      }
+      // Combine the first-time-only name into a single display string
+      // (server stores it once; Apple won't send it again).
+      final given = credential.givenName?.trim() ?? '';
+      final family = credential.familyName?.trim() ?? '';
+      final fullName = [given, family]
+          .where((s) => s.isNotEmpty)
+          .join(' ')
+          .trim();
+
+      final res = await apiClient.authAppleMobile(
+        identityToken: idToken,
+        authorizationCode: credential.authorizationCode,
+        fullName: fullName.isEmpty ? null : fullName,
+      );
+      if (res case Err(:final error)) {
+        return Result<SessionUser>.err(error);
+      }
+      final ok = (res as Ok<MobileAuthResponse>).value;
+      await storage.writeSessionId(ok.sessionId);
+      return Result<SessionUser>.ok(ok.user);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // canceled/notHandled/failed — user cancelled or system declined.
+      return Result.err(
+        ApiError(
+          code: ErrorCode.unknownServer,
+          message: 'apple sign-in failed: ${e.code.name}',
+        ),
+      );
+    } on Exception catch (e) {
+      return Result.err(
+        ApiError(
+          code: ErrorCode.unknownServer,
+          message: 'apple sign-in failed: $e',
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<Result<int>> requestEmailCode({required String email}) async {
+    final res = await apiClient.authEmailRequest(email: email);
+    return res;
+  }
+
+  @override
+  Future<Result<SessionUser>> verifyEmailCode({
+    required String email,
+    required String code,
+  }) async {
+    final res = await apiClient.authEmailVerify(email: email, code: code);
     if (res case Err(:final error)) {
       return Result<SessionUser>.err(error);
     }

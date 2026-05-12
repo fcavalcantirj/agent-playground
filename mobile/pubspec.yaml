@@ -1,7 +1,7 @@
 name: agent_playground
 description: "Solvr Labs agent playground mobile app"
 publish_to: 'none'
-version: 0.2.0+7
+version: 0.2.0+8
 
 environment:
   sdk: ^3.9.0
@@ -21,6 +21,7 @@ dependencies:
   go_router: ^17.2.3
   google_fonts: ^8.1.0
   google_sign_in: ^7.2.0
+  sign_in_with_apple: ^8.0.0   # 2026-05-12 — iOS Sign in with Apple (App Store Guideline 4.8 compliance)
   intl: ^0.20.0   # D-47 — DateFormat for inline timestamp dividers
   riverpod_annotation: ^4.0.2
   sentry_flutter: ^9.20.0   # Phase 31 H6 (D-11) — errors-only mobile Sentry; auto no-op when SENTRY_DSN_MOBILE dart-define empty

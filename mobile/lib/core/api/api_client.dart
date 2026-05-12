@@ -389,6 +389,73 @@ class ApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /v1/auth/apple/mobile  (2026-05-12 — Sign in with Apple iOS-only)
+  // ---------------------------------------------------------------------------
+  Future<Result<MobileAuthResponse>> authAppleMobile({
+    required String identityToken,
+    String? authorizationCode,
+    String? fullName,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        ApiEndpoints.authAppleMobile,
+        data: {
+          'identity_token': identityToken,
+          if (authorizationCode != null) 'authorization_code': authorizationCode,
+          if (fullName != null && fullName.isNotEmpty) 'full_name': fullName,
+        },
+        cancelToken: cancelToken,
+      );
+      return Result.ok(MobileAuthResponse.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /v1/auth/email/request  (2026-05-12 — magic-link OTP request)
+  // ---------------------------------------------------------------------------
+  /// Returns the server's recommended cooldown in seconds (typically 60).
+  /// On 429 the [ApiError.message] carries the wait-time hint.
+  Future<Result<int>> authEmailRequest({
+    required String email,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        ApiEndpoints.authEmailRequest,
+        data: {'email': email},
+        cancelToken: cancelToken,
+      );
+      final retry = (res.data?['retry_after_seconds'] as int?) ?? 60;
+      return Result.ok(retry);
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /v1/auth/email/verify  (2026-05-12 — magic-link OTP verify)
+  // ---------------------------------------------------------------------------
+  Future<Result<MobileAuthResponse>> authEmailVerify({
+    required String email,
+    required String code,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        ApiEndpoints.authEmailVerify,
+        data: {'email': email, 'code': code},
+        cancelToken: cancelToken,
+      );
+      return Result.ok(MobileAuthResponse.fromJson(res.data!));
+    } on DioException catch (e) {
+      return Result.err(ApiError.fromDioException(e));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /v1/auth/github/mobile
   // ---------------------------------------------------------------------------
   Future<Result<MobileAuthResponse>> authGithubMobile({

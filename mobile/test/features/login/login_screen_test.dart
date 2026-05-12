@@ -45,6 +45,26 @@ class _FakeAuth implements AuthService {
       signInWithGithub();
 
   @override
+  Future<Result<SessionUser>> signInWithApple() async {
+    return const Result.err(
+      ApiError(code: ErrorCode.internal, message: 'unset'),
+    );
+  }
+
+  @override
+  Future<Result<int>> requestEmailCode({required String email}) async =>
+      const Result.ok(60);
+
+  @override
+  Future<Result<SessionUser>> verifyEmailCode({
+    required String email,
+    required String code,
+  }) async => const Result.err(
+        ApiError(code: ErrorCode.internal, message: 'unset'),
+      );
+
+
+  @override
   Future<void> signOut() async {
     signOutCalls++;
   }

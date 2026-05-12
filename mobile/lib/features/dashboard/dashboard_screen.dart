@@ -147,30 +147,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         shape: const RoundedRectangleBorder(),
         child: const Icon(Icons.add),
       ),
-      bottomNavigationBar: NavigationBar(
-        // D-10 — Browse + Profile no-op in MVP.
-        onDestinationSelected: (i) {
-          if (i != 0) return;
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined, color: SolvrColors.foreground),
-            selectedIcon: Icon(Icons.home, color: SolvrColors.foreground),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search, color: SolvrColors.mutedForeground),
-            label: 'Browse',
-          ),
-          NavigationDestination(
-            icon: Icon(
-              Icons.person_outline,
-              color: SolvrColors.mutedForeground,
-            ),
-            label: 'Profile',
-          ),
-        ],
-      ),
+      // 2026-05-12 — removed the 3-tab NavigationBar before App Store
+      // submission. Browse + Profile destinations were no-op MVP stubs;
+      // Apple reviewers reject incomplete UI ("placeholder content / non-
+      // functional features", Guideline 2.1). Restore once Browse/Profile
+      // ship real screens.
     );
   }
 

@@ -28,6 +28,19 @@ class AuthServiceTestSeam implements AuthService {
     required String codeVerifier,
   }) => _stash('github');
 
+  @override
+  Future<Result<SessionUser>> signInWithApple() => _stash('apple');
+
+  @override
+  Future<Result<int>> requestEmailCode({required String email}) async =>
+      const Result.ok(60);
+
+  @override
+  Future<Result<SessionUser>> verifyEmailCode({
+    required String email,
+    required String code,
+  }) => _stash('email');
+
   Future<Result<SessionUser>> _stash(String provider) async {
     await storage.writeSessionId(sessionId);
     return Result.ok(

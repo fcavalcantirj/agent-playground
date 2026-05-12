@@ -20,7 +20,9 @@ import 'package:agent_playground/features/billing/transactions_screen.dart';
 import 'package:agent_playground/features/chat/chat_screen.dart';
 import 'package:agent_playground/features/dashboard/dashboard_providers.dart';
 import 'package:agent_playground/features/dashboard/dashboard_screen.dart';
+import 'package:agent_playground/features/login/email_login_screen.dart';
 import 'package:agent_playground/features/login/login_screen.dart';
+import 'package:agent_playground/features/login/otp_input_screen.dart';
 import 'package:agent_playground/features/new_agent/clone_step.dart';
 import 'package:agent_playground/features/new_agent/deploy_step.dart';
 import 'package:agent_playground/features/new_agent/model_picker_screen.dart';
@@ -88,6 +90,18 @@ GoRouter buildRouter({String initialLocation = '/login', WidgetRef? ref}) =>
       observers: ref == null ? const [] : [DashboardRefreshObserver(ref)],
       routes: [
         GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+        // 2026-05-12 — magic-link OTP login (step 1: enter email).
+        GoRoute(
+          path: '/login/email',
+          builder: (_, _) => const EmailLoginScreen(),
+        ),
+        // 2026-05-12 — magic-link OTP login (step 2: enter 6-digit code).
+        GoRoute(
+          path: '/login/email/code',
+          builder: (_, state) => OtpInputScreen(
+            email: state.uri.queryParameters['email'] ?? '',
+          ),
+        ),
         GoRoute(
           path: '/retry-bootstrap',
           builder: (_, _) => const RetryBootstrapScreen(),

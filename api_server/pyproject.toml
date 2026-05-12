@@ -90,6 +90,14 @@ dependencies = [
   # and Meter Events APIs. Pin floor-and-major-ceiling discipline matches
   # `temporalio>=1.27.0,<1.28` and `sentry-sdk[fastapi]>=2.20,<3.0` above.
   "stripe>=15.0,<16.0",
+  # 2026-05-12 — Sign in with Apple identity-token verification. PyJWT 2.10
+  # bundles RS256 + JWKS helpers (PyJWKClient) needed to validate Apple's
+  # ES256/RS256-signed id_tokens against https://appleid.apple.com/auth/keys.
+  # Extra `[crypto]` pulls `cryptography` (already pinned above).
+  "pyjwt[crypto]>=2.10,<3",
+  # 2026-05-12 — Resend email API for magic-link OTP delivery. Latest is
+  # 2.x; pin floor-and-major-ceiling.
+  "resend>=2.0,<3",
 ]
 
 [project.optional-dependencies]

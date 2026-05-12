@@ -13,12 +13,16 @@
 // app shell) listens and replaces with /dashboard. The widget itself does
 // not call go_router so it stays testable without a full router harness.
 
+import 'dart:io' show Platform;
+
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/auth/providers.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 class LoginScreen extends ConsumerWidget {
   const LoginScreen({super.key});
@@ -73,6 +77,34 @@ class LoginScreen extends ConsumerWidget {
                 pending: pending,
                 onTap: () => _signIn(context, ref, 'github'),
               ),
+              // 2026-05-12 — Sign in with Apple. iOS-only per Apple's
+              // guidelines (the button is not allowed on Android).
+              // kIsWeb guard so this still compiles for the web target
+              // (where dart:io's Platform throws at boot).
+              if (!kIsWeb && Platform.isIOS) ...[
+                const SizedBox(height: 16),
+                _OAuthButton(
+                  provider: 'apple',
+                  label: 'Continue with Apple',
+                  glyph: '',
+                  pending: pending,
+                  onTap: () => _signIn(context, ref, 'apple'),
+                ),
+              ],
+              const SizedBox(height: 16),
+              _OAuthButton(
+                provider: 'email',
+                label: 'Continue with email',
+                glyph: '@',
+                pending: pending,
+                onTap: () {
+                  // Email path is multi-step (request code → enter code).
+                  // The button itself only navigates; the email-request
+                  // network call happens on the EmailLoginScreen so we
+                  // can give the user a textbox first.
+                  context.push('/login/email');
+                },
+              ),
               if (error != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -112,9 +144,12 @@ class LoginScreen extends ConsumerWidget {
     // dispatch (which fails on HyperOS), no webview (which GitHub blocks).
     // Same flutter_appauth code path for iOS (ASWebAuthenticationSession
     // handles HTTPS callbacks identically).
-    final r = provider == 'google'
-        ? await svc.signInWithGoogle()
-        : await svc.signInWithGithub();
+    final r = switch (provider) {
+      'google' => await svc.signInWithGoogle(),
+      'github' => await svc.signInWithGithub(),
+      'apple' => await svc.signInWithApple(),
+      _ => await svc.signInWithGoogle(),
+    };
 
     // Always reset pending so the buttons re-enable.
     ref.read(loginPendingProvider.notifier).state = null;

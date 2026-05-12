@@ -1,0 +1,5 @@
+app_identifier("com.solvrlabs.agentplayground")  # iOS bundle ID
+apple_id("felipe.cavalcanti.rj@gmail.com")        # Apple ID (developer account)
+
+itc_team_id("128586482")   # App Store Connect numeric team id (placeholder — see Fastfile lane)
+team_id("4Y94K95839")      # Apple Developer Portal team id (matches DEVELOPMENT_TEAM in pbxproj)

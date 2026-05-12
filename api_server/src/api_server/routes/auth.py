@@ -43,7 +43,8 @@ without a verified email on file.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from authlib.integrations.starlette_client import OAuthError
@@ -52,11 +53,20 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from ..auth.deps import require_user
+from ..auth.email_otp import (
+    MAX_VERIFY_ATTEMPTS,
+    OTP_TTL,
+    REQUEST_COOLDOWN,
+    generate_otp_code,
+    hash_otp_code,
+    send_otp_via_resend,
+)
 from ..auth.oauth import (
     exchange_github_code,
     get_oauth,
     mint_session,
     upsert_user,
+    verify_apple_identity_token,
     verify_github_access_token,
     verify_google_id_token,
 )
@@ -521,6 +531,354 @@ async def github_mobile(request: Request, body: MobileGitHubAuthRequest):
             "FROM users WHERE id = $1",
             user_id,
         )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session_id,
+            "expires_at": sess_row["expires_at"].isoformat(),
+            "user": SessionUserResponse(
+                **dict(user_row)
+            ).model_dump(mode="json"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-12 — Sign in with Apple (mobile)
+# ---------------------------------------------------------------------------
+#
+# iOS native `sign_in_with_apple` package returns an `identity_token` JWT
+# signed by appleid.apple.com (RS256 typically; ES256 for newer keys).
+# The mobile app POSTs the token here. We verify the signature against
+# Apple's JWKS, validate iss/aud/exp, upsert the user, and mint a
+# session — same response shape as /v1/auth/{google,github}/mobile.
+#
+# Apple's "first-time only" name field arrives as a separate `user` object
+# on the iOS side and is forwarded as `full_name`. Subsequent sign-ins
+# will not include it. We persist it on first upsert into `display_name`
+# (overwritten on subsequent logins only when Apple sends a fresh value
+# — for Apple, that's never, so the first value sticks).
+#
+# Privacy relay emails (<random>@privaterelay.appleid.com) are valid and
+# stored as-is; Apple forwards mail through that address.
+
+
+class MobileAppleAuthRequest(BaseModel):
+    """Body of POST /v1/auth/apple/mobile.
+
+    ``identity_token`` is the signed JWT from Apple.
+    ``authorization_code`` is unused server-side for the MVP (we don't
+        exchange it for an Apple refresh_token — that would require the
+        Services ID + private-key signing dance, and we have no use for
+        the refresh token yet). Accept the field for forward-compat so
+        the mobile contract doesn't change when we wire revocation
+        handling in a future phase.
+    ``full_name`` is the optional "first-time only" display name Apple
+        returns on the very first sign-in (combine
+        ``givenName + familyName`` client-side). Subsequent sign-ins do
+        not include it — Apple never sends name + email again.
+    """
+    identity_token: str = Field(..., min_length=1)
+    authorization_code: str | None = None
+    full_name: str | None = None
+
+
+@router.post("/auth/apple/mobile", status_code=200)
+async def apple_mobile(request: Request, body: MobileAppleAuthRequest):
+    """Verify a Sign-in-with-Apple identity_token; upsert user; mint session.
+
+    Failure modes (all map to 401, param=``identity_token``):
+      * signature mismatch
+      * issuer != https://appleid.apple.com
+      * audience != settings.oauth_apple_audience
+      * expired
+      * missing required claim (sub / aud / iss / exp / iat)
+      * decode failure
+    """
+    settings = request.app.state.settings
+    try:
+        claims = await verify_apple_identity_token(
+            body.identity_token, settings.oauth_apple_audience,
+        )
+    except ValueError as e:
+        return _err(401, ErrorCode.UNAUTHORIZED, str(e), param="identity_token")
+
+    sub = claims.get("sub")
+    if not sub:
+        return _err(
+            401, ErrorCode.UNAUTHORIZED,
+            "missing sub claim", param="identity_token",
+        )
+
+    # Apple may omit `email` after the very first sign-in; in that case
+    # the existing users row (matched on (provider='apple', sub)) carries
+    # the previously-stored email and the upsert preserves it.
+    email = claims.get("email")
+    display_name = body.full_name or email or "Apple user"
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        user_id = await upsert_user(
+            conn,
+            provider="apple",
+            sub=str(sub),
+            email=email,
+            display_name=display_name,
+            avatar_url=None,
+        )
+        session_id = await mint_session(conn, user_id=user_id, request=request)
+        sess_row = await conn.fetchrow(
+            "SELECT expires_at FROM sessions WHERE id = $1", UUID(session_id),
+        )
+        user_row = await conn.fetchrow(
+            "SELECT id, email, display_name, avatar_url, provider, created_at "
+            "FROM users WHERE id = $1",
+            user_id,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session_id,
+            "expires_at": sess_row["expires_at"].isoformat(),
+            "user": SessionUserResponse(
+                **dict(user_row)
+            ).model_dump(mode="json"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-12 — Magic-link email OTP
+# ---------------------------------------------------------------------------
+#
+# Two endpoints:
+#   POST /v1/auth/email/request {email} -> {retry_after_seconds}
+#   POST /v1/auth/email/verify  {email, code} -> {session_id, expires_at, user}
+#
+# Rate limits (enforced inline; no middleware change):
+#   request : 60 seconds between requests for the same email
+#   verify  : 5 wrong-code attempts per code before the row is burned
+#
+# Email is case-insensitive; we lower() before insert + lookup so
+# "User@Example.COM" and "user@example.com" collide on the row.
+
+# Minimal RFC-5322-flavored email check. Real validation requires sending
+# the email and seeing if it bounces; this regex just rejects obviously
+# bogus shapes so we don't spend a Resend call on garbage.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class EmailOtpRequestBody(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+
+
+class EmailOtpRequestResponse(BaseModel):
+    retry_after_seconds: int
+
+
+class EmailOtpVerifyBody(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
+@router.post(
+    "/auth/email/request",
+    status_code=200,
+    response_model=EmailOtpRequestResponse,
+)
+async def email_request(request: Request, body: EmailOtpRequestBody):
+    """Generate + send a 6-digit OTP to ``email`` via Resend.
+
+    Failure modes:
+      * malformed email -> 400 invalid_request
+      * cooldown active (< 60s since last request) -> 429 too_many_requests
+      * resend transport / non-2xx -> 502 upstream_error
+
+    Success: 200 with ``{retry_after_seconds: 60}`` so the mobile UI can
+    show a countdown until "resend" becomes tappable.
+    """
+    settings = request.app.state.settings
+    email = _normalize_email(body.email)
+    if not _EMAIL_RE.match(email):
+        return _err(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "invalid email format",
+            param="email",
+        )
+
+    pool = request.app.state.db
+    now = datetime.now(timezone.utc)
+    cooldown_cutoff = now - REQUEST_COOLDOWN
+
+    async with pool.acquire() as conn:
+        # Cooldown gate: refuse if there's a recent (< 60s) request for
+        # this email. Lookup is cheap — leading column of the index is
+        # email, secondary is created_at DESC.
+        recent = await conn.fetchrow(
+            "SELECT created_at FROM email_otp_codes "
+            "WHERE email = $1 AND created_at > $2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            email, cooldown_cutoff,
+        )
+        if recent is not None:
+            seconds_left = max(
+                1,
+                int(
+                    (recent["created_at"] + REQUEST_COOLDOWN - now)
+                    .total_seconds()
+                ),
+            )
+            return _err(
+                429,
+                ErrorCode.RATE_LIMITED,
+                f"please wait {seconds_left}s before requesting another code",
+                param="email",
+            )
+
+        code = generate_otp_code()
+        code_h = hash_otp_code(code)
+        expires_at = now + OTP_TTL
+        await conn.execute(
+            "INSERT INTO email_otp_codes (email, code_hash, created_at, "
+            "expires_at, consumed_at, attempts) "
+            "VALUES ($1, $2, $3, $4, NULL, 0)",
+            email, code_h, now, expires_at,
+        )
+
+    # Send outside the DB transaction so a Resend hiccup doesn't leave a
+    # half-committed row. If Resend fails, the row is already inserted
+    # (the user can retry after the cooldown).
+    try:
+        await send_otp_via_resend(settings, email=email, code=code)
+    except RuntimeError as e:
+        _log.warning("email_otp.resend_failed email=%s err=%s", email, e)
+        return _err(
+            502,
+            ErrorCode.INFRA_UNAVAILABLE,
+            "couldn't send email; please try again",
+            param="email",
+        )
+
+    return EmailOtpRequestResponse(
+        retry_after_seconds=int(REQUEST_COOLDOWN.total_seconds()),
+    )
+
+
+@router.post("/auth/email/verify", status_code=200)
+async def email_verify(request: Request, body: EmailOtpVerifyBody):
+    """Verify a 6-digit OTP; upsert user (provider='email'); mint session.
+
+    Failure modes (all 401, param=``code``):
+      * malformed email
+      * no row matching (email, code_hash)
+      * row found but consumed_at IS NOT NULL (replay)
+      * row found but expires_at < now() (expired)
+      * row found but attempts >= MAX_VERIFY_ATTEMPTS (burned)
+
+    Wrong-code path: increments ``attempts`` on the most-recent NON-
+    consumed code for that email, so a brute-force attempt against the
+    same email is rate-limited at 5 tries per minted code.
+    """
+    email = _normalize_email(body.email)
+    if not _EMAIL_RE.match(email):
+        return _err(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "invalid email format",
+            param="email",
+        )
+    if not body.code.isdigit():
+        return _err(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "code must be 6 digits",
+            param="code",
+        )
+
+    code_h = hash_otp_code(body.code)
+    now = datetime.now(timezone.utc)
+
+    pool = request.app.state.db
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT email, code_hash, expires_at, consumed_at, attempts "
+                "FROM email_otp_codes "
+                "WHERE email = $1 AND code_hash = $2 "
+                "FOR UPDATE",
+                email, code_h,
+            )
+            if row is None:
+                # Wrong code (or never-issued). Don't leak which one;
+                # also increment attempts on the most-recent live code
+                # for this email so brute-force is bounded.
+                await conn.execute(
+                    "UPDATE email_otp_codes SET attempts = attempts + 1 "
+                    "WHERE (email, code_hash) = ("
+                    "  SELECT email, code_hash FROM email_otp_codes "
+                    "  WHERE email = $1 AND consumed_at IS NULL "
+                    "  ORDER BY created_at DESC LIMIT 1"
+                    ")",
+                    email,
+                )
+                return _err(
+                    401, ErrorCode.UNAUTHORIZED,
+                    "invalid or expired code", param="code",
+                )
+            if row["consumed_at"] is not None:
+                return _err(
+                    401, ErrorCode.UNAUTHORIZED,
+                    "code already used", param="code",
+                )
+            if row["expires_at"] < now:
+                return _err(
+                    401, ErrorCode.UNAUTHORIZED,
+                    "code expired", param="code",
+                )
+            if row["attempts"] >= MAX_VERIFY_ATTEMPTS:
+                return _err(
+                    401, ErrorCode.UNAUTHORIZED,
+                    "too many attempts on this code; request a new one",
+                    param="code",
+                )
+
+            # Match — burn the code (consumed_at), upsert user, mint session.
+            await conn.execute(
+                "UPDATE email_otp_codes SET consumed_at = $3 "
+                "WHERE email = $1 AND code_hash = $2",
+                email, code_h, now,
+            )
+            # For email-auth, the OAuth `sub` is the email itself —
+            # stable per (provider='email', sub=<email>). UNIQUE
+            # (provider, sub) WHERE sub IS NOT NULL is the partial
+            # index created by migration 005.
+            user_id = await upsert_user(
+                conn,
+                provider="email",
+                sub=email,
+                email=email,
+                display_name=email,
+                avatar_url=None,
+            )
+            session_id = await mint_session(
+                conn, user_id=user_id, request=request,
+            )
+            sess_row = await conn.fetchrow(
+                "SELECT expires_at FROM sessions WHERE id = $1",
+                UUID(session_id),
+            )
+            user_row = await conn.fetchrow(
+                "SELECT id, email, display_name, avatar_url, provider, "
+                "created_at FROM users WHERE id = $1",
+                user_id,
+            )
 
     return JSONResponse(
         status_code=200,

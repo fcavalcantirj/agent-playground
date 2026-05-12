@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import httpx
+import jwt as _pyjwt
 from authlib.integrations.starlette_client import OAuth
 from google.auth import exceptions as _google_exceptions
 from google.auth.transport import requests as _google_ga_requests
@@ -468,3 +469,95 @@ async def verify_github_access_token(
         ),
         "avatar_url": profile.get("avatar_url"),
     }
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-12 — Sign in with Apple identity_token verifier.
+# ---------------------------------------------------------------------------
+#
+# Apple's flow: the iOS native `sign_in_with_apple` package returns an
+# `identity_token` (a signed JWT issued by `https://appleid.apple.com`).
+# The token's `aud` claim is the app's bundle ID
+# (`com.solvrlabs.agentplayground` — set by `oauth_apple_audience`).
+# The `sub` claim is Apple's stable per-app user identifier.
+# The `email` claim is either the user's real email or a relay address
+# of the form `<random>@privaterelay.appleid.com` (forwarded to the user's
+# real address by Apple).
+#
+# We verify the JWT signature against Apple's JWKS endpoint
+# (https://appleid.apple.com/auth/keys). PyJWT's PyJWKClient handles JWKS
+# fetch + key-id matching + RS256/ES256 verification. PyJWKClient caches
+# keys in-process for `lifespan` seconds (default 300) — adequate for MVP;
+# Apple rotates keys infrequently and the cache survives until the next
+# server restart in the worst case.
+#
+# The verifier raises `ValueError` on every failure mode. The route handler
+# maps that to a 401 envelope. We never log the raw `id_token` bytes.
+
+_APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
+_APPLE_ISSUER = "https://appleid.apple.com"
+
+# Process-wide JWKS client. PyJWKClient is thread-safe and caches keys
+# in-process; we wrap each `get_signing_key_from_jwt` call in
+# `asyncio.to_thread` because the underlying HTTP fetch is blocking
+# (urllib via `requests`-compatible code path).
+_APPLE_JWK_CLIENT = _pyjwt.PyJWKClient(_APPLE_JWKS_URL, cache_keys=True)
+
+
+async def verify_apple_identity_token(
+    id_token: str, audience: str
+) -> dict:
+    """Verify a Sign-in-with-Apple identity_token (JWT) and return its claims.
+
+    Validates: signature against Apple's JWKS, issuer == appleid.apple.com,
+    audience == `audience` (the iOS bundle ID), `exp` not expired,
+    `iat`/`nbf` not in the future.
+
+    Returns the verified claims dict on success. Raises ``ValueError`` on
+    every failure mode — the route handler maps that to a 401 envelope.
+
+    The PyJWKClient blocks while fetching keys (first call only — keys are
+    cached for the remainder of the process). We wrap the entire verify
+    path in `asyncio.to_thread` so the event loop is never stalled.
+    """
+    if not id_token:
+        raise ValueError("empty apple identity_token")
+    if not audience:
+        raise ValueError("apple audience not configured")
+
+    def _verify_sync() -> dict:
+        try:
+            signing_key = _APPLE_JWK_CLIENT.get_signing_key_from_jwt(id_token)
+        except _pyjwt.PyJWKClientError as e:
+            raise ValueError(
+                f"apple jwks key lookup failed: {type(e).__name__}"
+            ) from e
+        try:
+            return _pyjwt.decode(
+                id_token,
+                signing_key.key,
+                algorithms=["RS256", "ES256"],
+                audience=audience,
+                issuer=_APPLE_ISSUER,
+                options={"require": ["exp", "iat", "sub", "aud", "iss"]},
+            )
+        except _pyjwt.ExpiredSignatureError as e:
+            raise ValueError("apple identity_token expired") from e
+        except _pyjwt.InvalidAudienceError as e:
+            raise ValueError("apple identity_token audience mismatch") from e
+        except _pyjwt.InvalidIssuerError as e:
+            raise ValueError("apple identity_token issuer mismatch") from e
+        except _pyjwt.InvalidSignatureError as e:
+            raise ValueError("apple identity_token signature invalid") from e
+        except _pyjwt.MissingRequiredClaimError as e:
+            raise ValueError(f"apple identity_token missing claim: {e.claim}") from e
+        except _pyjwt.DecodeError as e:
+            raise ValueError(
+                f"apple identity_token decode failed: {type(e).__name__}"
+            ) from e
+        except _pyjwt.InvalidTokenError as e:
+            raise ValueError(
+                f"apple identity_token rejected: {type(e).__name__}"
+            ) from e
+
+    return await asyncio.to_thread(_verify_sync)

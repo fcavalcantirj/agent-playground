@@ -198,6 +198,38 @@ class Settings(BaseSettings):
         "http://localhost:3000", validation_alias="AP_FRONTEND_BASE_URL"
     )
 
+    # ------------------------------------------------------------------
+    # 2026-05-12 — Sign in with Apple (Apple Guideline 4.8 compliance).
+    # ------------------------------------------------------------------
+    # The Apple identity_token's `aud` claim is the iOS app's bundle ID
+    # (or, for "Sign in with Apple JS" web flows, the Services ID). Mobile
+    # only for now — default to the production bundle ID so a fresh
+    # checkout boots without ops setup. Override via env in dev for the
+    # rare case of running a non-prod bundle ID.
+    oauth_apple_audience: str = Field(
+        "com.solvrlabs.agentplayground",
+        validation_alias="AP_OAUTH_APPLE_AUDIENCE",
+    )
+
+    # ------------------------------------------------------------------
+    # 2026-05-12 — Magic-link email OTP via Resend.
+    # ------------------------------------------------------------------
+    # `resend_api_key` — REQUIRED in prod (fail-loud at service-construction
+    # time, mirroring the stripe/oauth pattern). In dev it's allowed to be
+    # empty so a fresh checkout boots; routes/auth.py logs the OTP code
+    # locally instead of calling Resend (the `_resend_send` helper checks
+    # this).
+    resend_api_key: str | None = Field(
+        None, validation_alias="AP_RESEND_API_KEY"
+    )
+    email_from: str = Field(
+        "Solvr Labs <noreply@solvr.dev>",
+        validation_alias="AP_EMAIL_FROM",
+    )
+    email_reply_to: str = Field(
+        "hello@solvr.dev", validation_alias="AP_EMAIL_REPLY_TO"
+    )
+
     # Phase 31 H6 (D-10, D-13). DSN unset → graceful no-op (D-14).
     sentry_dsn_api: str | None = Field(default=None, validation_alias="AP_SENTRY_DSN_API")
 
