@@ -54,24 +54,6 @@ class SessionMiddleware:
         session_uuid = _coerce_uuid(raw_cookie) if raw_cookie else None
         user_id: UUID | None = None
 
-        # TEMP PROBE (Android auth bug) — remove after diagnosis.
-        # No PII: only emits booleans + path + user-agent prefix.
-        _has_any_cookie_header = any(
-            h_name == b"cookie" for h_name, _ in scope.get("headers", [])
-        )
-        _ua = next(
-            (v.decode("latin-1", "ignore")[:20]
-             for n, v in scope.get("headers", []) if n == b"user-agent"),
-            "",
-        )
-        _log.warning(
-            "session_probe path=%s any_cookie=%s ap_session_present=%s ua=%s",
-            scope.get("path"),
-            _has_any_cookie_header,
-            raw_cookie is not None,
-            _ua,
-        )
-
         if session_uuid is not None:
             asgi_app = scope["app"]
             try:
