@@ -532,6 +532,17 @@ async def verify_apple_identity_token(
             raise ValueError(
                 f"apple jwks key lookup failed: {type(e).__name__}"
             ) from e
+        except _pyjwt.DecodeError as e:
+            # get_signing_key_from_jwt() internally calls
+            # `jwt.get_unverified_header()` which raises DecodeError on a
+            # non-JWT string (e.g. our 401-smoke probe).
+            raise ValueError(
+                f"apple identity_token malformed: {type(e).__name__}"
+            ) from e
+        except _pyjwt.InvalidTokenError as e:
+            raise ValueError(
+                f"apple identity_token rejected at jwks: {type(e).__name__}"
+            ) from e
         try:
             return _pyjwt.decode(
                 id_token,
