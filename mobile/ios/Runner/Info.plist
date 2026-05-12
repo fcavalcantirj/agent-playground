@@ -4,6 +4,17 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!--
+	  2026-05-12 — export compliance. The app uses only Apple-provided
+	  encryption (URLSession TLS, Keychain via flutter_secure_storage,
+	  ASWebAuthenticationSession). Setting this key to NO declares the
+	  app exempt from non-exempt-encryption export compliance, which
+	  short-circuits the App Encryption Documentation modal in
+	  App Store Connect for every future TestFlight + App Store build.
+	  See https://developer.apple.com/documentation/security/complying_with_encryption_export_regulations.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
