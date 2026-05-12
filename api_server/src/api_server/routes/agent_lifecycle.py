@@ -59,6 +59,7 @@ from ..models.agents import (
     AgentStatusResponse,
     AgentStopResponse,
 )
+from ..instrumentation.sentry import capture_with_scope
 from ..models.errors import ErrorCode, make_error_envelope
 from ..services.inapp_substitutions import build_activation_substitutions
 from ..services.run_store import (
@@ -446,10 +447,17 @@ async def start_agent(
             provider_key_enc = encrypt_channel_config(
                 user_id, {"key": provider_key},
             )
-        except Exception:
+        except Exception as e:
             _log.error(
                 "byok_validator.encrypt_failed",
                 extra={"agent_id": str(agent_id)},
+            )
+            capture_with_scope(
+                e,
+                endpoint="agent_lifecycle.start",
+                code=ErrorCode.INTERNAL,
+                agent_id=agent_id,
+                user_id=user_id,
             )
             return _err(
                 500,
@@ -472,10 +480,18 @@ async def start_agent(
     }
     try:
         config_enc = encrypt_channel_config(user_id, config_plain)
-    except Exception:
+    except Exception as e:
         _log.error(
             "channel config encryption failed",
             extra={"agent_id": str(agent_id)},
+        )
+        capture_with_scope(
+            e,
+            endpoint="agent_lifecycle.start",
+            code=ErrorCode.INTERNAL,
+            agent_id=agent_id,
+            user_id=user_id,
+            channel=body.channel,
         )
         return _err(
             500,
@@ -545,10 +561,19 @@ async def start_agent(
                 ),
                 param="tier",
             )
-    except Exception:
+    except Exception as e:
         _log.exception(
             "insert_pending_agent_container failed",
             extra={"agent_id": str(agent_id)},
+        )
+        capture_with_scope(
+            e,
+            endpoint="agent_lifecycle.start",
+            code=ErrorCode.INTERNAL,
+            agent_id=agent_id,
+            user_id=user_id,
+            channel=body.channel,
+            recipe=agent["recipe_name"],
         )
         return _err(
             500,
@@ -556,15 +581,21 @@ async def start_agent(
             "failed to persist pending container row",
         )
 
-    # --- Step 5b (Phase 22c.3.1): mint inapp token + build activation subs ---
-    # D-09 + D-11: only ``channel == "inapp"`` mints a token; telegram path
-    # leaves the column NULL. Token shape is ``uuid.uuid4().hex`` (32 hex
-    # chars). ``build_activation_substitutions`` builds the dict consumed
-    # by the runner's override path; for telegram channels we skip it
-    # (legacy path runs without substitutions per AMD-37).
+    # --- Step 5b: mint inapp_auth_token + build activation_substitutions ---
+    # 2026-05-12 — drop the ``channel == "inapp"`` gate. The token is
+    # required whenever ``recipe.runtime.via_proxy=true`` so the agent's
+    # outbound LLM calls can authenticate against the AP proxy as
+    # ``ap-proxy-<token>`` and be attributed to the right user/agent. It
+    # was historically minted only for inapp because inapp was the only
+    # via_proxy code path, but the token is per-container-row (not per-
+    # channel) and the proxy validator at routes/llm_proxy.py is channel-
+    # agnostic. Without this fix, every non-inapp channel start for a
+    # via_proxy recipe (hermes, picoclaw, nanobot, …) crashes the runner
+    # at tools/run_recipe.py:1324 with
+    # ``recipe X runtime.via_proxy=true requires INAPP_AUTH_TOKEN``.
     inapp_auth_token: str | None = None
     activation_substitutions: dict[str, str] | None = None
-    if body.channel == "inapp":
+    if via_proxy_flag or body.channel == "inapp":
         inapp_auth_token = uuid.uuid4().hex
         activation_substitutions = build_activation_substitutions(
             provider_key=provider_key,
@@ -607,6 +638,17 @@ async def start_agent(
             "execute_persistent_start raised",
             extra={"agent_id": str(agent_id), "run_id": run_id},
             exc_info=True,
+        )
+        capture_with_scope(
+            e,
+            endpoint="agent_lifecycle.start",
+            code=ErrorCode.INFRA_UNAVAILABLE,
+            recipe=agent["recipe_name"],
+            channel=body.channel,
+            agent_id=agent_id,
+            user_id=user_id,
+            run_id=run_id,
+            extra={"redacted_error": redacted[:500]},
         )
         return _err(
             502,
@@ -921,13 +963,21 @@ async def stop_agent(
             recipe_name=agent["recipe_name"],
             data_dir=None,
         )
-    except Exception:
+    except Exception as e:
         _log.exception(
             "execute_persistent_stop raised",
             extra={
                 "agent_id": str(agent_id),
                 "container_id": running["container_id"],
             },
+        )
+        capture_with_scope(
+            e,
+            endpoint="agent_lifecycle.stop",
+            code=ErrorCode.INFRA_UNAVAILABLE,
+            agent_id=agent_id,
+            recipe=agent["recipe_name"],
+            extra={"container_id": running["container_id"]},
         )
         return _err(
             502,

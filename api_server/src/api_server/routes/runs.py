@@ -38,6 +38,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from ..auth.deps import require_user
+from ..instrumentation.sentry import capture_with_scope
 from ..models.errors import ErrorCode, make_error_envelope
 from ..models.runs import RunGetResponse, RunRequest, RunResponse
 from ..services.personality import is_known as personality_is_known
@@ -230,6 +231,14 @@ async def create_run(
                 "filtered_payload": None,
                 "stderr_tail": None,
             })
+        capture_with_scope(
+            e,
+            endpoint="runs.create_run",
+            code=ErrorCode.INFRA_UNAVAILABLE,
+            recipe=body.recipe_name,
+            run_id=run_id,
+            extra={"redacted_error": redacted[:500], "model": body.model},
+        )
         return _err(
             502,
             ErrorCode.INFRA_UNAVAILABLE,

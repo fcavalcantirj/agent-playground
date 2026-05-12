@@ -32,13 +32,102 @@ def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
 
     Phase 31 D-12 + AMD-06: HTTPException with status_code < 500 is a
     client mistake (404, 422, 429), not a server bug.
+
+    2026-05-12 extension: also drop events whose scope tag
+    ``ap_error_code`` is in the user-error bucket
+    (``UNAUTHORIZED``, ``INVALID_API_KEY``, ``USER_ERROR``,
+    ``INVALID_REQUEST``, ``TIER_LIMIT_EXCEEDED``,
+    ``INSUFFICIENT_BALANCE``, ``CHANNEL_NOT_CONFIGURED``,
+    ``CHANNEL_INPUTS_INVALID``, ``IDEMPOTENCY_BODY_MISMATCH``,
+    ``INVALID_PACK_ID``, ``STRIPE_WEBHOOK_INVALID``,
+    ``RATE_LIMITED``, ``PAYLOAD_TOO_LARGE``,
+    ``CONCURRENT_POLL_LIMIT``, ``AGENT_NOT_FOUND``,
+    ``AGENT_NOT_RUNNING``, ``AGENT_ALREADY_RUNNING``,
+    ``RECIPE_NOT_FOUND``, ``SCHEMA_NOT_FOUND``).
+    These are 4xx-class business errors that may also be captured by
+    explicit ``capture_with_scope`` calls inside except blocks for
+    redaction tracing — but their Sentry value is near-zero and the
+    auth-bucket DDoS scenario (T-31-02) would otherwise blow the
+    5K/month Free-tier quota.
     """
     exc_info = hint.get("exc_info")
     if exc_info is not None:
         _exc_type, exc_value, _tb = exc_info
         if isinstance(exc_value, StarletteHTTPException) and exc_value.status_code < 500:
             return None
+    tags = (event.get("tags") or {})
+    if tags.get("ap_error_code") in _USER_ERROR_CODES:
+        return None
     return event
+
+
+# Codes that are user mistakes / 4xx-class business errors. When a route
+# emits one of these (typically via _err(...)) the scope tag is set so
+# _before_send can drop the event. We never want auth chaff or invalid-
+# input replay to consume Sentry quota.
+_USER_ERROR_CODES = frozenset({
+    "UNAUTHORIZED",
+    "INVALID_API_KEY",          # llm_proxy BYOK rejection
+    "USER_ERROR",               # generic category from a few routes
+    "INVALID_REQUEST",
+    "RECIPE_NOT_FOUND",
+    "SCHEMA_NOT_FOUND",
+    "PAYLOAD_TOO_LARGE",
+    "RATE_LIMITED",
+    "IDEMPOTENCY_BODY_MISMATCH",
+    "AGENT_NOT_FOUND",
+    "AGENT_NOT_RUNNING",
+    "AGENT_ALREADY_RUNNING",
+    "CHANNEL_NOT_CONFIGURED",
+    "CHANNEL_INPUTS_INVALID",
+    "CONCURRENT_POLL_LIMIT",
+    "INSUFFICIENT_BALANCE",
+    "TIER_LIMIT_EXCEEDED",
+    "INVALID_PACK_ID",
+    "STRIPE_WEBHOOK_INVALID",
+})
+
+
+def capture_with_scope(
+    exc: BaseException,
+    *,
+    endpoint: str,
+    code: str | None = None,
+    recipe: str | None = None,
+    channel: str | None = None,
+    agent_id: Any = None,
+    run_id: str | None = None,
+    user_id: Any = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Capture ``exc`` to Sentry with route-filterable tags.
+
+    No-op when Sentry DSN is unset (``sentry_sdk.capture_exception``
+    silently drops events for an uninitialized client). Safe to call
+    from any except handler that returns a structured 5xx response.
+
+    The ``code`` tag (``ap_error_code``) drives _before_send filtering.
+    Pass the same ErrorCode the response carries — the filter drops
+    user-error codes so we don't burn quota on auth chaff or 422s.
+    """
+    with sentry_sdk.push_scope() as scope:
+        scope.set_tag("endpoint", endpoint)
+        if code:
+            scope.set_tag("ap_error_code", code)
+        if recipe:
+            scope.set_tag("recipe", recipe)
+        if channel:
+            scope.set_tag("channel", channel)
+        if agent_id is not None:
+            scope.set_tag("agent_id", str(agent_id))
+        if user_id is not None:
+            scope.set_tag("user_id", str(user_id))
+        if run_id:
+            scope.set_extra("run_id", run_id)
+        if extra:
+            for k, v in extra.items():
+                scope.set_extra(k, v)
+        sentry_sdk.capture_exception(exc)
 
 
 def init_sentry(settings: "Settings") -> None:
