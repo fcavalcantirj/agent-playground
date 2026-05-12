@@ -1004,18 +1004,27 @@ def run_cell(
 # openai-SDK / anthropic-SDK env conventions) get those injected too.
 _PROXY_BASE_URL = "http://api_server:8000/v1/llm/forward"
 
-# Provider-key-env-var → SDK-convention-base-url-env-var mapping. Mirrors
-# api_server/services/proxy_dispatcher.py::ENV_TO_PROVIDER (kept inline
-# here so the standalone runner has zero api_server-package imports).
-_PROXY_BASE_URL_ENV_BY_API_KEY: dict[str, str] = {
-    "OPENROUTER_API_KEY": "OPENAI_BASE_URL",
-    "OPENAI_API_KEY": "OPENAI_BASE_URL",
-    "ANTHROPIC_API_KEY": "ANTHROPIC_BASE_URL",
+# Provider-key-env-var → list of base-url env vars to set when proxying.
+# Mirrors api_server/services/proxy_dispatcher.py::ENV_TO_PROVIDER (kept
+# inline here so the standalone runner has zero api_server-package
+# imports). Multi-value because some recipes (hermes — see
+# hermes_cli/runtime_provider.py) read native-provider env vars
+# (OPENROUTER_BASE_URL) NOT just the OpenAI SDK convention.
+_PROXY_BASE_URL_ENV_BY_API_KEY: dict[str, list[str]] = {
+    "OPENROUTER_API_KEY": ["OPENAI_BASE_URL", "OPENROUTER_BASE_URL"],
+    "OPENAI_API_KEY": ["OPENAI_BASE_URL"],
+    "ANTHROPIC_API_KEY": ["ANTHROPIC_BASE_URL"],
 }
-_PROXY_KEY_ENV_BY_API_KEY: dict[str, str] = {
-    "OPENROUTER_API_KEY": "OPENAI_API_KEY",
-    "OPENAI_API_KEY": "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY",
+# 2026-05-12 — when the recipe's process_env.api_key is OPENROUTER_API_KEY,
+# inject BOTH the canonical name AND the OpenAI SDK convention name with
+# the proxy placeholder. Hermes-cli's auth resolution reads
+# OPENROUTER_API_KEY (not OPENAI_API_KEY); without setting it the
+# container falls back to calling OpenRouter direct with no auth → 401
+# "Missing Authentication header".
+_PROXY_KEY_ENV_BY_API_KEY: dict[str, list[str]] = {
+    "OPENROUTER_API_KEY": ["OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+    "OPENAI_API_KEY": ["OPENAI_API_KEY"],
+    "ANTHROPIC_API_KEY": ["ANTHROPIC_API_KEY"],
 }
 
 
@@ -1047,14 +1056,15 @@ def _build_via_proxy_overrides(
             f"{api_key_var!r}; expected one of "
             f"{sorted(_PROXY_BASE_URL_ENV_BY_API_KEY.keys())}"
         )
-    base_url_env = _PROXY_BASE_URL_ENV_BY_API_KEY[api_key_var]
-    key_env = _PROXY_KEY_ENV_BY_API_KEY[api_key_var]
+    base_url_envs = _PROXY_BASE_URL_ENV_BY_API_KEY[api_key_var]
+    key_envs = _PROXY_KEY_ENV_BY_API_KEY[api_key_var]
     placeholder = f"ap-proxy-{inapp_auth_token}"
-    return {
-        "AP_PROXY_BASE_URL": _PROXY_BASE_URL,
-        base_url_env: _PROXY_BASE_URL,
-        key_env: placeholder,
-    }
+    out: dict[str, str] = {"AP_PROXY_BASE_URL": _PROXY_BASE_URL}
+    for env_name in base_url_envs:
+        out[env_name] = _PROXY_BASE_URL
+    for env_name in key_envs:
+        out[env_name] = placeholder
+    return out
 
 
 # ---------- persistent-mode helpers (Phase 22) ----------
