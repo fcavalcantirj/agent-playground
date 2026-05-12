@@ -1,7 +1,7 @@
 name: agent_playground
 description: "Solvr Labs agent playground mobile app"
 publish_to: 'none'
-version: 0.2.0+6
+version: 0.2.0+7
 
 environment:
   sdk: ^3.9.0
@@ -17,6 +17,7 @@ dependencies:
   flutter_markdown_plus: ^1.0.0   # AMD-03 — replaces discontinued flutter_markdown
   flutter_riverpod: ^3.3.1
   flutter_secure_storage: ^10.0.0
+  flutter_web_auth_2: ^5.0.2   # 2026-05-12 — GitHub OAuth: flutter_appauth's PendingIntent same-task assumption breaks on HyperOS App Link dispatch; flutter_web_auth_2 uses a simpler callback activity that doesn't have that constraint
   go_router: ^17.2.3
   google_fonts: ^8.1.0
   google_sign_in: ^7.2.0

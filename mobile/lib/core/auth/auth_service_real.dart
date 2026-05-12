@@ -18,9 +18,11 @@ import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/auth/auth_service.dart';
 import 'package:agent_playground/core/storage/secure_storage.dart';
+import 'package:agent_playground/features/login/github_oauth_webview_screen.dart'
+    show generatePkceVerifier, pkceChallengeFor, generateOAuthState;
 import 'package:flutter_appauth/flutter_appauth.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:sentry_flutter/sentry_flutter.dart';
 
 class AuthServiceReal implements AuthService {
   AuthServiceReal({
@@ -31,6 +33,18 @@ class AuthServiceReal implements AuthService {
     this.githubClientId,
     this.githubAuthEndpoint = 'https://github.com/login/oauth/authorize',
     this.githubTokenEndpoint = 'https://github.com/login/oauth/access_token',
+    // 2026-05-12 — Reverted to custom scheme for the morning hand-off. The
+    // HTTPS App Link path (full server-side assetlinks.json deployed, Android
+    // verifies the SHA-256) hits a HyperOS-specific task-isolation bug:
+    // RedirectUriReceiverActivity fires in a NEW task per
+    // FLAG_ACTIVITY_NEW_TASK on verified link intents → flutter_appauth's
+    // same-task PendingIntent coordination fails → User cancelled flow
+    // BEFORE Chrome opens. Custom scheme at least gets Chrome to open and
+    // shows the authorize page; the last-leg redirect dispatch is still
+    // flaky on HyperOS but we're back at the prior known state, not worse.
+    // Pick this up by either (a) migrating to flutter_web_auth_2, or (b)
+    // moving the App Link intent filter to MainActivity + handling in
+    // onNewIntent + forwarding via MethodChannel.
     this.githubRedirectUrl = 'solvrlabs://oauth/github',
     FlutterAppAuth? appAuth,
   }) : _appAuth = appAuth ?? const FlutterAppAuth();
@@ -60,20 +74,13 @@ class AuthServiceReal implements AuthService {
 
   @override
   Future<Result<SessionUser>> signInWithGoogle() async {
-    _crumb('google.sign_in.start');
     try {
       await _ensureGoogleInit();
       final account =
           await GoogleSignIn.instance.attemptLightweightAuthentication() ??
               await GoogleSignIn.instance.authenticate();
-      _crumb('google.sign_in.account_acquired');
       final idToken = account.authentication.idToken;
       if (idToken == null) {
-        await _capture(
-          Exception('google: no id_token'),
-          category: 'auth',
-          extra: {'provider': 'google', 'step': 'id_token_null'},
-        );
         return const Result.err(
           ApiError(
             code: ErrorCode.unknownServer,
@@ -87,31 +94,19 @@ class AuthServiceReal implements AuthService {
       // subsequent calls.
       final res = await apiClient.authGoogleMobile(idToken: idToken);
       if (res case Err(:final error)) {
-        _crumb('google.sign_in.api_err', data: {'code': error.code.name});
         return Result<SessionUser>.err(error);
       }
       final ok = (res as Ok<MobileAuthResponse>).value;
       await storage.writeSessionId(ok.sessionId);
-      _crumb('google.sign_in.session_persisted');
       return Result<SessionUser>.ok(ok.user);
-    } on GoogleSignInException catch (e, st) {
-      await _capture(
-        e, stackTrace: st,
-        category: 'auth',
-        extra: {'provider': 'google', 'code': e.code.name},
-      );
+    } on GoogleSignInException catch (e) {
       return Result.err(
         ApiError(
           code: ErrorCode.unknownServer,
           message: 'google sign-in failed: ${e.code.name}',
         ),
       );
-    } on Exception catch (e, st) {
-      await _capture(
-        e, stackTrace: st,
-        category: 'auth',
-        extra: {'provider': 'google'},
-      );
+    } on Exception catch (e) {
       return Result.err(
         ApiError(
           code: ErrorCode.unknownServer,
@@ -123,33 +118,47 @@ class AuthServiceReal implements AuthService {
 
   @override
   Future<Result<SessionUser>> signInWithGithub() async {
-    _crumb('github.sign_in.start', data: {'transport': 'flutter_appauth'});
-    try {
-      // Phase 25 Wave 5 (production-safe): client_secret-free flow.
-      // authorize() returns the authorization code only; backend
-      // exchanges with its stored secret (so it never lives on device).
-      // This also sidesteps AppAuth-iOS's JSON-only token-response
-      // parser hitting GitHub's default x-www-form-urlencoded body.
-      final result = await _appAuth.authorize(
-        AuthorizationRequest(
-          githubClientId ?? '',
-          githubRedirectUrl,
-          serviceConfiguration: AuthorizationServiceConfiguration(
-            authorizationEndpoint: githubAuthEndpoint,
-            tokenEndpoint: githubTokenEndpoint,
-          ),
-          scopes: const ['read:user', 'user:email'],
+    // 2026-05-12 — flutter_web_auth_2 instead of flutter_appauth.
+    // flutter_appauth's PendingIntent same-task assumption breaks on
+    // HyperOS where the redirect intent always lands in a new task
+    // (FLAG_ACTIVITY_NEW_TASK). flutter_web_auth_2 uses a much simpler
+    // CallbackActivity model — caller blocks on authenticate(), the
+    // callback activity captures the URL via intent, Dart resumes with
+    // the full callback string. No same-task coordination required.
+    // PKCE handled client-side (helpers in github_oauth_webview_screen).
+    final clientId = githubClientId ?? '';
+    if (clientId.isEmpty) {
+      return const Result.err(
+        ApiError(
+          code: ErrorCode.unknownServer,
+          message: 'github client_id missing',
         ),
       );
-      _crumb('github.sign_in.authorize_returned',
-          data: {'has_code': result.authorizationCode != null});
-      final code = result.authorizationCode;
-      if (code == null) {
-        await _capture(
-          Exception('github: no authorization_code from appauth'),
-          category: 'auth',
-          extra: {'provider': 'github', 'step': 'authorize_no_code'},
-        );
+    }
+    final codeVerifier = generatePkceVerifier();
+    final codeChallenge = pkceChallengeFor(codeVerifier);
+    final state = generateOAuthState();
+    final authorizeUrl = Uri.parse(githubAuthEndpoint).replace(
+      queryParameters: <String, String>{
+        'client_id': clientId,
+        'redirect_uri': githubRedirectUrl,
+        'scope': 'read:user user:email',
+        'state': state,
+        'response_type': 'code',
+        'code_challenge': codeChallenge,
+        'code_challenge_method': 'S256',
+      },
+    );
+
+    try {
+      final callback = await FlutterWebAuth2.authenticate(
+        url: authorizeUrl.toString(),
+        callbackUrlScheme: 'solvrlabs',
+      );
+      final callbackUri = Uri.parse(callback);
+      final code = callbackUri.queryParameters['code'];
+      final returnedState = callbackUri.queryParameters['state'];
+      if (code == null || code.isEmpty) {
         return const Result.err(
           ApiError(
             code: ErrorCode.unknownServer,
@@ -157,17 +166,16 @@ class AuthServiceReal implements AuthService {
           ),
         );
       }
-      // flutter_appauth.authorize() generates a PKCE code_verifier and
-      // sends its challenge to the authorize endpoint; the exchange
-      // step at /login/oauth/access_token MUST include the same
-      // verifier or GitHub returns invalid_grant.
-      return _exchangeGithubCode(code: code, codeVerifier: result.codeVerifier);
-    } on Exception catch (e, st) {
-      await _capture(
-        e, stackTrace: st,
-        category: 'auth',
-        extra: {'provider': 'github', 'transport': 'flutter_appauth'},
-      );
+      if (returnedState != state) {
+        return const Result.err(
+          ApiError(
+            code: ErrorCode.unknownServer,
+            message: 'github state mismatch (csrf protection)',
+          ),
+        );
+      }
+      return _exchangeGithubCode(code: code, codeVerifier: codeVerifier);
+    } on Exception catch (e) {
       return Result.err(
         ApiError(
           code: ErrorCode.unknownServer,
@@ -182,18 +190,12 @@ class AuthServiceReal implements AuthService {
     required String code,
     required String codeVerifier,
   }) async {
-    _crumb('github.sign_in.start', data: {'transport': 'webview'});
     // Caller (e.g. GithubOAuthWebViewScreen on Android) has already
     // driven the GitHub authorize step and captured {code, verifier};
     // we just exchange + persist.
     try {
       return await _exchangeGithubCode(code: code, codeVerifier: codeVerifier);
-    } on Exception catch (e, st) {
-      await _capture(
-        e, stackTrace: st,
-        category: 'auth',
-        extra: {'provider': 'github', 'transport': 'webview'},
-      );
+    } on Exception catch (e) {
       return Result.err(
         ApiError(
           code: ErrorCode.unknownServer,
@@ -213,51 +215,11 @@ class AuthServiceReal implements AuthService {
       codeVerifier: codeVerifier,
     );
     if (res case Err(:final error)) {
-      _crumb('github.exchange.api_err', data: {'code': error.code.name});
       return Result<SessionUser>.err(error);
     }
     final ok = (res as Ok<MobileAuthResponse>).value;
     await storage.writeSessionId(ok.sessionId);
-    _crumb('github.exchange.session_persisted');
     return Result<SessionUser>.ok(ok.user);
-  }
-
-  // ---- Sentry helpers ------------------------------------------------------
-  // No-op when SDK isn't initialized (tests, --dart-define SENTRY_DSN_MOBILE
-  // unset). The Chrome-Custom-Tab → solvrlabs:// dispatch bug fails
-  // silently — authorize() Future never resolves, no exception raised.
-  // Breadcrumbs document each step so a hang shows up as "got to step X,
-  // never reached step Y" instead of empty Sentry.
-
-  void _crumb(String message, {Map<String, dynamic>? data}) {
-    Sentry.addBreadcrumb(
-      Breadcrumb(
-        category: 'auth',
-        message: message,
-        data: data,
-        level: SentryLevel.info,
-      ),
-    );
-  }
-
-  Future<void> _capture(
-    Object error, {
-    StackTrace? stackTrace,
-    required String category,
-    Map<String, dynamic>? extra,
-  }) async {
-    await Sentry.captureException(
-      error,
-      stackTrace: stackTrace,
-      withScope: (scope) {
-        scope.setTag('category', category);
-        if (extra != null) {
-          for (final e in extra.entries) {
-            scope.setExtra(e.key, e.value);
-          }
-        }
-      },
-    );
   }
 
   @override

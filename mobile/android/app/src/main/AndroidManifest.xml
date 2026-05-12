@@ -4,11 +4,21 @@
         android:label="Solvr Labs"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- 2026-05-11 — Auth state loss fix:
+             HyperOS/MIUI kills singleTop MainActivity when Chrome Custom
+             Tab takes foreground during flutter_appauth's GitHub OAuth.
+             Symptom: "W AppAuth: No stored state - unable to handle response"
+             when the solvrlabs:// redirect fires and AppAuth has no
+             pending request to match. Switching to singleTask + retaining
+             the task state prevents the kill so AppAuth's in-memory state
+             survives the Chrome detour. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
+            android:alwaysRetainTaskState="true"
+            android:excludeFromRecents="false"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -39,13 +49,54 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:taskAffinity=""
+            android:allowTaskReparenting="true"
             tools:node="replace">
+            <!-- Custom-scheme fallback (kept for iOS / older Android paths
+                 that may still rely on it; the registered Android filter
+                 below is the canonical path). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="solvrlabs"
                       android:host="oauth"/>
+            </intent-filter>
+            <!-- 2026-05-11 — HTTPS App Link for GitHub OAuth redirect.
+                 GitHub blocks OAuth inside webviews ("We do not allow OAuth
+                 or App authorization from within a WebView" — GitHub docs);
+                 Chrome Custom Tab fails to dispatch the solvrlabs:// scheme
+                 on Xiaomi/HyperOS (Chrome stays open, never closes after
+                 Authorize). HTTPS App Links + assetlinks.json verification
+                 is the RFC 8252 canonical pattern: GitHub redirects to
+                 https://agents.solvr.dev/m/oauth/github, Android verifies
+                 our SHA-256 against the server's .well-known/assetlinks.json,
+                 then routes the intent directly to this activity. No
+                 browser dispatch involved. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="agents.solvr.dev"
+                      android:pathPrefix="/m/oauth/github"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 2026-05-12 — flutter_web_auth_2 CallbackActivity. Catches the
+             solvrlabs://oauth/github?code=... redirect from GitHub when
+             we use flutter_web_auth_2 instead of flutter_appauth. Has its
+             own taskAffinity="" set per the package README's v5.0.0
+             guidance to avoid Android task-isolation bugs (same root
+             cause as the AppAuth-Android MIUI bug we hit earlier). -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true"
+            android:taskAffinity="">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="solvrlabs"/>
             </intent-filter>
         </activity>
 

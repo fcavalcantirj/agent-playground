@@ -13,15 +13,10 @@
 // app shell) listens and replaces with /dashboard. The widget itself does
 // not call go_router so it stays testable without a full router harness.
 
-import 'dart:io' show Platform;
-
-import 'package:agent_playground/core/api/dtos.dart' show SessionUser;
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/auth/providers.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
-import 'package:agent_playground/features/login/github_oauth_webview_screen.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -109,50 +104,17 @@ class LoginScreen extends ConsumerWidget {
     ref.read(loginPendingProvider.notifier).state = provider;
 
     final svc = ref.read(authServiceProvider);
-    Result<SessionUser>? r;
-
-    if (provider == 'github' && !kIsWeb && Platform.isAndroid) {
-      // 2026-05-11 — Android Chrome-Custom-Tab → solvrlabs:// dispatch
-      // silently drops the GitHub redirect after the "Reauthorization
-      // required" interstitial (rate-limited high-volume client_id).
-      // flutter_appauth's authorize() Future never resolves; UI hangs
-      // forever. Drive the OAuth flow inside flutter_inappwebview
-      // instead — shouldOverrideUrlLoading sees the solvrlabs:// nav
-      // directly, no intent dispatcher involved. See
-      // mobile/lib/features/login/github_oauth_webview_screen.dart.
-      final clientId = ref.read(githubClientIdProvider);
-      if (clientId == null || clientId.isEmpty) {
-        ref.read(loginPendingProvider.notifier).state = null;
-        ref.read(loginErrorProvider.notifier).state =
-            "Couldn't sign in. GitHub client_id not configured.";
-        return;
-      }
-      final result = await Navigator.of(context).push<GithubOAuthResult>(
-        MaterialPageRoute<GithubOAuthResult>(
-          builder: (_) => GithubOAuthWebViewScreen(
-            clientId: clientId,
-            redirectUri: 'solvrlabs://oauth/github',
-          ),
-        ),
-      );
-      if (result == null || !result.isSuccess) {
-        ref.read(loginPendingProvider.notifier).state = null;
-        final err = result?.error;
-        if (err != null && err != 'cancelled') {
-          ref.read(loginErrorProvider.notifier).state =
-              "Couldn't sign in. $err";
-        }
-        return;
-      }
-      r = await svc.signInWithGithubCode(
-        code: result.code!,
-        codeVerifier: result.codeVerifier!,
-      );
-    } else {
-      r = provider == 'google'
-          ? await svc.signInWithGoogle()
-          : await svc.signInWithGithub();
-    }
+    // 2026-05-11 — GitHub OAuth on Android via HTTPS App Link (RFC 8252):
+    // flutter_appauth opens Chrome Custom Tab, GitHub redirects to
+    // https://agents.solvr.dev/m/oauth/github?code=..., Android verifies
+    // our SHA-256 via the server's .well-known/assetlinks.json and routes
+    // the intent directly to RedirectUriReceiverActivity — no custom-scheme
+    // dispatch (which fails on HyperOS), no webview (which GitHub blocks).
+    // Same flutter_appauth code path for iOS (ASWebAuthenticationSession
+    // handles HTTPS callbacks identically).
+    final r = provider == 'google'
+        ? await svc.signInWithGoogle()
+        : await svc.signInWithGithub();
 
     // Always reset pending so the buttons re-enable.
     ref.read(loginPendingProvider.notifier).state = null;

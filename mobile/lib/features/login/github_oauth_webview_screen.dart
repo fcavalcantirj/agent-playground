@@ -86,8 +86,55 @@ class _GithubOAuthWebViewScreenState extends State<GithubOAuthWebViewScreen> {
     );
   }
 
+  bool _matched = false;
+
+  void _handleRedirect(Uri? uri, String source) {
+    // ignore: avoid_print
+    print('[GithubOAuthWebView] $source uri=${uri?.toString()}');
+    if (_matched || uri == null) return;
+    final expected = Uri.parse(widget.redirectUri);
+    if (uri.scheme != expected.scheme || uri.host != expected.host) return;
+    _matched = true;
+    final params = uri.queryParameters;
+    if (params.containsKey('error')) {
+      // ignore: avoid_print
+      print('[GithubOAuthWebView] $source: error=${params['error']}');
+      if (mounted) {
+        Navigator.of(context).pop(GithubOAuthResult(error: params['error']));
+      }
+      return;
+    }
+    final code = params['code'];
+    final state = params['state'];
+    if (code == null || code.isEmpty) {
+      // ignore: avoid_print
+      print('[GithubOAuthWebView] $source: missing_code');
+      if (mounted) {
+        Navigator.of(context).pop(const GithubOAuthResult(error: 'missing_code'));
+      }
+      return;
+    }
+    if (state != _state) {
+      // ignore: avoid_print
+      print('[GithubOAuthWebView] $source: state_mismatch expected=$_state got=$state');
+      if (mounted) {
+        Navigator.of(context).pop(const GithubOAuthResult(error: 'state_mismatch'));
+      }
+      return;
+    }
+    // ignore: avoid_print
+    print('[GithubOAuthWebView] $source: SUCCESS code=${code.substring(0, 6)}...');
+    if (mounted) {
+      Navigator.of(context).pop(
+        GithubOAuthResult(code: code, codeVerifier: _codeVerifier),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // ignore: avoid_print
+    print('[GithubOAuthWebView] init authorize_url=$_authorizeUrl');
     return Scaffold(
       appBar: AppBar(
         title: const Text('GitHub sign-in'),
@@ -107,17 +154,42 @@ class _GithubOAuthWebViewScreenState extends State<GithubOAuthWebViewScreen> {
         initialSettings: InAppWebViewSettings(
           useShouldOverrideUrlLoading: true,
           javaScriptEnabled: true,
+          // Android WebView often DOES NOT fire shouldOverrideUrlLoading for
+          // JS-initiated navigations to custom schemes (window.location.href
+          // = "solvrlabs://..."). Belt-and-suspenders: also listen on
+          // onLoadStart + onUpdateVisitedHistory which fire for ALL nav,
+          // including JS-driven ones. Whichever fires first calls
+          // _handleRedirect; the _matched flag guards against double-pop.
         ),
-        shouldOverrideUrlLoading: (controller, action) async =>
-            classifyGithubRedirect(
-          action.request.url,
-          expectedRedirectUri: widget.redirectUri,
-          expectedState: _state,
-          codeVerifier: _codeVerifier,
-          onMatch: (result) {
-            if (mounted) Navigator.of(context).pop(result);
-          },
-        ),
+        // PRIMARY catcher (works on iOS + HTTP redirects on Android).
+        shouldOverrideUrlLoading: (controller, action) async {
+          _handleRedirect(action.request.url, 'shouldOverrideUrlLoading');
+          return classifyGithubRedirect(
+            action.request.url,
+            expectedRedirectUri: widget.redirectUri,
+            expectedState: _state,
+            codeVerifier: _codeVerifier,
+            onMatch: (_) {}, // no-op: _handleRedirect already popped
+          );
+        },
+        // FALLBACK catchers (work on Android JS-initiated nav).
+        onLoadStart: (controller, url) {
+          _handleRedirect(url, 'onLoadStart');
+        },
+        onUpdateVisitedHistory: (controller, url, androidIsReload) {
+          _handleRedirect(url, 'onUpdateVisitedHistory');
+        },
+        onReceivedError: (controller, request, error) {
+          // ignore: avoid_print
+          print(
+            '[GithubOAuthWebView] onReceivedError url=${request.url} '
+            'type=${error.type} desc=${error.description}',
+          );
+          // ERR_UNKNOWN_URL_SCHEME on a solvrlabs:// load = the redirect
+          // hit us via webview but Android WebView refused. Treat URL as
+          // a successful redirect attempt and parse.
+          _handleRedirect(request.url, 'onReceivedError');
+        },
       ),
     );
   }
