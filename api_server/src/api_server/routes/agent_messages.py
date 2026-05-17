@@ -210,6 +210,14 @@ async def post_message(
     # readiness gate (check_container_ready activity) runs against the
     # row we hand it — if the container is mid-boot, that activity's
     # internal retry budget [250ms..4s] covers the window per D-10.
+    # 2026-05-17 — explicit `channel_type='inapp'` filter. POST /messages
+    # is the in-app chat surface; mis-routing inbound messages to a
+    # telegram (or other) channel's container would carry the WRONG
+    # inapp_auth_token (proxy validation fails) AND deliver to the WRONG
+    # bot endpoint inside the container. With migration 018 allowing
+    # multi-channel agents (inapp + telegram running simultaneously),
+    # this filter is the disambiguator that keeps inbound chat messages
+    # on the right channel.
     async with pool.acquire() as conn:
         container_row = await conn.fetchrow(
             """
@@ -218,6 +226,7 @@ async def post_message(
                    inapp_auth_token
               FROM agent_containers
              WHERE agent_instance_id = $1
+               AND channel_type = 'inapp'
              ORDER BY (stopped_at IS NULL) DESC, created_at DESC
              LIMIT 1
             """,
@@ -598,12 +607,17 @@ async def messages_stream(
     # Resolve agent_instances.id → most-recent agent_containers.id BEFORE
     # querying agent_events (which is keyed on agent_container_id).
     # Prefer a running container; fall back to most-recently-created.
-    # 404 if no container row exists.
+    # 2026-05-17 — channel_type='inapp' filter: SSE event stream is the
+    # inapp-channel surface. Migration 018 allows multi-channel agents
+    # (inapp + telegram both running); without this filter the SSE
+    # would attach to a telegram container's event stream by accident.
+    # 404 if no inapp container row exists.
     async with pool.acquire() as conn:
         container_row_id = await conn.fetchval(
             """
             SELECT id FROM agent_containers
             WHERE agent_instance_id = $1
+              AND channel_type = 'inapp'
             ORDER BY (stopped_at IS NULL) DESC, created_at DESC
             LIMIT 1
             """,

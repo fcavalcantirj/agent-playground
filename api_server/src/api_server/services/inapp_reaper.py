@@ -113,10 +113,16 @@ async def _sweep_once(state: Any) -> int:
                 return 0
             captured_at = datetime.now(timezone.utc).isoformat()
             for row in stuck:
+                # 2026-05-17 — channel_type='inapp' filter. The reaper
+                # only handles inapp_messages (in-app chat surface). After
+                # migration 018 a single agent_instance can have multiple
+                # running containers (e.g. inapp + telegram); we must
+                # attribute the stuck-message event to the inapp container.
                 container_row_id = await conn.fetchval(
                     """
                     SELECT id FROM agent_containers
                     WHERE agent_instance_id = $1
+                      AND channel_type = 'inapp'
                     ORDER BY stopped_at DESC NULLS LAST,
                              created_at DESC
                     LIMIT 1

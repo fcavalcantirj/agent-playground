@@ -76,6 +76,7 @@ from ..services.runner_bridge import (
     execute_persistent_stop,
 )
 from ..services.tier_enforcement import (
+    agent_already_active,
     agent_cap_for_tier,
     check_can_create_agent,
 )
@@ -283,21 +284,31 @@ async def start_agent(
     # SELECT ... FOR UPDATE) is the correctness-critical race-safe gate.
     # Treat this early check as a fast-fail optimization, not the
     # security boundary.
+    #
+    # 2026-05-17 — skip cap check when this is a CHANNEL-ADDITION on an
+    # already-active agent (e.g. user toggles telegram ON for a hermes
+    # whose inapp container is already running). Adding a channel is a
+    # sub-operation; it doesn't consume a fresh tier slot. The cap should
+    # only fire when creating a NEW agent.
     async with pool.acquire() as conn:
-        early_allowed, early_count, early_tier = await check_can_create_agent(
-            conn, user_id=user_id,
+        is_channel_addition = await agent_already_active(
+            conn, user_id=user_id, agent_instance_id=agent_id,
         )
-    if not early_allowed:
-        early_cap = agent_cap_for_tier(early_tier)
-        return _err(
-            403,
-            ErrorCode.TIER_LIMIT_EXCEEDED,
-            (
-                f"agent cap reached for tier {early_tier!r} "
-                f"({early_count} active, cap {early_cap})"
-            ),
-            param="tier",
-        )
+        if not is_channel_addition:
+            early_allowed, early_count, early_tier = await check_can_create_agent(
+                conn, user_id=user_id,
+            )
+            if not early_allowed:
+                early_cap = agent_cap_for_tier(early_tier)
+                return _err(
+                    403,
+                    ErrorCode.TIER_LIMIT_EXCEEDED,
+                    (
+                        f"agent cap reached for tier {early_tier!r} "
+                        f"({early_count} active, cap {early_cap})"
+                    ),
+                    param="tier",
+                )
 
     # --- Step 2b: recipe + channel + required_user_input validation ---
     recipes = request.app.state.recipes
@@ -518,9 +529,20 @@ async def start_agent(
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
-                allowed, active_count, tier = await check_can_create_agent(
-                    conn, user_id=user_id,
+                # 2026-05-17 — channel-addition fast path: if the agent
+                # already has an active container under this user, this
+                # /start is adding a channel to an existing agent and
+                # MUST skip the cap (the cap is per-logical-agent, not
+                # per-channel). Same semantic as the early pre-flight.
+                tx_is_channel_addition = await agent_already_active(
+                    conn, user_id=user_id, agent_instance_id=agent_id,
                 )
+                if tx_is_channel_addition:
+                    allowed, active_count, tier = True, 0, "free"
+                else:
+                    allowed, active_count, tier = await check_can_create_agent(
+                        conn, user_id=user_id,
+                    )
                 if not allowed:
                     cap_blocked = True
                     cap_tier_label = tier

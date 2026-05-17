@@ -155,8 +155,38 @@ async def check_can_create_agent(
     return (int(count) < cap, int(count), tier)
 
 
+async def agent_already_active(
+    conn: "asyncpg.Connection",
+    *,
+    user_id: UUID,
+    agent_instance_id: UUID,
+) -> bool:
+    """Return True iff the given (user_id, agent_instance_id) has any
+    active (``starting`` or ``running``) container.
+
+    2026-05-17 — Bug #2 Part 2 (multi-channel agents). Used by the
+    ``/start`` route to skip the tier-cap check when the request is
+    adding a CHANNEL to an existing agent (a hermes user toggling on
+    telegram after inapp already started). The cap should only apply
+    to NEW agent creation — adding a channel is a sub-operation on an
+    existing logical agent and must not consume a fresh tier slot.
+
+    Cross-tenant safe: WHERE filter on user_id ensures another user's
+    container can't be confused with this user's agent.
+    """
+    found = await conn.fetchval(
+        "SELECT 1 FROM agent_containers "
+        "WHERE user_id = $1 AND agent_instance_id = $2 "
+        "AND container_status IN ('starting', 'running') "
+        "LIMIT 1",
+        user_id, agent_instance_id,
+    )
+    return found is not None
+
+
 __all__ = [
     "agent_cap_for_tier",
     "retention_window_days",
     "check_can_create_agent",
+    "agent_already_active",
 ]

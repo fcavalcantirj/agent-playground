@@ -410,3 +410,97 @@ async def test_free_tier_distinct_agents_count_separately(db_pool):
     assert count == 2
     assert allowed is False
     assert tier == "free"
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-17 — agent_already_active helper
+# ---------------------------------------------------------------------------
+
+
+async def test_agent_already_active_true_when_running(db_pool):
+    """When an agent_instance has any active container under the user,
+    `agent_already_active` returns True. Used by the /start route to
+    skip the tier-cap check on second-channel /start (adding a channel
+    to an existing agent is NOT creating a new agent).
+    """
+    from api_server.services.tier_enforcement import agent_already_active
+
+    user_id = await _seed_user(db_pool, tier="free")
+    container_id = await _seed_agent_container(
+        db_pool, user_id=user_id, status="running",
+    )
+    # Look up the agent_instance_id this container belongs to.
+    async with db_pool.acquire() as conn:
+        agent_id = await conn.fetchval(
+            "SELECT agent_instance_id FROM agent_containers WHERE id=$1",
+            container_id,
+        )
+        async with conn.transaction():
+            result = await agent_already_active(
+                conn, user_id=user_id, agent_instance_id=agent_id,
+            )
+    assert result is True
+
+
+async def test_agent_already_active_false_when_only_stopped(db_pool):
+    """Stopped containers don't count as active — the agent is "gone"
+    even if its history persists in DB. The cap should fire normally."""
+    from api_server.services.tier_enforcement import agent_already_active
+
+    user_id = await _seed_user(db_pool, tier="free")
+    container_id = await _seed_agent_container(
+        db_pool, user_id=user_id, status="stopped",
+    )
+    async with db_pool.acquire() as conn:
+        agent_id = await conn.fetchval(
+            "SELECT agent_instance_id FROM agent_containers WHERE id=$1",
+            container_id,
+        )
+        async with conn.transaction():
+            result = await agent_already_active(
+                conn, user_id=user_id, agent_instance_id=agent_id,
+            )
+    assert result is False
+
+
+async def test_agent_already_active_false_when_no_containers_exist(db_pool):
+    """An agent_instance with ZERO containers (just-created, never started)
+    returns False — the user is about to create the FIRST container,
+    cap check should still apply."""
+    from api_server.services.tier_enforcement import agent_already_active
+
+    user_id = await _seed_user(db_pool, tier="free")
+    agent_id = uuid4()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO agent_instances (id, user_id, recipe_name, model, name) "
+            "VALUES ($1, $2, 'hermes', 'm-test', $3)",
+            agent_id, user_id, f"agent-{agent_id.hex[:6]}",
+        )
+        async with conn.transaction():
+            result = await agent_already_active(
+                conn, user_id=user_id, agent_instance_id=agent_id,
+            )
+    assert result is False
+
+
+async def test_agent_already_active_cross_tenant_isolation(db_pool):
+    """A container owned by user A doesn't make agent X "active" for user B.
+    Defense against confused-deputy across tenants."""
+    from api_server.services.tier_enforcement import agent_already_active
+
+    user_a = await _seed_user(db_pool, tier="ultra")
+    user_b = await _seed_user(db_pool, tier="free")
+    container_id = await _seed_agent_container(
+        db_pool, user_id=user_a, status="running",
+    )
+    async with db_pool.acquire() as conn:
+        agent_id = await conn.fetchval(
+            "SELECT agent_instance_id FROM agent_containers WHERE id=$1",
+            container_id,
+        )
+        async with conn.transaction():
+            result = await agent_already_active(
+                conn, user_id=user_b, agent_instance_id=agent_id,
+            )
+    assert result is False

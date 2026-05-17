@@ -458,33 +458,66 @@ async def fetch_agent_container(
 async def fetch_running_container_for_agent(
     conn: asyncpg.Connection,
     agent_instance_id: UUID,
+    channel_type: str | None = None,
 ) -> dict[str, Any] | None:
     """Find the currently-running container for an agent, or None.
 
-    The partial unique index guarantees at most one such row exists;
-    LIMIT 1 is belt-and-braces so a corrupted-state DB can't return
-    multiple rows. Used by /stop and /status routes.
+    2026-05-17 — extended with an optional ``channel_type`` filter so a
+    multi-channel agent (one logical agent with N running channel-
+    containers) can disambiguate per-channel calls. ``channel_type=None``
+    preserves the legacy "any running channel" behavior — picks the
+    most-recent-running container deterministically (`created_at DESC`).
+    Migration 018 loosens the partial-unique index to allow multiple
+    running rows per agent (one per channel); the explicit ORDER BY
+    guarantees stable single-row results regardless.
+
+    Used by /stop and /status routes (`agent_lifecycle.py`).
     """
-    row = await conn.fetchrow(
-        """
-        SELECT id::text AS id,
-               agent_instance_id::text AS agent_instance_id,
-               user_id::text AS user_id,
-               recipe_name,
-               container_id,
-               container_status,
-               channel_type,
-               channel_config_enc,
-               boot_wall_s,
-               ready_at,
-               created_at
-          FROM agent_containers
-         WHERE agent_instance_id = $1
-           AND container_status = 'running'
-         LIMIT 1
-        """,
-        agent_instance_id,
-    )
+    if channel_type is None:
+        row = await conn.fetchrow(
+            """
+            SELECT id::text AS id,
+                   agent_instance_id::text AS agent_instance_id,
+                   user_id::text AS user_id,
+                   recipe_name,
+                   container_id,
+                   container_status,
+                   channel_type,
+                   channel_config_enc,
+                   boot_wall_s,
+                   ready_at,
+                   created_at
+              FROM agent_containers
+             WHERE agent_instance_id = $1
+               AND container_status = 'running'
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            agent_instance_id,
+        )
+    else:
+        row = await conn.fetchrow(
+            """
+            SELECT id::text AS id,
+                   agent_instance_id::text AS agent_instance_id,
+                   user_id::text AS user_id,
+                   recipe_name,
+                   container_id,
+                   container_status,
+                   channel_type,
+                   channel_config_enc,
+                   boot_wall_s,
+                   ready_at,
+                   created_at
+              FROM agent_containers
+             WHERE agent_instance_id = $1
+               AND container_status = 'running'
+               AND channel_type = $2
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            agent_instance_id, channel_type,
+        )
     if row is None:
         return None
     d = dict(row)

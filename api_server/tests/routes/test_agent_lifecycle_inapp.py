@@ -528,3 +528,175 @@ async def test_inapp_substitutions_threaded_to_runner(
     assert subs["agent_name"]
     assert subs["agent_url"].startswith("http://")
     assert re.match(r"^[0-9a-f]{32}$", subs["INAPP_AUTH_TOKEN"])
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-17 — Bug #2 end-to-end regression: free-tier multi-channel agent
+# ---------------------------------------------------------------------------
+
+
+async def test_free_tier_inapp_then_telegram_on_same_agent_both_succeed(
+    started_api_server, db_pool, authenticated_cookie, monkeypatch,
+):
+    """End-to-end Bug #2 regression. Mobile orchestrator on free tier:
+
+      1. POST /v1/runs (smoke — out of test scope)
+      2. POST /v1/agents/:id/start channel=inapp → 200 OK
+      3. POST /v1/agents/:id/start channel=telegram → 200 OK (was 403 cap)
+
+    Pre-fix (2026-05-17 morning): step 3 returned 403 TIER_LIMIT_EXCEEDED
+    on free tier because the cap query counted both containers as
+    separate slots. Even with COUNT(DISTINCT agent_instance_id), the cap
+    still fired because `count==cap` (1 inapp container == 1 distinct
+    agent == free tier cap). The fix: skip the cap check entirely when
+    the agent already has any active container under the user.
+
+    Post-fix: the second /start succeeds, the agent has TWO running
+    containers (one per channel), one logical agent_instance, one slot
+    consumed.
+    """
+    key = _openrouter_key()
+    captured: list = []
+
+    import api_server.routes.agent_lifecycle as al
+
+    async def _fake_execute(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return {
+            "verdict": "PASS",
+            "container_id": f"fakecid{uuid4().hex[:24]}",
+            "boot_wall_s": 0.1,
+            "pre_start_wall_s": 0.0,
+            "health_check_ok": True,
+            "health_check_kind": "process_alive",
+            "data_dir": "/tmp/fake",
+        }
+
+    monkeypatch.setattr(al, "execute_persistent_start", _fake_execute)
+
+    # Force the user to free tier (cap=1) explicitly. The conftest's
+    # authenticated_cookie fixture creates a user; we update its tier.
+    user_id = authenticated_cookie["_user_id"]
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET tier='free' WHERE id=$1", UUID(user_id),
+        )
+
+    agent_id = await _seed_agent_with_recipe(
+        db_pool, user_id, recipe_name="hermes",
+        model="anthropic/claude-haiku-4.5",
+    )
+
+    # Step 2 — inapp /start on free tier (uses the one free slot).
+    r_inapp = await started_api_server.post(
+        f"/v1/agents/{agent_id}/start",
+        json={"channel": "inapp", "channel_inputs": {}},
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Cookie": authenticated_cookie["Cookie"],
+        },
+    )
+    assert r_inapp.status_code == 200, (
+        f"inapp /start should succeed on fresh free-tier agent; "
+        f"got {r_inapp.status_code}: {r_inapp.text}"
+    )
+
+    # Step 3 — telegram /start on the SAME agent. THIS is the regression
+    # test: pre-fix this returned 403 TIER_LIMIT_EXCEEDED, post-fix 200.
+    r_tg = await started_api_server.post(
+        f"/v1/agents/{agent_id}/start",
+        json={
+            "channel": "telegram",
+            "channel_inputs": {
+                "TELEGRAM_BOT_TOKEN": "fake-token-not-used",
+                "TELEGRAM_ALLOWED_USERS": "12345",
+            },
+        },
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Cookie": authenticated_cookie["Cookie"],
+        },
+    )
+    assert r_tg.status_code == 200, (
+        f"telegram /start on SAME free-tier agent should succeed "
+        f"(channel-addition path); got {r_tg.status_code}: {r_tg.text}"
+    )
+
+    # Both containers running for the same agent_instance.
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT channel_type FROM agent_containers "
+            "WHERE agent_instance_id=$1 AND container_status='running' "
+            "ORDER BY channel_type",
+            agent_id,
+        )
+    assert [r["channel_type"] for r in rows] == ["inapp", "telegram"], (
+        f"expected both channels running; got {[r['channel_type'] for r in rows]}"
+    )
+
+
+async def test_free_tier_two_distinct_agents_still_blocked(
+    started_api_server, db_pool, authenticated_cookie, monkeypatch,
+):
+    """Counterpart: the cap DOES still fire when trying to create a
+    SECOND distinct agent on free tier. The channel-addition fast path
+    must NOT regress the basic 1-agent-per-free-user invariant.
+    """
+    key = _openrouter_key()
+
+    import api_server.routes.agent_lifecycle as al
+
+    async def _fake_execute(*args, **kwargs):
+        return {
+            "verdict": "PASS",
+            "container_id": f"fakecid{uuid4().hex[:24]}",
+            "boot_wall_s": 0.1,
+            "pre_start_wall_s": 0.0,
+            "health_check_ok": True,
+            "health_check_kind": "process_alive",
+            "data_dir": "/tmp/fake",
+        }
+
+    monkeypatch.setattr(al, "execute_persistent_start", _fake_execute)
+
+    user_id = authenticated_cookie["_user_id"]
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET tier='free' WHERE id=$1", UUID(user_id),
+        )
+
+    # Agent #1 — start inapp (succeeds, uses the 1 slot).
+    agent_1 = await _seed_agent_with_recipe(
+        db_pool, user_id, recipe_name="hermes",
+        model="anthropic/claude-haiku-4.5",
+    )
+    r1 = await started_api_server.post(
+        f"/v1/agents/{agent_1}/start",
+        json={"channel": "inapp", "channel_inputs": {}},
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Cookie": authenticated_cookie["Cookie"],
+        },
+    )
+    assert r1.status_code == 200
+
+    # Agent #2 — DIFFERENT agent_instance, free user still at cap=1.
+    agent_2 = await _seed_agent_with_recipe(
+        db_pool, user_id, recipe_name="hermes",
+        model="anthropic/claude-haiku-4.5",
+    )
+    r2 = await started_api_server.post(
+        f"/v1/agents/{agent_2}/start",
+        json={"channel": "inapp", "channel_inputs": {}},
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Cookie": authenticated_cookie["Cookie"],
+        },
+    )
+    assert r2.status_code == 403, (
+        f"second distinct agent on free tier MUST be blocked by cap; "
+        f"got {r2.status_code}: {r2.text}"
+    )
+    assert "tier" in r2.text.lower() or "cap" in r2.text.lower(), (
+        f"403 should be a cap-rejection envelope; got {r2.text}"
+    )
