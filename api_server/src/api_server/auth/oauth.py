@@ -184,36 +184,152 @@ async def upsert_user(
     display_name: str,
     avatar_url: str | None,
 ) -> UUID:
-    """Upsert a users row keyed on ``UNIQUE (provider, sub) WHERE sub IS NOT NULL``.
+    """Upsert a user via the user_identities join table + canonical_email link.
 
-    Returns the user's UUID (new or existing). Updates ``email``,
-    ``display_name``, ``avatar_url``, ``last_login_at`` on conflict so a
-    user whose Google/GitHub profile name changed sees the update on next
-    login.
+    2026-05-17 — Bug #1 fix. Three-step resolution to collapse N OAuth
+    identities of the same human into ONE ``users.id``:
 
-    CROSS-PLAN INVARIANT: the partial unique index
-    ``uq_users_provider_sub`` is created by alembic migration 005
-    (22c-02). This query's ON CONFLICT target matches that index's
-    column list + WHERE clause verbatim — changing either side requires
-    updating the other.
+      1. **Fast path — known identity.** SELECT ``user_id`` from
+         ``user_identities WHERE (provider, sub) = ($1, $2)``. If found,
+         touch ``last_login_at`` on both tables and return the existing
+         ``user_id`` — the user is signing back in via the same provider.
+
+      2. **Link path — canonical_email match.** Compute
+         ``canonical_email(email)`` (Gmail dot-collapse, +tag strip,
+         googlemail → gmail, privacy-relay → NULL). If non-NULL and
+         matches an existing ``users.canonical_email``, INSERT a new
+         ``user_identities`` row pointing at that ``user_id``. The
+         human just signed in with a NEW provider but our system
+         recognizes them via canonicalized email; their existing
+         agents / credits / sessions follow them.
+
+      3. **New user path.** No identity match, no canonical_email match
+         (or canonical_email is NULL for Apple privacy-relay). INSERT a
+         new ``users`` row + INSERT the ``user_identities`` row pointing
+         at it. Returns the new ``users.id``.
+
+    The legacy (provider, sub) columns on ``users`` are still written
+    for backward compat — migration 017 will drop them after the
+    destructive merge.
+
+    Caller signature unchanged from the pre-016 version so the 6 OAuth
+    route handlers don't need touching.
     """
+    from .canonical import canonical_email as _canonical_email
+
+    canonical = _canonical_email(email)
+
+    # ---- Race defense: advisory lock on canonical_email --------------
+    # Migration 016 deliberately does NOT add UNIQUE on canonical_email
+    # yet (017's audit + merge is the gate). Without UNIQUE, two
+    # simultaneous first-time sign-ins from different providers with the
+    # same canonical_email can BOTH miss steps 1 + 2 and BOTH execute
+    # step 3 -- reproducing the duplicate-rows bug 016 is fixing.
+    # ``pg_advisory_xact_lock`` serializes these on the canonical_email
+    # hash and releases at the end of the caller's transaction
+    # (``async with conn.transaction():``). NULL canonical (Apple privacy-
+    # relay / missing email) skips the lock -- those identities are
+    # already (provider, sub)-only by design.
+    if canonical is not None:
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+            canonical,
+        )
+
+    # ---- Step 1: fast path — identity already exists ----------------
     row = await conn.fetchrow(
-        """
-        INSERT INTO users (provider, sub, email, display_name, avatar_url, last_login_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
-        ON CONFLICT (provider, sub) WHERE sub IS NOT NULL
-        DO UPDATE SET
-            email = EXCLUDED.email,
-            display_name = EXCLUDED.display_name,
-            avatar_url = EXCLUDED.avatar_url,
-            last_login_at = NOW()
-        RETURNING id
-        """,
-        provider, sub, email, display_name, avatar_url,
+        "SELECT user_id FROM user_identities "
+        "WHERE provider = $1 AND sub = $2",
+        provider, sub,
     )
-    if row is None:  # shouldn't happen with RETURNING; defensive
+    if row is not None:
+        user_id = row["user_id"]
+        await conn.execute(
+            "UPDATE user_identities SET last_login_at = NOW(), email = $3 "
+            "WHERE provider = $1 AND sub = $2",
+            provider, sub, email,
+        )
+        await conn.execute(
+            "UPDATE users "
+            "SET last_login_at = NOW(), display_name = $2, avatar_url = $3 "
+            "WHERE id = $1",
+            user_id, display_name, avatar_url,
+        )
+        return user_id
+
+    # ---- Step 2: link path — canonical_email matches existing user ---
+    # ORDER BY created_at LIMIT 1 = OLDEST users.id wins as the merge
+    # anchor when duplicate-rows state still exists (pre-017). Migration
+    # 017's audit + merge will collapse the losers into this winner.
+    if canonical is not None:
+        existing = await conn.fetchrow(
+            "SELECT id FROM users WHERE canonical_email = $1 "
+            "ORDER BY created_at LIMIT 1",
+            canonical,
+        )
+        if existing is not None:
+            user_id = existing["id"]
+            # ON CONFLICT defensive: under the advisory lock above no
+            # other transaction is racing for this canonical, but the
+            # (provider, sub) UNIQUE could still trip if a same-provider
+            # row was created in a parallel non-canonical path (e.g. a
+            # prior request without canonical_email).
+            await conn.execute(
+                "INSERT INTO user_identities (user_id, provider, sub, email) "
+                "VALUES ($1, $2, $3, $4) "
+                "ON CONFLICT (provider, sub) DO UPDATE "
+                "SET last_login_at = NOW(), email = EXCLUDED.email",
+                user_id, provider, sub, email,
+            )
+            await conn.execute(
+                "UPDATE users "
+                "SET last_login_at = NOW(), display_name = $2, avatar_url = $3 "
+                "WHERE id = $1",
+                user_id, display_name, avatar_url,
+            )
+            return user_id
+
+    # ---- Step 3: new user — first time this human has signed up ------
+    # The legacy `provider` + `sub` columns on `users` are still written
+    # to keep migration-005's partial-UNIQUE invariant intact. Migration
+    # 017 will drop both columns AND this INSERT will be rewritten in the
+    # same PR -- DO NOT ship 017 without updating this site too.
+    # REMOVE-IN-017: provider, sub from INSERT column list.
+    new_row = await conn.fetchrow(
+        "INSERT INTO users "
+        "(provider, sub, email, canonical_email, display_name, "
+        " avatar_url, last_login_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6, NOW()) "
+        "RETURNING id",
+        provider, sub, email, canonical, display_name, avatar_url,
+    )
+    if new_row is None:
         raise RuntimeError("upsert_user returned no row")
-    return row["id"]
+    user_id = new_row["id"]
+
+    # Insert the identity with ON CONFLICT to handle the same-(provider,
+    # sub) concurrent first-signin race (NULL canonical path -- Apple
+    # privacy-relay or missing email -- where the advisory lock above
+    # didn't trigger). If a concurrent transaction won the identity
+    # INSERT first, ON CONFLICT returns its winning ``user_id``; we then
+    # delete our just-orphaned `users` row so we don't leave a stray.
+    identity_row = await conn.fetchrow(
+        "INSERT INTO user_identities (user_id, provider, sub, email) "
+        "VALUES ($1, $2, $3, $4) "
+        "ON CONFLICT (provider, sub) DO UPDATE "
+        "SET last_login_at = NOW(), email = EXCLUDED.email "
+        "RETURNING user_id",
+        user_id, provider, sub, email,
+    )
+    if identity_row is None:
+        raise RuntimeError("user_identities insert returned no row")
+    winner_id = identity_row["user_id"]
+    if winner_id != user_id:
+        # Lost the race; another transaction created this (provider, sub)
+        # first. Drop our orphaned users row and return the winner.
+        await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+        return winner_id
+    return user_id
 
 
 # ---------------------------------------------------------------------------
