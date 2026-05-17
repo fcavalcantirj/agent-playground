@@ -236,10 +236,10 @@ persistent:
     argv:
       - -c
       - >-
-        hermes config set model.base_url "$AP_PROXY_BASE_URL" >/dev/null
-        && hermes config set model.default "$MODEL" >/dev/null
-        && hermes config set model.provider openrouter >/dev/null
-        && exec hermes gateway run -v
+        /opt/hermes/.venv/bin/hermes config set model.base_url "$AP_PROXY_BASE_URL" >/dev/null
+        && /opt/hermes/.venv/bin/hermes config set model.default "$MODEL" >/dev/null
+        && /opt/hermes/.venv/bin/hermes config set model.provider openrouter >/dev/null
+        && exec /opt/hermes/.venv/bin/hermes gateway run -v
     # Regex matched against stderr to confirm the daemon is past the LLM/TLS
     # handshake and actively listening for inbound messages. Hermes emits
     # exactly one `connected` line per channel that attached.
