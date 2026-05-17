@@ -134,8 +134,19 @@ async def check_can_create_agent(
     placeholders = ", ".join(
         f"${i + 2}" for i in range(len(_ACTIVE_STATUSES))
     )
+    # 2026-05-17 — count distinct logical agents, NOT distinct containers.
+    # D-05 (.planning/phases/B-stripe-paywall/CONTEXT.md:37-39) intent is
+    # "free=1 active agent" — a logical agent_instance, not a docker container.
+    # Hermes (and any future recipe with multi-channel gateway-daemon mode)
+    # legitimately spawns multiple agent_containers rows per logical agent
+    # (one per channel). The previous COUNT(*) implementation counted those
+    # rows as separate slots, blocking the mobile orchestrator's 2-step
+    # inapp→telegram flow on free tier (cap=1). Switching to
+    # COUNT(DISTINCT agent_instance_id) aligns the cap with the design
+    # intent and unblocks multi-channel agents without changing the cap
+    # value for any tier.
     count = await conn.fetchval(
-        f"SELECT COUNT(*)::int FROM agent_containers "
+        f"SELECT COUNT(DISTINCT agent_instance_id)::int FROM agent_containers "
         f"WHERE user_id = $1 "
         f"AND container_status IN ({placeholders})",
         user_id, *_ACTIVE_STATUSES,

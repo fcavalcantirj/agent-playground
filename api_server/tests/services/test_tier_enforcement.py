@@ -303,3 +303,110 @@ async def test_check_can_create_agent_cross_tenant_isolation(db_pool):
     assert allowed is True
     assert count == 0
     assert tier == "free"
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-17 — multi-channel-per-agent semantic
+# ---------------------------------------------------------------------------
+
+
+async def _seed_multi_channel_agent(
+    pool,
+    *,
+    user_id: UUID,
+    channels: list[str],
+) -> UUID:
+    """Seed ONE agent_instance with MULTIPLE running agent_containers rows
+    (one per channel). Mirrors the prod state of a hermes agent whose
+    `gateway-daemon` recipe spawns separate containers for inapp + telegram.
+    """
+    agent_id = uuid4()
+    recipe_name = f"recipe-{uuid4().hex[:6]}"
+    name = f"agent-{uuid4().hex[:6]}"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO agent_instances (id, user_id, recipe_name, model, name) "
+            "VALUES ($1, $2, $3, 'm-test', $4)",
+            agent_id, user_id, recipe_name, name,
+        )
+        # Multiple containers on the SAME agent_instance_id — note the
+        # partial-unique-index `ix_agent_containers_agent_instance_running`
+        # currently disallows this (only one 'running' per agent). We seed
+        # the first as 'running' and the rest as 'starting' to keep the
+        # invariant valid for this test fixture; the cap counter must
+        # still treat them as ONE logical agent regardless.
+        for i, channel in enumerate(channels):
+            status = "running" if i == 0 else "starting"
+            await conn.execute(
+                """
+                INSERT INTO agent_containers
+                  (id, agent_instance_id, user_id, recipe_name,
+                   deploy_mode, container_status, channel_type)
+                VALUES ($1, $2, $3, $4, 'persistent', $5, $6)
+                """,
+                uuid4(), agent_id, user_id, recipe_name, status, channel,
+            )
+    return agent_id
+
+
+async def test_multi_channel_agent_counts_as_one_slot_on_free_tier(db_pool):
+    """2026-05-17 — D-05 intent: free=1 *logical* agent, not 1 container.
+
+    Regression for the bug we proved in prod on 2026-05-17 00:28-00:30 UTC:
+    a hermes agent that fires `/start channel=inapp` followed by
+    `/start channel=telegram` on the SAME `agent_instance_id` inserts TWO
+    agent_containers rows. The old `COUNT(*)` query saw 2 active and
+    rejected the second call on free tier (cap=1). The user's mental
+    model + the design intent (CONTEXT.md D-05) is ONE agent slot — the
+    fact that it spans multiple channel-containers is implementation,
+    not product surface.
+
+    Switching the cap to `COUNT(DISTINCT agent_instance_id)` collapses
+    the per-channel containers into one slot for the purpose of the cap.
+    """
+    from api_server.services.tier_enforcement import check_can_create_agent
+
+    user_id = await _seed_user(db_pool, tier="free")
+    # ONE logical agent, two channel containers (inapp + telegram).
+    await _seed_multi_channel_agent(
+        db_pool, user_id=user_id, channels=["inapp", "telegram"],
+    )
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            allowed, count, tier = await check_can_create_agent(
+                conn, user_id=user_id,
+            )
+    # Two container rows exist BUT one distinct agent_instance_id.
+    # Cap (1) == count (1) → at cap, allowed=False (already using the
+    # free user's only agent slot). The point is `count == 1`, NOT 2.
+    assert count == 1, (
+        f"expected ONE logical agent counted; got {count}. The cap is "
+        f"counting containers, not distinct agents — that's the bug."
+    )
+    assert allowed is False
+    assert tier == "free"
+
+
+async def test_free_tier_distinct_agents_count_separately(db_pool):
+    """Counterpart to test_multi_channel_agent_counts_as_one_slot_on_free_tier.
+
+    TWO distinct logical agents (each on its own agent_instance_id) on
+    free tier DO count as 2 slots. The COUNT(DISTINCT agent_instance_id)
+    change must NOT regress the basic 1-agent-per-free-user invariant.
+    """
+    from api_server.services.tier_enforcement import check_can_create_agent
+
+    user_id = await _seed_user(db_pool, tier="free")
+    # Two separate agent_instances, one container each. count must == 2.
+    await _seed_agent_container(db_pool, user_id=user_id, status="running")
+    await _seed_agent_container(db_pool, user_id=user_id, status="running")
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            allowed, count, tier = await check_can_create_agent(
+                conn, user_id=user_id,
+            )
+    assert count == 2
+    assert allowed is False
+    assert tier == "free"
