@@ -6,22 +6,47 @@
 4. **Root cause first, never fix-to-pass.** Investigate before removing code. See `memory/feedback_root_cause_first.md`.
 5. **Test everything. Probe gray areas empirically BEFORE planning.** No PLAN may assume "pattern X in another module will work the same here" — every non-trivial mechanism (new file format, new subprocess lifecycle, new encryption path, new env-var injection, new health check, new container flag, new regex, new HTTP contract, new DB constraint) must be spiked against real infra and the spike result captured as evidence BEFORE the planner consumes it. If the spike fails or surfaces a gray area not considered, the plan goes back. Risk budget: zero untested mechanisms in a sealed PLAN. Rule-1 extended to planning: the plan's own assumptions hit real infra too. See `memory/feedback_test_everything_before_planning.md`.
 
-6. **Always ship to prod once the fix is verified locally.** The mobile (Android) release workflow when a fix lands:
+6. **Always ship to prod once the fix is verified locally.** Use the release wrapper — it auto-loads OAuth IDs from `.env`, refuses to build if any required value is missing, and runs `flutter clean` before release builds (a sim-built framework slice silently rode into the +9 IPA on 2026-05-18 and got rejected by App Store Connect — `flutter clean` prevents that exact regression):
    ```
-   cd mobile
-   # bump pubspec.yaml version (+N)
-   fvm flutter build appbundle --release \
-     --dart-define BASE_URL=https://agents.solvr.dev \
-     --dart-define GOOGLE_SERVER_CLIENT_ID=<server-client-id>.apps.googleusercontent.com \
-     --dart-define GITHUB_CLIENT_ID=<mobile-github-client-id> \
-     --dart-define SENTRY_DSN_MOBILE=<dsn>
-   # then fastlane:
-   ( cd android && /Users/fcavalcanti/.local/share/gem/ruby/3.4.0/gems/fastlane-2.234.0/bin/fastlane internal )
-   ( cd android && /Users/fcavalcanti/.local/share/gem/ruby/3.4.0/gems/fastlane-2.234.0/bin/fastlane promote_to_production )
+   # bump pubspec.yaml version (+N), commit, then:
+   mobile/scripts/release.sh apk-local          # local APK for adb install — test on YOUR device first
+   mobile/scripts/release.sh android-internal   # AAB → Play internal track
+   mobile/scripts/release.sh android-prod       # promote internal → production
+   mobile/scripts/release.sh ios-testflight     # IPA → TestFlight
    ```
-   `internal` upload is ~40s, `promote_to_production` is ~7s. Both lanes use `mobile/keys/android/play-service-account.json` (gitignored, rotate if leaked — Google secret-scanning fires). Auto-publishing is NOT on in Play Console — the promote step is mandatory.
+   Recommended sequence: `apk-local` → physical-device sanity check (Google + GitHub sign-in both work) → `android-internal` (~40s) → re-verify on device via Play Store internal track → `android-prod` (~7s) → `ios-testflight` (~80s). Skipping the apk-local step is how auth regressions ship to 100% of Android users without warning. Both Android lanes use `mobile/keys/android/play-service-account.json`, iOS uses `mobile/keys/ios/asc-api-key.json` + `AuthKey_*.p8` (both gitignored, rotate if leaked — Google + Apple secret-scanning fires). Play Console auto-publishing is OFF; the promote step is mandatory.
 
    For api_server changes: same model — rebuild + recreate `solvr-labs-api_server-1` on the box (`docker compose -p solvr-labs -f docker-compose.prod.yml ... build api_server && up -d --force-recreate api_server`). Do not run a side-process locally; see the "Smoke-testing new api_server code locally" warning lower in this file.
+
+   **Canonical api_server deploy command (run after `git push origin main`):**
+
+   - SSH host alias: **`msv-prod`** (= `root@91.98.75.102` via `~/.ssh/id_ed25519_msv`). Do NOT use the `solvr-prod` alias in `~/.ssh/config` — it's misconfigured (indented under `msv-prod` block, user `ap` is rejected). Always go in as `root` via `msv-prod`.
+   - Repo path on box: **`/opt/solvr-labs/agent-playground`** (NOT `/srv/agent-playground` — `deploy/README.md` is stale).
+   - Git pull on the box requires an explicit deploy key: **`GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_playground_deploy_key -o IdentitiesOnly=yes"`** — the box's user `id_*` keys are not authorized on GitHub. Without this, `git pull` fails with `Permission denied (publickey)`.
+   - The box's working tree may carry **pre-existing scp hot-deploys** (modified tracked files + untracked migrations from prior debug sessions). Always `git stash push -u -m "pre-deploy-backup-$(date +%s)"` BEFORE the pull. The stash is the rollback artifact.
+
+   One-shot command (covers stash → pull → build → alembic → roll → healthz):
+
+   ```bash
+   ssh msv-prod 'set -e
+   cd /opt/solvr-labs/agent-playground
+   git stash push -u -m "pre-deploy-backup-$(date +%s)" 2>&1 | tail -3
+   GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_playground_deploy_key -o IdentitiesOnly=yes" git pull --ff-only
+   cd deploy
+   COMPOSE="docker compose -p solvr-labs -f docker-compose.prod.yml --env-file .env.prod"
+   $COMPOSE build api_server 2>&1 | tail -4
+   $COMPOSE run --rm api_server alembic upgrade head 2>&1 | tail -8
+   $COMPOSE up -d --force-recreate api_server 2>&1 | tail -4
+   sleep 4 && curl -fsS https://agents.solvr.dev/healthz && echo'
+   ```
+
+   **Recipe-only changes (no Python touched) still need `--force-recreate api_server`** — the api_server parses `/app/recipes/*.yaml` ONCE at startup into `app.state.recipes`. Bind-mounted updates on disk don't refresh the in-memory dict until the container is recreated. The one-shot above already covers this via `up -d --force-recreate api_server`; if you skip the rebuild step thinking "recipe-only is safe", the container is still serving the old parsed recipe.
+
+   Verify after deploy:
+   - `ssh msv-prod 'docker logs solvr-labs-api_server-1 --tail 30 2>&1'` — should show `Application startup complete.` and a 200 on `/healthz`.
+   - `curl -fsS https://agents.solvr.dev/healthz` returns `{"ok":true}`.
+
+   Rollback (image only, fastest): `ssh msv-prod 'cd /opt/solvr-labs/agent-playground && git reset --hard <prev-sha> && cd deploy && docker compose -p solvr-labs -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate api_server'`. For schema rollback, write an alembic `downgrade` and ship as a new migration — never run `alembic downgrade` directly on prod.
 
 # 🔌 Local dev — running both web + mobile against the same api_server
 
