@@ -240,6 +240,13 @@ persistent:
           - "${OPENROUTER_API_KEY}"
           - --model
           - "$MODEL"
+          - providers   # 2026-05-18: scope onboard to providers-only; full
+                        # `onboard --quick` runs all 7 sections including
+                        # Personality, which has no --personality default
+                        # and errors "no answer for prompt 'Personality
+                        # file to edit'" in 0.7.5+. The `providers` sub-
+                        # command runs ONLY that section using --quick's
+                        # flag-provided values (verified empirically).
       - description: "Permit non-loopback bind (default is 127.0.0.1)"
         argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
       - description: "Bind 0.0.0.0 so port-mapped traffic reaches the gateway"
@@ -335,6 +342,7 @@ channels:
             - "${OPENROUTER_API_KEY}"
             - --model
             - "$MODEL"
+            - providers   # see smoke block above for why this subcommand is required (0.7.5+)
         - argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
         - argv: [zeroclaw, config, set, gateway.host, "0.0.0.0"]
         - argv: [zeroclaw, config, set, gateway.require-pairing, "false"]
@@ -423,6 +431,7 @@ channels:
             - "${OPENROUTER_API_KEY}"
             - --model
             - "$MODEL"
+            - providers   # see smoke block above for why this subcommand is required (0.7.5+)
         - argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
         - argv: [zeroclaw, config, set, gateway.host, "0.0.0.0"]
         - argv: [zeroclaw, config, set, gateway.require-pairing, "false"]
