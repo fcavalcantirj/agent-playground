@@ -1,3 +1,21 @@
+# 🛑🛑🛑 STOP — READ THIS BEFORE EVERY MOBILE RELEASE 🛑🛑🛑
+
+> **THREE consecutive Android releases have broken authentication for the user (`+7` → `+8` → `+9`, 2026-05-12 through 2026-05-18). The same root cause every time: local `.env` OAuth client IDs DRIFT from prod `.env.prod`, the wrapper script reads local, the build ships with WRONG IDs, GitHub code-exchange fails because the mobile `client_id` doesn't match prod's `AP_OAUTH_GITHUB_MOBILE_CLIENT_ID`. Every. Single. Time. The user has had to roll back Play Production three times.**
+>
+> **THE ONLY SOURCE OF TRUTH FOR MOBILE OAUTH IDs AT BUILD TIME IS PROD `.env.prod`, READ INLINE VIA `ssh msv-prod cat /opt/solvr-labs/agent-playground/deploy/.env.prod`. NEVER read from local `~/dev/agent-playground/.env` for any mobile release target. Local `.env` is for backend dev ONLY.**
+>
+> **HARD GATE — fastlane `internal` or `promote_to_production` or `beta` (TestFlight) MUST NOT run unless:**
+> 1. The user has plugged their Android device.
+> 2. `mobile/scripts/release.sh apk-local` ran successfully with OAuth IDs sourced from prod `.env.prod` (NOT local `.env`).
+> 3. The user has installed the APK via `adb install -r` and signed in successfully via **Google AND GitHub** on that exact device, reaching the dashboard.
+> 4. The user has TYPED `release.sh verified` (or equivalent confirmation) in the same shell session.
+>
+> If any of steps 1-4 fail or are skipped, the release IS NOT shipped. There is no "I'll just push internal first and we'll see" exception. Internal still updates the user's Play Store, and a broken auth update silently destroys real-user installs.
+>
+> See `memory/feedback_release_oauth_ids_come_from_prod_envprod_only.md` and `memory/feedback_never_ship_play_prod_without_device_apk_verify.md` for the permanent rule. The wrapper script at `mobile/scripts/release.sh` MUST be patched (in-progress as of 2026-05-18) to make local-`.env` use structurally impossible for release targets — until then, treat every release as a manual gate AGAINST yourself.
+>
+> **Auth-breaking commits that have shipped without this gate:** 2026-05-11 +7 (GitHub OAuth flutter_appauth → flutter_web_auth_2 swap, 6h debug), 2026-05-17 +8 (whatever the user noted earlier), 2026-05-18 +9 (GitHub OAuth mobile client ID drift, this banner's cause). Each cost the user real hours and real users. **DO NOT BE THE FOURTH.**
+
 # ⚠️ Golden rules (permanent — apply every phase)
 
 1. **No mocks, no stubs.** Tests hit real infra (live Postgres, real Docker daemon via testcontainers, real recipe runs). No in-memory fakes for core substrate. See `memory/feedback_no_mocks_no_stubs.md`.
