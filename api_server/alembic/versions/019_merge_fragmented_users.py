@@ -102,7 +102,9 @@ def upgrade() -> None:
     # NOTE: idempotency_keys has UNIQUE (user_id, key). If the winner
     # AND loser both have rows with the SAME key, the UPDATE will
     # collide. Defensive: if a winner already has the key, DROP the
-    # loser's row instead of moving it.
+    # loser's row instead of moving it. asyncpg rejects multi-statement
+    # op.execute() ("cannot insert multiple commands into a prepared
+    # statement"), so DELETE + UPDATE go in separate op.execute() calls.
     op.execute("""
         DELETE FROM idempotency_keys ik
         USING _merge_pairs p
@@ -110,17 +112,19 @@ def upgrade() -> None:
           AND EXISTS (
             SELECT 1 FROM idempotency_keys w
             WHERE w.user_id = p.winner_id AND w.key = ik.key
-          );
+          )
+    """)
+    op.execute("""
         UPDATE idempotency_keys
         SET user_id = p.winner_id
         FROM _merge_pairs p
-        WHERE idempotency_keys.user_id = p.loser_id;
+        WHERE idempotency_keys.user_id = p.loser_id
     """)
 
     # 1e. inapp_messages — CASCADE on delete; reassign first so we keep
     # the conversation history. UNIQUE(user_id, idempotency_key) WHERE
     # idempotency_key IS NOT NULL exists; same defensive DROP-on-collide
-    # pattern as idempotency_keys.
+    # pattern as idempotency_keys, split same way.
     op.execute("""
         DELETE FROM inapp_messages im
         USING _merge_pairs p
@@ -130,11 +134,13 @@ def upgrade() -> None:
             SELECT 1 FROM inapp_messages w
             WHERE w.user_id = p.winner_id
               AND w.idempotency_key = im.idempotency_key
-          );
+          )
+    """)
+    op.execute("""
         UPDATE inapp_messages
         SET user_id = p.winner_id
         FROM _merge_pairs p
-        WHERE inapp_messages.user_id = p.loser_id;
+        WHERE inapp_messages.user_id = p.loser_id
     """)
 
     # 1f. usage_logs — CASCADE; reassign so the per-user usage trail
@@ -150,14 +156,15 @@ def upgrade() -> None:
     # per user). Both loser AND winner can have a row → SUM into
     # winner, DROP loser. Mirror Stripe-side `total_credits` accounting:
     # the platform owes the human the SUM of all their balances.
+    # Aggregate loser balances per winner FIRST. If Felipe has 2 losing
+    # rows both pointing at the same winner, the naive INSERT ... ON
+    # CONFLICT DO UPDATE would try to UPDATE the same target row twice
+    # in one statement → Postgres error "ON CONFLICT DO UPDATE command
+    # cannot affect row a second time" (verified via dry-run on
+    # 2026-05-18). GROUP BY winner_id collapses N losers into 1 sum
+    # per winner. Split into two op.execute() calls (asyncpg
+    # rejects multi-statement prepared statements).
     op.execute("""
-        -- Aggregate loser balances per winner FIRST. If Felipe has 2
-        -- losing rows both pointing at the same winner, the naive
-        -- INSERT ... ON CONFLICT DO UPDATE would try to UPDATE the
-        -- same target row twice in one statement → Postgres error
-        -- "ON CONFLICT DO UPDATE command cannot affect row a second
-        -- time" (verified via dry-run on 2026-05-18). GROUP BY
-        -- winner_id collapses N losers into 1 sum per winner.
         INSERT INTO credit_balances (user_id, balance_cents, updated_at)
         SELECT p.winner_id, SUM(cb.balance_cents), NOW()
         FROM _merge_pairs p
@@ -166,13 +173,12 @@ def upgrade() -> None:
         ON CONFLICT (user_id)
         DO UPDATE SET
           balance_cents = credit_balances.balance_cents + EXCLUDED.balance_cents,
-          updated_at = NOW();
-        -- Drop the losers' rows explicitly. CASCADE on the users
-        -- DELETE would also do this but the row would be gone before
-        -- our SUM runs in a re-run scenario.
+          updated_at = NOW()
+    """)
+    op.execute("""
         DELETE FROM credit_balances cb
         USING _merge_pairs p
-        WHERE cb.user_id = p.loser_id;
+        WHERE cb.user_id = p.loser_id
     """)
 
     # 1h. credit_transactions — CASCADE; reassign so the ledger under
