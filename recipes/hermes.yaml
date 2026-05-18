@@ -298,13 +298,20 @@ channels:
         hint: |
           Comma-separated numeric Telegram user IDs (NOT @usernames).
           Get yours by DM'ing @userinfobot and reading the `Id:` line.
-    # 2026-05-17: removed TELEGRAM_HOME_CHANNEL + TELEGRAM_HOME_CHANNEL_NAME
-    # from the wizard surface. They control hermes' proactive/cron-message
-    # destination — useful for power users wiring scheduled tasks, but they
-    # bloat the deploy form and aren't required for basic Telegram chat
-    # operation (DMs route via TELEGRAM_ALLOWED_USERS). Re-surface as part
-    # of an "advanced settings" flow when we build one. Hermes still reads
-    # the env vars if set externally — only the mobile UI surface changes.
+    optional_user_input:
+      # 2026-05-17 — restored after removal regression. Hermes emits a
+      # one-time "📬 No home channel is set..." prompt on first inbound
+      # message in any chat where TELEGRAM_HOME_CHANNEL is unset. The
+      # prompt is harmless but visibly noisy. Keeping the field on the
+      # wizard so users can paste their own DM chat_id (== their user_id
+      # for DMs with the bot) and skip the prompt. NAME is cosmetic but
+      # bundled so the two stay symmetric.
+      - env: TELEGRAM_HOME_CHANNEL
+        hint: |
+          Numeric chat ID where cron jobs and proactive messages land.
+          For DMs, this is the same as your user ID. Negative for groups.
+      - env: TELEGRAM_HOME_CHANNEL_NAME
+        hint: Display name of the home channel — cosmetic only.
     ready_log_regex: "\\[Telegram\\] Connected to Telegram \\(polling mode\\)"
     response_routing: per_message_origin   # bot replies in the chat the sender messaged from
     multi_user_model: allowlist_or_dm_pairing
