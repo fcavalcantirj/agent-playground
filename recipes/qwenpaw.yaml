@@ -424,11 +424,21 @@ channels:
           PYEOF
           fi
 
-          # ===== Same supervisord handoff as /entrypoint.sh =====
+          # ===== supervisord handoff with app stdout redirected to docker =====
+          # QwenPaw's `app` program writes telegram log lines to
+          # /var/log/app.out.log per the supervisord template, so the
+          # AP runner's docker-logs-based ready_log_regex would never see
+          # them. Redirect app's stdout+stderr to /dev/stdout + /dev/stderr
+          # so `telegram: polling started (receiving updates)` reaches
+          # the container's log stream.
           export QWENPAW_PORT="${QWENPAW_PORT:-8088}"
           envsubst '${QWENPAW_PORT}' \
             < /etc/supervisor/conf.d/supervisord.conf.template \
             > /etc/supervisor/conf.d/supervisord.conf
+          sed -i \
+            -e 's|stdout_logfile=/var/log/app\.out\.log|stdout_logfile=/dev/fd/1\nstdout_logfile_maxbytes=0|' \
+            -e 's|stderr_logfile=/var/log/app\.err\.log|stderr_logfile=/dev/fd/2\nstderr_logfile_maxbytes=0|' \
+            /etc/supervisor/conf.d/supervisord.conf
           exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
     activation_env:
       OPENROUTER_API_KEY: "${INAPP_PROVIDER_KEY}"
