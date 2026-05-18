@@ -264,7 +264,7 @@ persistent:
         }
         EOF
         exec nanobot gateway
-    ready_log_regex: "Telegram bot @\\w+ connected"
+    ready_log_regex: "bot @\\w+ connected"
     health_check:
       kind: http
       port: 18790
@@ -331,7 +331,7 @@ channels:
         hint_url: https://t.me/userinfobot
         hint: Single numeric Telegram user ID (copy from Settings, no @).
     optional_user_input: []
-    ready_log_regex: "Telegram bot @\\w+ connected"
+    ready_log_regex: "bot @\\w+ connected"
     response_routing: per_message_origin
     multi_user_model: allowlist
     multi_account_supported: false       # nanobot channels.telegram is single-entry
