@@ -331,6 +331,110 @@ channels:
       INAPP_AGENT_URL: "{agent_url}"
       INAPP_AUTH_TOKEN: "${INAPP_AUTH_TOKEN}"
 
+  # ════════════════════════════════════════════════════════════════════
+  # Telegram channel — config-file driven (not env-var).
+  # ════════════════════════════════════════════════════════════════════
+  # 2026-05-18 — QwenPaw's TelegramConfig (src/qwenpaw/config/config.py:266)
+  # reads ONLY from <workspace>/agent.json's channels.telegram block. No
+  # env-var override path. The bootstrap does what entrypoint.sh does
+  # (init on cold mount + supervisord), then patches the default workspace's
+  # agent.json to enable telegram with the user's bot_token BEFORE exec'ing
+  # supervisord. Source line:
+  #   https://github.com/agentscope-ai/QwenPaw/blob/main/src/qwenpaw/config/config.py#L266
+  # Docs:
+  #   https://qwenpaw.agentscope.io/docs/channels (config field shape)
+  # Ready log:
+  #   https://github.com/agentscope-ai/QwenPaw/blob/main/src/qwenpaw/app/channels/telegram/channel.py#L1348
+  telegram:
+    config_transport: config_file
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create the bot via @BotFather /newbot, copy the HTTP API token.
+    optional_user_input:
+      - env: TELEGRAM_BOT_PREFIX
+        hint: |
+          Optional prefix prepended to every bot reply (e.g. "[bot]").
+          Leave blank for none.
+    ready_log_regex: "telegram: polling started \\(receiving updates\\)"
+    response_routing: per_message_origin
+    multi_user_model: open
+    # QwenPaw doesn't expose allowed-user gating from agent.json; access is
+    # controlled at the chat level inside QwenPaw's own console. For a v0
+    # deploy, any user who knows the bot username can DM it. Document this
+    # asymmetry vs hermes/picoclaw/etc.
+    persistent_argv_override:
+      entrypoint: sh
+      argv:
+        - "-c"
+        - |
+          set -e
+
+          # ===== Same pre-bootstrap as inapp (providers config) =====
+          QP_MODEL_ID="$MODEL"
+          BASE_URL="${AP_PROXY_BASE_URL:-https://openrouter.ai/api/v1}"
+          mkdir -p /app/working.secret/providers/custom
+          mkdir -p /app/working.secret/providers/builtin
+          cat > /app/working.secret/providers/custom/ap-proxy.json <<EOF
+          {
+            "id": "ap-proxy",
+            "name": "Agent Playground Proxy",
+            "base_url": "$BASE_URL",
+            "api_key": "${OPENROUTER_API_KEY}",
+            "chat_model": "OpenAIChatModel",
+            "generate_kwargs": {},
+            "models": [
+              {"id": "$QP_MODEL_ID", "name": "$QP_MODEL_ID", "supports_image": false, "supports_video": false, "probe_source": "documentation", "is_free": false, "generate_kwargs": {}}
+            ]
+          }
+          EOF
+          chmod 600 /app/working.secret/providers/custom/ap-proxy.json
+          cat > /app/working.secret/providers/active_model.json <<EOF
+          {"provider_id": "ap-proxy", "model": "$QP_MODEL_ID"}
+          EOF
+          chmod 600 /app/working.secret/providers/active_model.json
+
+          # ===== Inline /entrypoint.sh's init-on-cold-mount =====
+          if [ ! -f "${QWENPAW_WORKING_DIR}/config.json" ]; then
+            qwenpaw init --defaults --accept-security
+          fi
+
+          # ===== Patch workspace agent.json: enable telegram =====
+          # QwenPaw stores per-agent config under workspaces/<id>/agent.json.
+          # The default profile lives at workspaces/default per
+          # config.py:1158. We patch it with the channels.telegram block
+          # so qwenpaw's TelegramConfig loader sees enabled=true + bot_token.
+          WS="${QWENPAW_WORKING_DIR}/workspaces/default"
+          if [ -f "$WS/agent.json" ]; then
+            python3 - <<PYEOF
+          import json, os
+          p = "$WS/agent.json"
+          with open(p) as f: d = json.load(f)
+          ch = d.setdefault("channels", {})
+          ch["telegram"] = {
+            "enabled": True,
+            "bot_prefix": os.environ.get("TELEGRAM_BOT_PREFIX", ""),
+            "bot_token": os.environ["TELEGRAM_BOT_TOKEN"],
+            "http_proxy": "",
+            "http_proxy_auth": "",
+            "streaming_enabled": False,
+          }
+          with open(p, "w") as f:
+            json.dump(d, f, indent=2)
+          PYEOF
+          fi
+
+          # ===== Same supervisord handoff as /entrypoint.sh =====
+          export QWENPAW_PORT="${QWENPAW_PORT:-8088}"
+          envsubst '${QWENPAW_PORT}' \
+            < /etc/supervisor/conf.d/supervisord.conf.template \
+            > /etc/supervisor/conf.d/supervisord.conf
+          exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+    activation_env:
+      OPENROUTER_API_KEY: "${INAPP_PROVIDER_KEY}"
+      MODEL: "${MODEL}"
+    verified_cells: []
+
 direct_interface:
   kind: http_endpoint
   spec:
