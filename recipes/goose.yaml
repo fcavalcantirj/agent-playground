@@ -296,7 +296,16 @@ channels:
           After deploy: open Telegram, DM the bot the pairing code printed
           in this agent's logs (or use `goose gateway pair telegram` from
           the desktop app) to bind your Telegram identity.
-    ready_log_regex: "Telegram bot verified"
+    # Goose's setup_logging() sends tracing::info! to a JSON file under
+    # ~/goose/logs/cli/ (logging.rs:9 — "Logs go to a JSON file only,
+    # no console output"). So "Telegram bot verified" (the semantically
+    # correct ready signal) isn't visible in `docker logs`. The only
+    # stdout signal is the println! at gateway.rs:53 — fires AFTER
+    # start_gateway_internal spawns the gateway tokio task. The bot's
+    # actual verify is async after that point; if the token is invalid
+    # the container's PID 1 exits and the deploy surface marks it
+    # start_failed downstream.
+    ready_log_regex: "Gateway started\\. Press Ctrl\\+C to stop"
     response_routing: per_message_origin
     multi_user_model: pairing_code   # users bind by sending a code to the bot
     persistent_argv_override:
