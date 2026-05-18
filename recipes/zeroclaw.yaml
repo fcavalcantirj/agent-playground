@@ -22,14 +22,27 @@ source:
   upstream_version: v0.7.3+
 
 build:
-  mode: image_pull
-  image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+  # 2026-05-18 — switched from `image_pull(ghcr.io/zeroclaw-labs/zeroclaw:latest)`
+  # to `upstream_dockerfile(Dockerfile.debian)` to unlock the telegram channel.
+  # The published distroless image has no shell, and zeroclaw 0.7.5's `config
+  # set`/`config patch`/`channel add` CLI reject `channels.telegram.*` ("Unknown
+  # property" — the prop registry doesn't expose per-channel keys). The only
+  # path to inject the `[channels.telegram]` TOML block is direct file edit,
+  # which requires a shell. Upstream's Dockerfile.debian (~200MB) ships
+  # `bash`, `curl`, `git` + the zeroclaw binary in one image. Cold Rust build
+  # is ~10min; subsequent deploys use BuildKit cache.
+  #
+  # Inapp + telegram channels both share this image. The inapp pre_start
+  # commands (`zeroclaw onboard`, `zeroclaw config set gateway.*`) work
+  # identically on debian as on distroless — same binary, just a different
+  # runtime base.
+  mode: upstream_dockerfile
+  dockerfile: Dockerfile.debian
   notes: |
-    Prebuilt image is distroless (~50 MB). USER 65534:65534, ENTRYPOINT
-    [zeroclaw], default CMD [daemon], EXPOSED 42617/tcp. No shell in the
-    image — every command must be a `zeroclaw` subcommand. The recipe
-    chains config-init steps via separate `docker run` invocations
-    sharing a named volume, then starts the long-running daemon.
+    Debian-bookworm-slim runtime (~200 MB). USER 65534:65534, ENTRYPOINT
+    [zeroclaw], default CMD [daemon], EXPOSED 42617/tcp. Ships /bin/bash,
+    /bin/sh, curl, git, ca-certificates so multi-step bootstraps can use
+    sh-heredoc (required for telegram channel's TOML inject — see below).
 
 runtime:
   # LLM egress proxy. When via_proxy is true the runner injects
@@ -362,6 +375,76 @@ channels:
           Full evidence:
           .planning/phases/22c.3-inapp-chat-channel/spikes/recipe-zeroclaw.md
         category: PASS
+
+  # ════════════════════════════════════════════════════════════════════
+  # Telegram channel — TOML-append via shell (config CLI gap workaround)
+  # ════════════════════════════════════════════════════════════════════
+  # 2026-05-18 — zeroclaw 0.7.5's CLI doesn't expose channels.telegram.*
+  # paths (verified live: config set/patch reject "Unknown property").
+  # Direct TOML edit is the only path. The Dockerfile.debian variant ships
+  # /bin/bash + curl, so we append a [channels.telegram] block to
+  # `.zeroclaw/config.toml` via a final pre_start sh-heredoc, after the
+  # other pre_start commands have created/initialized the file.
+  #
+  # Ready log source (commercial fork line ref):
+  #   crates/zeroclaw-channels/src/telegram.rs:3083
+  #     tracing::info!("Telegram channel listening for messages...")
+  # Docs:
+  #   https://docs.zeroclawlabs.ai/en/channels/overview.html
+  telegram:
+    config_transport: pre_start_only
+    required_user_input:
+      - env: TELEGRAM_BOT_TOKEN
+        secret: true
+        hint: Create the bot via @BotFather /newbot, copy the HTTP API token.
+      - env: TELEGRAM_ALLOWED_USER
+        secret: false
+        kind: telegram_numeric_id_csv
+        hint_url: https://t.me/userinfobot
+        hint: |
+          Numeric Telegram user ID (NOT @username).
+          Get yours by DM'ing @userinfobot and reading the `Id:` line.
+    ready_log_regex: "Telegram channel listening for messages"
+    response_routing: per_message_origin
+    multi_user_model: allowlist
+    persistent_argv_override:
+      entrypoint: zeroclaw
+      argv: [daemon]
+      pre_start_commands:
+        # Same onboarding sequence as inapp (proxy provider + headless gateway)
+        - argv:
+            - zeroclaw
+            - onboard
+            - --quick
+            - --force
+            - --provider
+            - "custom:${AP_PROXY_BASE_URL}"
+            - --api-key
+            - "${OPENROUTER_API_KEY}"
+            - --model
+            - "$MODEL"
+        - argv: [zeroclaw, config, set, gateway.allow-public-bind, "true"]
+        - argv: [zeroclaw, config, set, gateway.host, "0.0.0.0"]
+        - argv: [zeroclaw, config, set, gateway.require-pairing, "false"]
+        # Final step: append [channels.telegram] block via bash heredoc.
+        # The TOML file exists at this point (created by onboard above);
+        # appending a new table is safe — TOML allows multiple tables.
+        - argv:
+            - bash
+            - -c
+            - |
+              cat >> /zeroclaw-data/.zeroclaw/config.toml <<EOF
+
+              [channels.telegram]
+              enabled = true
+              bot_token = "${TELEGRAM_BOT_TOKEN}"
+              allowed_users = ["${TELEGRAM_ALLOWED_USER}"]
+              use_long_polling = true
+              EOF
+    activation_env:
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      ZEROCLAW_WORKSPACE: "/zeroclaw-data/workspace"
+    verified_cells: []
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Phase 22b direct_interface (Gate A test harness shape)
