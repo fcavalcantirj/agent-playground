@@ -12,9 +12,23 @@
 >
 > If any of steps 1-4 fail or are skipped, the release IS NOT shipped. There is no "I'll just push internal first and we'll see" exception. Internal still updates the user's Play Store, and a broken auth update silently destroys real-user installs.
 >
-> See `memory/feedback_release_oauth_ids_come_from_prod_envprod_only.md` and `memory/feedback_never_ship_play_prod_without_device_apk_verify.md` for the permanent rule. The wrapper script at `mobile/scripts/release.sh` MUST be patched (in-progress as of 2026-05-18) to make local-`.env` use structurally impossible for release targets — until then, treat every release as a manual gate AGAINST yourself.
+> See `memory/feedback_release_oauth_ids_come_from_prod_envprod_only.md` and `memory/feedback_never_ship_play_prod_without_device_apk_verify.md` for the permanent rule. The wrapper script at `mobile/scripts/release.sh` was patched 2026-05-18 commits `d1dc0ea` + `8ceecbd` to make local-`.env` use structurally impossible for release targets AND to verify post-upload via Play API.
 >
 > **Auth-breaking commits that have shipped without this gate:** 2026-05-11 +7 (GitHub OAuth flutter_appauth → flutter_web_auth_2 swap, 6h debug), 2026-05-17 +8 (whatever the user noted earlier), 2026-05-18 +9 (GitHub OAuth mobile client ID drift, this banner's cause). Each cost the user real hours and real users. **DO NOT BE THE FOURTH.**
+>
+> ---
+>
+> # 🛑 SECONDARY TRAP — `fastlane internal` reports success even when the AAB never advances the Play track 🛑
+>
+> Caught 2026-05-18, same day as the +9 break: I ran `release.sh android-internal` and `android-prod` back-to-back. Fastlane output: `Successfully finished the upload to Google Play` followed by `Promoted internal → production. 100% rollout.` I reported "Android +10 live on production" to the user. The Play API actually showed **versionCodes still [9] on both tracks** — the +10 AAB had never advanced. Root cause: a build step between runs silently used a stale AAB on disk (or build was wiped between fastlane invocations), fastlane uploaded the wrong file or no new file, but its exit code stayed 0.
+>
+> **THE RULE: never claim a release "shipped" / "live" / "promoted" / "rolled out" until the source-of-truth API is queried POST-upload and confirms the expected version code (Android: `google_play_track_version_codes`; iOS: `latest_testflight_build_number`).** Fastlane's "successfully uploaded" message is necessary-but-not-sufficient. `release.sh` (commit `8ceecbd`) now enforces this via `verify_play_track_version()` after every Play upload — hard-fails non-zero if the track doesn't list the expected `versionCode`. If you bypass the wrapper, you bypass this gate and you WILL re-create the false-success pattern. Don't.
+>
+> ---
+>
+> # 🛑 TERTIARY TRAP — claiming "shipped" before user confirms on-device 🛑
+>
+> Same session 2026-05-18: even after the Play API showed `[10]` on production, the user opened Play Store on their device and saw nothing to update. Play Store CDN propagation takes 15 min to several hours regardless of `userFraction=1.0`. "Play API says rolled out" ≠ "user can install it". **Always: state the API confirmation, state that CDN propagation is pending, and STOP. The user confirming "Google works, GitHub works" on a real device is the only valid "shipped" signal.** No celebratory summary until that signal.
 
 # ⚠️ Golden rules (permanent — apply every phase)
 
