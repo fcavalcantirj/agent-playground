@@ -158,6 +158,31 @@ do_clean() {
   fvm flutter clean >/dev/null
 }
 
+# Read the expected versionCode (the +N part of pubspec `version: X.Y.Z+N`)
+expected_version_code() {
+  grep ^version: "$MOBILE_DIR/pubspec.yaml" | sed -E 's/version: *[^+]+\+([0-9]+).*/\1/'
+}
+
+# After a fastlane Play upload, query the track and HARD-FAIL if the track
+# doesn't list the expected versionCode. Catches the "silent stale-AAB
+# upload" bug from 2026-05-18 where fastlane reported success but
+# `[versionCodes]` on the track was unchanged.
+verify_play_track_version() {
+  local track="$1" expected="$2"
+  echo "▶ verifying Play '$track' track now lists versionCode $expected..."
+  local result
+  result=$("$FASTLANE_BIN" run google_play_track_version_codes track:"$track" 2>&1 | grep -E "^.*Result:" | tail -1)
+  echo "    $result"
+  if ! echo "$result" | grep -qE "\[$expected(,|\])"; then
+    echo "ERROR: Play '$track' track does NOT list versionCode $expected after upload." >&2
+    echo "       fastlane reported success but the track wasn't actually updated." >&2
+    echo "       (This is the 2026-05-18 false-success bug. See CLAUDE.md banner.)" >&2
+    echo "       Investigate manually before promoting further." >&2
+    exit 8
+  fi
+  echo "    ✓ confirmed: track lists $expected"
+}
+
 case "$TARGET" in
   apk-local)
     fetch_prod_oauth
@@ -201,25 +226,46 @@ case "$TARGET" in
     fetch_prod_oauth
     do_clean
     cd "$MOBILE_DIR"
+    EXPECTED_VC=$(expected_version_code)
+    if [[ -z "$EXPECTED_VC" ]]; then
+      echo "ERROR: could not parse versionCode from pubspec.yaml" >&2; exit 9
+    fi
+    echo "▶ pubspec expects versionCode $EXPECTED_VC"
     fvm flutter build appbundle --release \
       "${build_common_defines[@]}" \
       --dart-define "GOOGLE_SERVER_CLIENT_ID=$PROD_GOOGLE_SERVER_CLIENT_ID" \
       --dart-define "GITHUB_CLIENT_ID=$PROD_GITHUB_CLIENT_ID" \
       --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE"
+    AAB="$MOBILE_DIR/build/app/outputs/bundle/release/app-release.aab"
+    if [[ ! -f "$AAB" ]]; then
+      echo "ERROR: AAB not produced at $AAB. Build silently failed?" >&2; exit 10
+    fi
+    echo "▶ AAB built ($(stat -f %z "$AAB" 2>/dev/null || stat -c %s "$AAB") bytes), uploading..."
     (cd "$MOBILE_DIR/android" && "$FASTLANE_BIN" internal)
+    # POST-UPLOAD VERIFICATION — catches the 2026-05-18 silent-stale-upload
+    # bug where fastlane "succeeded" but the track was never updated.
+    (cd "$MOBILE_DIR/android" && verify_play_track_version internal "$EXPECTED_VC")
     # Invalidate the flag so the user MUST re-verify after the Play Store
     # internal-track update before we let them promote to production.
     rm -f "$VERIFIED_FLAG"
-    echo "▶ uploaded to Play internal track. Re-install from Play Store"
-    echo "▶ internal-testing track on your device, re-verify Google + GitHub,"
+    echo "▶ uploaded to Play internal track + Play API confirmed versionCode $EXPECTED_VC."
+    echo "▶ Re-install from Play Store internal-testing track on your device,"
+    echo "▶ re-verify Google + GitHub,"
     echo "▶ then run '$0 verified' again before '$0 android-prod'."
     ;;
 
   android-prod)
     require_verified
+    EXPECTED_VC=$(expected_version_code)
+    echo "▶ pubspec expects versionCode $EXPECTED_VC on production track"
+    # Sanity: internal track MUST already have the expected versionCode before
+    # we promote. Otherwise we'd be promoting whatever's stale in internal —
+    # exactly the 2026-05-18 false-success failure mode.
+    (cd "$MOBILE_DIR/android" && verify_play_track_version internal "$EXPECTED_VC")
     (cd "$MOBILE_DIR/android" && "$FASTLANE_BIN" promote_to_production)
+    (cd "$MOBILE_DIR/android" && verify_play_track_version production "$EXPECTED_VC")
     rm -f "$VERIFIED_FLAG"
-    echo "▶ Promoted internal → production. 100% rollout."
+    echo "▶ Promoted internal → production AND Play API confirmed versionCode $EXPECTED_VC. 100% rollout."
     ;;
 
   ios-testflight)
