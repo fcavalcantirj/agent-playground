@@ -113,23 +113,93 @@ def capture_with_scope(
     # 2026-05-12 — sentry-sdk 2.x deprecated push_scope in favor of new_scope;
     # both yield a Scope context, but new_scope is the forward-compatible path.
     with sentry_sdk.new_scope() as scope:
-        scope.set_tag("endpoint", endpoint)
-        if code:
-            scope.set_tag("ap_error_code", code)
-        if recipe:
-            scope.set_tag("recipe", recipe)
-        if channel:
-            scope.set_tag("channel", channel)
-        if agent_id is not None:
-            scope.set_tag("agent_id", str(agent_id))
-        if user_id is not None:
-            scope.set_tag("user_id", str(user_id))
-        if run_id:
-            scope.set_extra("run_id", run_id)
-        if extra:
-            for k, v in extra.items():
-                scope.set_extra(k, v)
+        _apply_scope(
+            scope,
+            endpoint=endpoint,
+            code=code,
+            recipe=recipe,
+            channel=channel,
+            agent_id=agent_id,
+            run_id=run_id,
+            user_id=user_id,
+            extra=extra,
+        )
         sentry_sdk.capture_exception(exc)
+
+
+def capture_message_with_scope(
+    message: str,
+    *,
+    level: str = "warning",
+    endpoint: str,
+    code: str | None = None,
+    recipe: str | None = None,
+    channel: str | None = None,
+    agent_id: Any = None,
+    run_id: str | None = None,
+    user_id: Any = None,
+    model: str | None = None,
+    classified: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Capture a free-text Sentry event when there is no exception to attach.
+
+    Used for "business" failures that complete normally on the wire but
+    represent a real product problem we want to see (e.g. a smoke run
+    returns ``verdict=FAIL`` because the upstream provider 401-ed). These
+    don't raise, so ``capture_with_scope`` can't reach them.
+
+    ``classified`` is a stable family tag (``upstream_auth_missing``,
+    ``upstream_credit_low``, ``unclassified``, …) so the dashboard can
+    group these events at a glance.
+    """
+    with sentry_sdk.new_scope() as scope:
+        _apply_scope(
+            scope,
+            endpoint=endpoint,
+            code=code,
+            recipe=recipe,
+            channel=channel,
+            agent_id=agent_id,
+            run_id=run_id,
+            user_id=user_id,
+            extra=extra,
+        )
+        if model:
+            scope.set_tag("model", model)
+        if classified:
+            scope.set_tag("classified", classified)
+        sentry_sdk.capture_message(message, level=level)
+
+
+def _apply_scope(
+    scope: Any,
+    *,
+    endpoint: str,
+    code: str | None,
+    recipe: str | None,
+    channel: str | None,
+    agent_id: Any,
+    run_id: str | None,
+    user_id: Any,
+    extra: dict[str, Any] | None,
+) -> None:
+    scope.set_tag("endpoint", endpoint)
+    if code:
+        scope.set_tag("ap_error_code", code)
+    if recipe:
+        scope.set_tag("recipe", recipe)
+    if channel:
+        scope.set_tag("channel", channel)
+    if agent_id is not None:
+        scope.set_tag("agent_id", str(agent_id))
+    if user_id is not None:
+        scope.set_tag("user_id", str(user_id))
+    if run_id:
+        scope.set_extra("run_id", run_id)
+    if extra:
+        for k, v in extra.items():
+            scope.set_extra(k, v)
 
 
 def init_sentry(settings: "Settings") -> None:

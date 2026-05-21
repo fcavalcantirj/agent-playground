@@ -38,11 +38,15 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from ..auth.deps import require_user
-from ..instrumentation.sentry import capture_with_scope
+from ..instrumentation.sentry import (
+    capture_message_with_scope,
+    capture_with_scope,
+)
 from ..models.errors import ErrorCode, make_error_envelope
 from ..models.runs import RunGetResponse, RunRequest, RunResponse
 from ..services.personality import is_known as personality_is_known
 from ..services.personality import smoke_prompt_for
+from ..services.run_failure_classifier import classify_invoke_fail
 from ..services.run_store import (
     fetch_run,
     insert_pending_run,
@@ -244,6 +248,52 @@ async def create_run(
             ErrorCode.INFRA_UNAVAILABLE,
             "runner failed to execute",
             category="INFRA_FAIL",
+        )
+
+    # --- Step 7b: classify INVOKE_FAIL upstream errors into friendly copy ---
+    # ``execute_run`` returns normally with ``verdict=FAIL`` when docker
+    # exited 1 because hermes (or any recipe agent) got a non-retryable
+    # client error from the upstream LLM provider. The raw stderr is
+    # docker/hermes plumbing the user can't act on, but the inner provider
+    # error envelope IS knowable. Pattern-match and overwrite ``detail``
+    # with a 1-line user-facing message + action hint; keep ``stderr_tail``
+    # untouched for forensics. Capture every such failure to Sentry —
+    # these aren't HTTP 4xx so the _before_send filter doesn't drop them,
+    # and the ``classified`` tag groups them on the dashboard.
+    if (
+        details.get("verdict") == "FAIL"
+        and details.get("category") == "INVOKE_FAIL"
+    ):
+        classification = classify_invoke_fail(
+            details.get("stderr_tail"),
+            body.model,
+        )
+        if classification is not None:
+            friendly = classification.detail
+            if classification.hint:
+                friendly = f"{friendly} {classification.hint}"
+            details["detail"] = friendly
+            sentry_classified = classification.code
+        else:
+            sentry_classified = "unclassified"
+        # No ap_error_code — HTTP response here is 200 (smoke runs return
+        # the verdict in the body, not as an HTTP error). The _before_send
+        # quota filter keys on ap_error_code in _USER_ERROR_CODES, so an
+        # event without that tag passes through unconditionally.
+        capture_message_with_scope(
+            f"runs.smoke.invoke_fail.{sentry_classified}",
+            level="warning",
+            endpoint="runs.create_run",
+            recipe=body.recipe_name,
+            run_id=run_id,
+            user_id=user_id,
+            model=body.model,
+            classified=sentry_classified,
+            extra={
+                "run_category": "INVOKE_FAIL",
+                "stderr_tail_truncated": (details.get("stderr_tail") or "")[:1500],
+                "agent_name": body.agent_name,
+            },
         )
 
     # --- Step 8: persist verdict (DB scope 2) ---
