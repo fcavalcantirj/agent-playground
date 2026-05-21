@@ -34,6 +34,7 @@ import 'package:agent_playground/core/api/api_client.dart';
 import 'package:agent_playground/core/api/dtos.dart';
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
+import 'package:agent_playground/core/errors/humanize.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/chat/telegram_failed_banner_provider.dart';
 import 'package:agent_playground/features/new_agent/channel_inputs.dart';
@@ -45,6 +46,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 /// D-27 — agent name regex (stricter than backend per PATTERNS line 723):
 /// lowercase + digits + `_` + `-`, must start with letter/digit, no
@@ -77,6 +79,8 @@ class _DeployStepState extends ConsumerState<DeployStep> {
   _DeployStateKind _state = _DeployStateKind.editing;
   String? _errorTitle;
   String? _errorBody;
+  String? _errorHint; // 1-line action hint (null when no clear next step)
+  String? _errorRawStderr; // raw docker stderr for the "Show details" tile
   CancelToken? _cancel;
   Stopwatch? _elapsed;
   Timer? _tick;
@@ -228,23 +232,69 @@ class _DeployStepState extends ConsumerState<DeployStep> {
         if (!mounted) return;
         context.go('/chat/$agentInstanceId');
         return;
-      case DeploySmokeFail(:final reason):
+      case DeploySmokeFail(:final reason, :final stderrTail):
+        final scopeModel = ref.read(wizardScopeProvider).selectedModel?.id;
+        final humanized = humanizeStderr(stderrTail ?? reason, scopeModel);
+        final classified = humanized?.code ?? 'unclassified';
+        // The api_server's run_failure_classifier may have already baked
+        // the friendly copy into `reason` (via runs.detail). If our local
+        // humanizer finds a tighter match — or the server's reason still
+        // looks raw — we prefer the local result. Otherwise pass server
+        // copy through verbatim.
+        final showHumanized = humanized != null && !reason.contains(humanized.detail);
         setState(() {
           _state = _DeployStateKind.smokeFail;
-          _errorTitle = 'Smoke test failed';
-          _errorBody = reason;
+          if (showHumanized) {
+            _errorTitle = humanized.detail;
+            _errorHint = humanized.hint;
+            _errorBody = null;
+          } else if (humanized != null) {
+            // Server already humanized — split into title + (optional) hint.
+            _errorTitle = humanized.detail;
+            _errorHint = humanized.hint;
+            _errorBody = null;
+          } else {
+            _errorTitle = 'Smoke test failed';
+            _errorHint = null;
+            _errorBody = reason;
+          }
+          _errorRawStderr = stderrTail;
         });
+        // Smoke FAILs are HTTP 200 on the wire — bypassing the
+        // Sentry beforeSend 4xx-status filter naturally. Capture every
+        // one so the dashboard surfaces them by classified family.
+        unawaited(
+          _captureSmokeFail(
+            classified: classified,
+            recipe: ref.read(wizardScopeProvider).selectedRecipe?.name,
+            model: scopeModel,
+            reason: reason,
+            stderrTail: stderrTail,
+          ),
+        );
         return;
       case DeployRunsError(:final error):
         setState(() {
           _state = _DeployStateKind.smokeFail;
           _errorTitle = 'Smoke test failed';
+          _errorHint = null;
           _errorBody = error.message;
+          _errorRawStderr = null;
         });
+        unawaited(
+          _captureRunsError(
+            errorCode: error.code.name,
+            recipe: ref.read(wizardScopeProvider).selectedRecipe?.name,
+            model: ref.read(wizardScopeProvider).selectedModel?.id,
+            message: error.message,
+          ),
+        );
         return;
       case DeployInappFail(:final error):
         setState(() {
           _state = _DeployStateKind.inappFail;
+          _errorHint = null;
+          _errorRawStderr = null;
           if (error.code == ErrorCode.tierLimitExceeded) {
             // B-stripe regression fix: don't leak "agent cap reached for
             // tier 'free' (1 active, cap 1)" jargon. Map to plain English.
@@ -271,6 +321,55 @@ class _DeployStepState extends ConsumerState<DeployStep> {
     _tick = null;
     setState(() => _state = _DeployStateKind.editing);
   }
+
+  // ------------------------------------------------------------------
+  // Sentry — capture deploy-time failures with structured tags.
+  // ------------------------------------------------------------------
+
+  Future<void> _captureSmokeFail({
+    required String classified,
+    required String? recipe,
+    required String? model,
+    required String reason,
+    required String? stderrTail,
+  }) async {
+    await Sentry.captureMessage(
+      'deploy.smoke.fail.$classified',
+      level: SentryLevel.warning,
+      withScope: (scope) {
+        scope
+          ..setTag('recipe', recipe ?? 'unknown')
+          ..setTag('model', model ?? 'unknown')
+          ..setTag('classified', classified)
+          ..setContexts('deploy', {
+            'reason': _truncate(reason, 1500),
+            if (stderrTail != null) 'stderr_tail': _truncate(stderrTail, 1500),
+          });
+      },
+    );
+  }
+
+  Future<void> _captureRunsError({
+    required String errorCode,
+    required String? recipe,
+    required String? model,
+    required String message,
+  }) async {
+    await Sentry.captureMessage(
+      'deploy.runs.error.$errorCode',
+      level: SentryLevel.warning,
+      withScope: (scope) {
+        scope
+          ..setTag('recipe', recipe ?? 'unknown')
+          ..setTag('model', model ?? 'unknown')
+          ..setTag('classified', 'runs_http_error')
+          ..setContexts('deploy', {'message': _truncate(message, 1500)});
+      },
+    );
+  }
+
+  static String _truncate(String s, int n) =>
+      s.length <= n ? s : s.substring(0, n);
 
   // ------------------------------------------------------------------
   // Build.
@@ -322,7 +421,9 @@ class _DeployStepState extends ConsumerState<DeployStep> {
               state: _state,
               elapsed: _elapsed,
               errorTitle: _errorTitle,
+              errorHint: _errorHint,
               errorBody: _errorBody,
+              errorRawStderr: _errorRawStderr,
               canDeploy: _formValid(scope),
               onDeploy: _onDeploy,
               onCancel: _onCancelInflight,
@@ -376,7 +477,9 @@ class _DeployFooter extends StatelessWidget {
     required this.state,
     required this.elapsed,
     required this.errorTitle,
+    required this.errorHint,
     required this.errorBody,
+    required this.errorRawStderr,
     required this.canDeploy,
     required this.onDeploy,
     required this.onCancel,
@@ -387,7 +490,16 @@ class _DeployFooter extends StatelessWidget {
   final _DeployStateKind state;
   final Stopwatch? elapsed;
   final String? errorTitle;
+  // 1-line action hint shown under the title in muted color (e.g.
+  // "Generate a fresh key at https://openrouter.ai/keys…"). null when
+  // there is no clear next step.
+  final String? errorHint;
+  // Long-form text shown when the failure isn't classified. Hidden when
+  // the title already carries a friendly message.
   final String? errorBody;
+  // Raw docker stderr surfaced via an ExpansionTile (collapsed by
+  // default) so power users / support can still copy it.
+  final String? errorRawStderr;
   final bool canDeploy;
   final VoidCallback onDeploy;
   final VoidCallback onCancel;
@@ -469,12 +581,25 @@ class _DeployFooter extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                errorBody ?? '',
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-              ),
+              if (errorHint != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  errorHint!,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: SolvrColors.mutedForeground,
+                      ),
+                ),
+              ],
+              if (errorBody != null && errorBody!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  errorBody!,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+              if (errorRawStderr != null && errorRawStderr!.isNotEmpty)
+                _RawStderrTile(stderr: errorRawStderr!),
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -503,5 +628,46 @@ class _DeployFooter extends StatelessWidget {
           ),
         );
     }
+  }
+}
+
+/// Collapsible "Show details" tile that exposes the raw docker stderr in
+/// a monospace block. Hidden by default so the friendly title + hint stay
+/// the primary surface; available to power users + support escalations.
+class _RawStderrTile extends StatelessWidget {
+  const _RawStderrTile({required this.stderr});
+  final String stderr;
+
+  @override
+  Widget build(BuildContext context) {
+    final truncated = stderr.length > 1500 ? stderr.substring(0, 1500) : stderr;
+    return Theme(
+      // strip the default divider lines so the tile reads as one unit
+      // inside the red-bordered error card
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 8),
+        title: Text(
+          'Show details',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: SolvrColors.mutedForeground,
+              ),
+        ),
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            color: SolvrColors.muted,
+            child: SelectableText(
+              truncated,
+              style: SolvrTextStyles.mono(fontSize: 11).copyWith(
+                color: SolvrColors.mutedForeground,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

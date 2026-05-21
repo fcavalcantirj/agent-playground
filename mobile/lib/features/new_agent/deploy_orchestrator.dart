@@ -32,6 +32,7 @@ sealed class DeployOutcome {
   const factory DeployOutcome.smokeFail({
     required String agentInstanceId,
     required String reason,
+    String? stderrTail,
   }) = DeploySmokeFail;
   const factory DeployOutcome.runsError({required ApiError error}) =
       DeployRunsError;
@@ -57,9 +58,17 @@ final class DeployPartialSuccess extends DeployOutcome {
 }
 
 final class DeploySmokeFail extends DeployOutcome {
-  const DeploySmokeFail({required this.agentInstanceId, required this.reason});
+  const DeploySmokeFail({
+    required this.agentInstanceId,
+    required this.reason,
+    this.stderrTail,
+  });
   final String agentInstanceId;
   final String reason;
+  // Raw stderr_tail from the runs row — surfaced in the wizard's
+  // "Show details" affordance so power users / support can copy the
+  // docker-level error without losing the friendly top-line copy.
+  final String? stderrTail;
 }
 
 final class DeployRunsError extends DeployOutcome {
@@ -133,6 +142,7 @@ class DeployOrchestrator {
           return DeployOutcome.smokeFail(
             agentInstanceId: value.agentInstanceId,
             reason: reason.isEmpty ? 'verdict != PASS' : reason,
+            stderrTail: value.stderrTail,
           );
         }
         final agentId = value.agentInstanceId;
