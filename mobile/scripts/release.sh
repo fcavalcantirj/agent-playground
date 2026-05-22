@@ -103,6 +103,15 @@ fetch_prod_oauth() {
   PROD_GOOGLE_IOS_CLIENT_ID="$(echo "$raw" | grep ^AP_OAUTH_GOOGLE_MOBILE_CLIENT_IDS= | cut -d= -f2- | tr ',' '\n' | head -1)"
   export PROD_GOOGLE_IOS_CLIENT_ID
 
+  # RevenueCat public SDK keys (one per platform, used at runtime by the
+  # purchases_flutter SDK). These are SAFE to bake into the AAB / IPA —
+  # they're "public" in RC's threat model (the secret webhook key stays
+  # server-side). When unset in prod, the IAP path no-ops gracefully and
+  # the UI shows "billing unavailable" instead of crashing.
+  PROD_REVENUECAT_API_KEY_IOS="$(echo "$raw" | grep ^AP_REVENUECAT_API_KEY_IOS= | cut -d= -f2- || true)"
+  PROD_REVENUECAT_API_KEY_ANDROID="$(echo "$raw" | grep ^AP_REVENUECAT_API_KEY_ANDROID= | cut -d= -f2- || true)"
+  export PROD_REVENUECAT_API_KEY_IOS PROD_REVENUECAT_API_KEY_ANDROID
+
   for v in PROD_GOOGLE_SERVER_CLIENT_ID PROD_GITHUB_CLIENT_ID PROD_GOOGLE_IOS_CLIENT_ID; do
     if [[ -z "${!v}" ]]; then
       echo "ERROR: $v is empty after ssh fetch — prod .env.prod is missing a required key." >&2
@@ -115,6 +124,12 @@ fetch_prod_oauth() {
   echo "    GOOGLE_SERVER_CLIENT_ID project = $(echo "$PROD_GOOGLE_SERVER_CLIENT_ID" | cut -d- -f1)"
   echo "    GOOGLE_IOS_CLIENT_ID    project = $(echo "$PROD_GOOGLE_IOS_CLIENT_ID" | cut -d- -f1)"
   echo "    GITHUB_CLIENT_ID        prefix  = $(echo "$PROD_GITHUB_CLIENT_ID" | head -c 12)…"
+  if [[ -n "$PROD_REVENUECAT_API_KEY_IOS" || -n "$PROD_REVENUECAT_API_KEY_ANDROID" ]]; then
+    echo "    REVENUECAT_API_KEY_IOS  prefix  = $(echo "$PROD_REVENUECAT_API_KEY_IOS" | head -c 8)…"
+    echo "    REVENUECAT_API_KEY_AND  prefix  = $(echo "$PROD_REVENUECAT_API_KEY_ANDROID" | head -c 8)…"
+  else
+    echo "    REVENUECAT_API_KEY_*    UNSET — IAP will no-op (web-only billing)"
+  fi
   echo
 }
 
@@ -192,7 +207,9 @@ case "$TARGET" in
       "${build_common_defines[@]}" \
       --dart-define "GOOGLE_SERVER_CLIENT_ID=$PROD_GOOGLE_SERVER_CLIENT_ID" \
       --dart-define "GITHUB_CLIENT_ID=$PROD_GITHUB_CLIENT_ID" \
-      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE"
+      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE" \
+      --dart-define "REVENUECAT_API_KEY_IOS=$PROD_REVENUECAT_API_KEY_IOS" \
+      --dart-define "REVENUECAT_API_KEY_ANDROID=$PROD_REVENUECAT_API_KEY_ANDROID"
     APK="$MOBILE_DIR/build/app/outputs/flutter-apk/app-release.apk"
     # Invalidate any stale verification — this is a new build, must re-verify.
     rm -f "$VERIFIED_FLAG"
@@ -235,7 +252,9 @@ case "$TARGET" in
       "${build_common_defines[@]}" \
       --dart-define "GOOGLE_SERVER_CLIENT_ID=$PROD_GOOGLE_SERVER_CLIENT_ID" \
       --dart-define "GITHUB_CLIENT_ID=$PROD_GITHUB_CLIENT_ID" \
-      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE"
+      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE" \
+      --dart-define "REVENUECAT_API_KEY_IOS=$PROD_REVENUECAT_API_KEY_IOS" \
+      --dart-define "REVENUECAT_API_KEY_ANDROID=$PROD_REVENUECAT_API_KEY_ANDROID"
     AAB="$MOBILE_DIR/build/app/outputs/bundle/release/app-release.aab"
     if [[ ! -f "$AAB" ]]; then
       echo "ERROR: AAB not produced at $AAB. Build silently failed?" >&2; exit 10
@@ -278,7 +297,9 @@ case "$TARGET" in
       --dart-define "GOOGLE_SERVER_CLIENT_ID=$PROD_GOOGLE_SERVER_CLIENT_ID" \
       --dart-define "GITHUB_CLIENT_ID=$PROD_GITHUB_CLIENT_ID" \
       --dart-define "GOOGLE_IOS_CLIENT_ID=$PROD_GOOGLE_IOS_CLIENT_ID" \
-      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE"
+      --dart-define "SENTRY_DSN_MOBILE=$PROD_SENTRY_DSN_MOBILE" \
+      --dart-define "REVENUECAT_API_KEY_IOS=$PROD_REVENUECAT_API_KEY_IOS" \
+      --dart-define "REVENUECAT_API_KEY_ANDROID=$PROD_REVENUECAT_API_KEY_ANDROID"
     (cd "$MOBILE_DIR/ios" && "$FASTLANE_BIN" beta)
     rm -f "$VERIFIED_FLAG"
     echo "▶ Uploaded to TestFlight. Processing in App Store Connect"

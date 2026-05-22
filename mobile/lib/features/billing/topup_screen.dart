@@ -25,8 +25,11 @@ import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/features/billing/billing_models.dart';
 import 'package:agent_playground/features/billing/billing_providers.dart';
 import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
+import 'package:agent_playground/features/billing/iap_offerings_provider.dart';
+import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/billing/pack_picker_widget.dart';
 import 'package:agent_playground/features/billing/topup_inflight_widget.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -46,6 +49,19 @@ class _TopUpScreenState extends ConsumerState<TopUpScreen> {
   bool _cancelledByUser = false;
 
   Future<void> _onPackSelected(Pack pack) async {
+    // Capture baseline balance once — both Stripe and IAP paths poll
+    // the same /v1/billing/balance endpoint until the webhook lands.
+    final bal = ref.read(balanceProvider).value;
+    _baselineBalanceCents = bal?.balanceCents ?? 0;
+
+    if (kIsWeb) {
+      await _onPackSelectedViaStripe(pack);
+    } else {
+      await _onPackSelectedViaIap(pack);
+    }
+  }
+
+  Future<void> _onPackSelectedViaStripe(Pack pack) async {
     setState(() => _state = _TopUpState.awaitingCheckout);
     final api = ref.read(apiClientProvider);
     final r = await api.createPackCheckoutSession(packId: pack.id);
@@ -58,11 +74,6 @@ class _TopUpScreenState extends ConsumerState<TopUpScreen> {
         );
         return;
       case Ok(:final value):
-        // Capture baseline balance for polling. AsyncValue.value can be
-        // null if balanceProvider has not loaded yet; treat as 0.
-        final bal = ref.read(balanceProvider).value;
-        _baselineBalanceCents = bal?.balanceCents ?? 0;
-
         final result = await Navigator.of(context).push<PaymentResult>(
           MaterialPageRoute<PaymentResult>(
             builder: (_) => CheckoutWebViewScreen(checkoutUrl: value),
@@ -76,9 +87,47 @@ class _TopUpScreenState extends ConsumerState<TopUpScreen> {
           });
           await _pollUntilTopupReflected();
         } else {
-          // cancelled or webview popped without a result.
           setState(() => _state = _TopUpState.picking);
         }
+    }
+  }
+
+  Future<void> _onPackSelectedViaIap(Pack pack) async {
+    setState(() => _state = _TopUpState.awaitingCheckout);
+    final offerings = await ref.read(iapOfferingsProvider.future);
+    if (!mounted) return;
+    // Match by Pack.id ("pack_5") → RC Package.identifier ("pack_5").
+    // The RC dashboard config is the source of truth; mobile catalog ids
+    // mirror server-side billing_packs.Pack.id.
+    final rcPackages = packPackagesFrom(offerings);
+    final rcPackage = rcPackages.where((p) => p.identifier == pack.id).firstOrNull;
+    if (rcPackage == null) {
+      setState(() => _state = _TopUpState.picking);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(
+          "Credit packs aren't available right now. Try again later.",
+        )),
+      );
+      return;
+    }
+    final status = await IapService.instance.purchase(rcPackage);
+    if (!mounted) return;
+    switch (status) {
+      case IapPurchaseStatus.purchased:
+        setState(() {
+          _state = _TopUpState.awaitingWebhook;
+          _cancelledByUser = false;
+        });
+        await _pollUntilTopupReflected();
+      case IapPurchaseStatus.cancelled:
+        setState(() => _state = _TopUpState.picking);
+      case IapPurchaseStatus.error:
+        setState(() => _state = _TopUpState.picking);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+            "Couldn't complete the purchase. Try again.",
+          )),
+        );
     }
   }
 

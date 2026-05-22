@@ -20,12 +20,12 @@
 // Per-decision-doc D-25, the AppBar usage ticker stays — it lives on
 // every screen and was not reorganized into the hub.
 
-import 'dart:io' show Platform;
-
 import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
 import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
+import 'package:agent_playground/features/billing/iap_offerings_provider.dart';
+import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/usage/usage_providers.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -36,17 +36,27 @@ class BillingHubScreen extends ConsumerWidget {
   const BillingHubScreen({super.key});
 
   Future<void> _startProUpgrade(BuildContext context, WidgetRef ref) async {
-    // Subscription Checkout — same shape as topup_screen.dart:_onPackSelected
-    // but mode='subscription' on the server side. Returns a Stripe-hosted URL
-    // we open in the InAppWebView; webhook flips users.tier=pro.
+    // Dispatch: web → Stripe Checkout (existing path). Mobile (iOS or
+    // Android) → IAP via RevenueCat. Apple 3.1.1 + Google Play Billing
+    // policy both require IAP for digital subs on their stores.
     final messenger = ScaffoldMessenger.of(context);
+    if (kIsWeb) {
+      await _startProUpgradeViaStripe(context, ref, messenger);
+    } else {
+      await _startProUpgradeViaIap(context, ref, messenger);
+    }
+  }
+
+  Future<void> _startProUpgradeViaStripe(
+    BuildContext context, WidgetRef ref, ScaffoldMessengerState messenger,
+  ) async {
     final api = ref.read(apiClientProvider);
     final r = await api.createSubscriptionCheckoutSession();
     if (!context.mounted) return;
     switch (r) {
       case Err(:final error):
         messenger.showSnackBar(
-          SnackBar(content: Text('Couldn\'t start upgrade: ${error.message}')),
+          SnackBar(content: Text("Couldn't start upgrade: ${error.message}")),
         );
       case Ok(:final value):
         final result = await Navigator.of(context).push<PaymentResult>(
@@ -59,11 +69,41 @@ class BillingHubScreen extends ConsumerWidget {
           messenger.showSnackBar(
             const SnackBar(content: Text('Upgrade pending — webhook landing…')),
           );
-          // Tier flip happens via the webhook handler; refresh on lifecycle
-          // resume will pull it. We invalidate explicitly so the badge flips
-          // as soon as the subscription.created event lands.
           ref.invalidate(usageSummaryProvider);
         }
+    }
+  }
+
+  Future<void> _startProUpgradeViaIap(
+    BuildContext context, WidgetRef ref, ScaffoldMessengerState messenger,
+  ) async {
+    final offerings = await ref.read(iapOfferingsProvider.future);
+    final pro = proPackageFrom(offerings);
+    if (pro == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text(
+          "Pro subscription isn't available right now. Try again later.",
+        )),
+      );
+      return;
+    }
+    final status = await IapService.instance.purchase(pro);
+    if (!context.mounted) return;
+    switch (status) {
+      case IapPurchaseStatus.purchased:
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Upgrade pending — webhook landing…')),
+        );
+        ref.invalidate(usageSummaryProvider);
+      case IapPurchaseStatus.cancelled:
+        // No-op; user closed the store sheet.
+        return;
+      case IapPurchaseStatus.error:
+        messenger.showSnackBar(
+          const SnackBar(content: Text(
+            "Couldn't complete the purchase. Try again.",
+          )),
+        );
     }
   }
 
@@ -73,13 +113,6 @@ class BillingHubScreen extends ConsumerWidget {
     final tier = summary.value?.tier ?? 'free';
     final balanceCents = summary.value?.displayBalanceCents ?? 0;
     final isNegative = summary.value?.isNegative ?? false;
-    // iOS App Store Guideline 3.1.1: digital subscriptions and credit
-    // top-ups must use StoreKit IAP, not Stripe. Until StoreKit ships,
-    // hide every UI path that initiates a Stripe Checkout flow on iOS:
-    // Top-up tile, Pro upgrade tap, Ultra upgrade tap. Informational
-    // pricing rows remain visible (Apple allows seeing prices, not
-    // tapping to purchase via web/Stripe).
-    final isIOS = !kIsWeb && Platform.isIOS;
 
     return Scaffold(
       appBar: AppBar(
@@ -97,14 +130,13 @@ class BillingHubScreen extends ConsumerWidget {
             isNegative: isNegative,
           ),
           const SizedBox(height: 16),
-          if (!isIOS)
-            _ActionTile(
-              title: 'Top up',
-              subtitle: tier == 'ultra'
-                  ? 'Add to your balance'
-                  : 'Switch to Ultra and prepay LLM cost',
-              onTap: () => context.push('/billing/topup'),
-            ),
+          _ActionTile(
+            title: 'Top up',
+            subtitle: tier == 'ultra'
+                ? 'Add to your balance'
+                : 'Switch to Ultra and prepay LLM cost',
+            onTap: () => context.push('/billing/topup'),
+          ),
           _ActionTile(
             title: 'Transactions',
             subtitle: 'Top-ups, debits, refunds',
@@ -132,9 +164,7 @@ class BillingHubScreen extends ConsumerWidget {
             subtitle: 'BYOK • for hobbyists',
             entitlements: '5 active agents · 30-day history',
             current: tier == 'pro',
-            onTap: (isIOS || tier == 'pro')
-                ? null
-                : () => _startProUpgrade(context, ref),
+            onTap: tier == 'pro' ? null : () => _startProUpgrade(context, ref),
           ),
           _PlanRow(
             name: 'ULTRA',
@@ -143,19 +173,9 @@ class BillingHubScreen extends ConsumerWidget {
             entitlements:
                 'Unlimited agents · unlimited history · we pay LLM, you reload',
             current: tier == 'ultra',
-            onTap: (isIOS || tier == 'ultra')
-                ? null
-                : () => context.push('/billing/topup'),
+            onTap:
+                tier == 'ultra' ? null : () => context.push('/billing/topup'),
           ),
-          if (isIOS) ...[
-            const SizedBox(height: 16),
-            Text(
-              'Subscription and top-up management is currently web-only.',
-              style: SolvrTextStyles.mono(fontSize: 11).copyWith(
-                color: SolvrColors.mutedForeground,
-              ),
-            ),
-          ],
         ],
       ),
     );

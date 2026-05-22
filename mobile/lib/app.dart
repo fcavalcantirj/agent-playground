@@ -8,10 +8,13 @@
 
 import 'dart:async';
 
+import 'package:agent_playground/core/api/dtos.dart' show SessionUser;
 import 'package:agent_playground/core/api/providers.dart';
+import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/lifecycle/app_lifecycle_observer.dart';
 import 'package:agent_playground/core/router/app_router.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
+import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
 import 'package:agent_playground/features/usage/usage_models.dart';
 import 'package:agent_playground/features/usage/usage_providers.dart';
@@ -46,8 +49,29 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
       // D-16 / WR-01 — drop the Sentry user-context tag on sign-out so any
       // subsequent unauthenticated capture doesn't carry the stale user id.
       Sentry.configureScope((scope) => scope.setUser(null));
+      // Also log the RC SDK out so a subsequent anonymous purchase doesn't
+      // get attributed to the prior user. No-op on web / un-configured.
+      unawaited(IapService.instance.logout());
       _router.go('/login');
     });
+    // On cold-start with an existing session, the route resolver routes
+    // straight to /dashboard without firing loginSuccessProvider. Probe
+    // /v1/users/me once at startup; if it returns a SessionUser, bind
+    // both Sentry user-context AND IapService.appUserID. This lets a
+    // returning Pro user upgrade-to-purchase without first signing out
+    // and back in.
+    unawaited(_bindSessionUserOnStart());
+  }
+
+  Future<void> _bindSessionUserOnStart() async {
+    final r = await ref.read(apiClientProvider).usersMe();
+    if (!mounted) return;
+    if (r is Ok<SessionUser>) {
+      Sentry.configureScope(
+        (scope) => scope.setUser(SentryUser(id: r.value.id)),
+      );
+      await IapService.instance.identify(r.value.id);
+    }
   }
 
   @override
@@ -86,6 +110,11 @@ class _SolvrLabsAppState extends ConsumerState<SolvrLabsApp> {
             ..setUser(SentryUser(id: next.id))
             ..setTag('tier', 'free');
         });
+        // RevenueCat IAP — bind our user_id to RC's appUserID so the
+        // /v1/billing/revenuecat/webhook handler can resolve purchases
+        // back to the right users row. No-op when the RC SDK key isn't
+        // configured for this platform (web, or dart-define unset in dev).
+        unawaited(IapService.instance.identify(next.id));
         ref
           ..read(loginSuccessProvider.notifier).state = null
           ..read(showSignedOutBannerProvider.notifier).state = false;

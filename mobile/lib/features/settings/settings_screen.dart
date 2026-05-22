@@ -16,6 +16,7 @@ import 'package:agent_playground/core/api/providers.dart';
 import 'package:agent_playground/core/api/result.dart';
 import 'package:agent_playground/core/auth/providers.dart';
 import 'package:agent_playground/core/theme/solvr_theme.dart';
+import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/login/login_providers.dart';
 import 'package:agent_playground/shared/confirm_dialog.dart';
 import 'package:flutter/material.dart';
@@ -60,6 +61,13 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => _launchMailto(context, _supportEmail),
           ),
           const SizedBox(height: 24),
+          _SectionHeader(label: 'Billing'),
+          _SettingsTile(
+            label: 'Restore purchases',
+            subtitle: 'Re-link an active Pro subscription on this device',
+            onTap: () => _restorePurchases(context),
+          ),
+          const SizedBox(height: 24),
           _SectionHeader(label: 'Account'),
           _SettingsTile(
             label: 'Sign out',
@@ -73,6 +81,37 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _restorePurchases(BuildContext context) async {
+    // Apple Guideline requires a visible "Restore purchases" affordance
+    // for any app offering subscriptions. We delegate to RC; it re-fetches
+    // CustomerInfo from the store, which re-emits RENEWAL/INITIAL_PURCHASE
+    // webhook events to our backend so the tier flip catches up.
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await IapService.instance.restorePurchases();
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text(
+          'Restore complete — subscription state will refresh shortly.',
+        )),
+      );
+    } on IapNotConfigured {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text(
+          'In-app purchases are not available on this platform.',
+        )),
+      );
+    } on Exception {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text(
+          "Couldn't restore purchases. Try again.",
+        )),
+      );
+    }
   }
 
   Future<void> _launchHttps(BuildContext context, String url) async {
