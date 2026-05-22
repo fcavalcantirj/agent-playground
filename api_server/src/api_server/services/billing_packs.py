@@ -40,33 +40,54 @@ class Pack:
 
     Field shape:
 
-      id              "pack_5" .. "pack_100" — stable across releases (used
-                      in Stripe Checkout session metadata + GET /v1/billing/packs
-                      response + mobile route nav).
-      label           "$5" .. "$100" — display string for UI; D-23 USD-only.
-      usd_amount_cents int — USD price the user pays Stripe (line-item amount).
-      credit_cents    int — credits granted on successful payment. D-07
-                      invariant: credit_cents == usd_amount_cents.
-      stripe_price_id str — Stripe Price object id (price_*); the
-                      Checkout line_item references this. Sourced from
-                      Settings.stripe_price_id_pack_*.
+      id                 "pack_5" .. "pack_100" — stable across releases (used
+                         in Stripe Checkout session metadata + GET /v1/billing/packs
+                         response + mobile route nav).
+      label              "$5" .. "$100" — display string for UI; D-23 USD-only.
+      usd_amount_cents   int — USD price the user pays Stripe / Apple / Google.
+      credit_cents       int — credits granted on successful payment. D-07
+                         invariant: credit_cents == usd_amount_cents.
+      stripe_price_id    str — Stripe Price object id (price_*) for web Checkout.
+                         Sourced from Settings.stripe_price_id_pack_*.
+      apple_product_id   str — App Store Connect product identifier
+                         (e.g. com.solvrlabs.agentplayground.pack_5). Empty
+                         string when iOS IAP not configured. Used by the
+                         RevenueCat webhook to map an Apple transaction back
+                         to a Pack at credit-grant time.
+      google_product_id  str — Google Play Console product identifier (same
+                         shape). Empty string when Android IAP not configured.
     """
     id: str
     label: str
     usd_amount_cents: int
     credit_cents: int
     stripe_price_id: str
+    apple_product_id: str = ""
+    google_product_id: str = ""
 
 
 def _build_packs() -> tuple[Pack, ...]:
-    """Construct the 5-pack tuple from current Settings."""
+    """Construct the 5-pack tuple from current Settings.
+
+    IAP product ids fall back to empty string when the corresponding
+    Settings field is unset, so dev / web-only deploys still build cleanly.
+    """
     s = get_settings()
+    def _ios(attr: str) -> str:
+        return getattr(s, attr, "") or ""
+    def _and(attr: str) -> str:
+        return getattr(s, attr, "") or ""
     return (
-        Pack("pack_5",   "$5",   500,   500,   s.stripe_price_id_pack_5),
-        Pack("pack_10",  "$10",  1000,  1000,  s.stripe_price_id_pack_10),
-        Pack("pack_25",  "$25",  2500,  2500,  s.stripe_price_id_pack_25),
-        Pack("pack_50",  "$50",  5000,  5000,  s.stripe_price_id_pack_50),
-        Pack("pack_100", "$100", 10000, 10000, s.stripe_price_id_pack_100),
+        Pack("pack_5",   "$5",   500,   500,   s.stripe_price_id_pack_5,
+             _ios("apple_product_id_pack_5"),   _and("google_product_id_pack_5")),
+        Pack("pack_10",  "$10",  1000,  1000,  s.stripe_price_id_pack_10,
+             _ios("apple_product_id_pack_10"),  _and("google_product_id_pack_10")),
+        Pack("pack_25",  "$25",  2500,  2500,  s.stripe_price_id_pack_25,
+             _ios("apple_product_id_pack_25"),  _and("google_product_id_pack_25")),
+        Pack("pack_50",  "$50",  5000,  5000,  s.stripe_price_id_pack_50,
+             _ios("apple_product_id_pack_50"),  _and("google_product_id_pack_50")),
+        Pack("pack_100", "$100", 10000, 10000, s.stripe_price_id_pack_100,
+             _ios("apple_product_id_pack_100"), _and("google_product_id_pack_100")),
     )
 
 
@@ -79,3 +100,17 @@ PACKS: tuple[Pack, ...] = _build_packs()
 def get_pack(pack_id: str) -> Pack | None:
     """Return the matching Pack, or None if pack_id is unknown."""
     return next((p for p in PACKS if p.id == pack_id), None)
+
+
+def get_pack_by_apple_product(product_id: str) -> Pack | None:
+    """Reverse-lookup: Apple product id → Pack. None when unknown."""
+    if not product_id:
+        return None
+    return next((p for p in PACKS if p.apple_product_id == product_id), None)
+
+
+def get_pack_by_google_product(product_id: str) -> Pack | None:
+    """Reverse-lookup: Google product id → Pack. None when unknown."""
+    if not product_id:
+        return None
+    return next((p for p in PACKS if p.google_product_id == product_id), None)

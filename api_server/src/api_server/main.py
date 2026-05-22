@@ -48,6 +48,7 @@ from .routes import agent_messages as agent_messages_route
 from .routes import agents as agents_route
 from .routes import auth as auth_route
 from .routes import billing as billing_route
+from .routes import billing_revenuecat_webhook as billing_revenuecat_webhook_route
 from .routes import billing_webhook as billing_webhook_route
 from .routes import health
 from .routes import llm_proxy as llm_proxy_route
@@ -656,6 +657,14 @@ def create_app() -> FastAPI:
     # Stripe is never throttled (T-B-DOS accept).
     app.include_router(
         billing_webhook_route.router, prefix="/v1", tags=["billing"],
+    )
+    # RevenueCat IAP webhook — POST /v1/billing/revenuecat/webhook. Sibling
+    # of the Stripe webhook above; auth via shared-secret Bearer header
+    # instead of HMAC, but same idempotency + same ledger primitives.
+    app.include_router(
+        billing_revenuecat_webhook_route.router,
+        prefix="/v1",
+        tags=["billing"],
     )
     # Phase 29-04 — POST /v1/llm/forward/{path:path} egress proxy.
     app.include_router(llm_proxy_route.router, prefix="/v1", tags=["llm"])

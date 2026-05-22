@@ -284,6 +284,56 @@ class Settings(BaseSettings):
         default=False, validation_alias="AP_STRIPE_AUTOMATIC_TAX_ENABLED"
     )
 
+    # RevenueCat IAP settings — populated when the platform ships Apple +
+    # Google In-App Purchases via RevenueCat. Empty strings in dev / web-
+    # only deploys; the IAP webhook route fail-loud-guards against empty
+    # webhook_secret at request time (mirror Stripe's deferred fail-loud
+    # pattern). Apple/Google product ids feed billing_packs.Pack and are
+    # also empty when IAP isn't configured — Pack.apple_product_id /
+    # google_product_id default to "" via getattr with fallback.
+    revenuecat_api_key_backend: str = Field(
+        default="", validation_alias="AP_REVENUECAT_API_KEY_BACKEND"
+    )
+    revenuecat_webhook_secret: str = Field(
+        default="", validation_alias="AP_REVENUECAT_WEBHOOK_SECRET"
+    )
+    apple_product_id_pro_monthly: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PRO_MONTHLY"
+    )
+    apple_product_id_pack_5: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PACK_5"
+    )
+    apple_product_id_pack_10: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PACK_10"
+    )
+    apple_product_id_pack_25: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PACK_25"
+    )
+    apple_product_id_pack_50: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PACK_50"
+    )
+    apple_product_id_pack_100: str = Field(
+        default="", validation_alias="AP_APPLE_PRODUCT_ID_PACK_100"
+    )
+    google_product_id_pro_monthly: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PRO_MONTHLY"
+    )
+    google_product_id_pack_5: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PACK_5"
+    )
+    google_product_id_pack_10: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PACK_10"
+    )
+    google_product_id_pack_25: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PACK_25"
+    )
+    google_product_id_pack_50: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PACK_50"
+    )
+    google_product_id_pack_100: str = Field(
+        default="", validation_alias="AP_GOOGLE_PRODUCT_ID_PACK_100"
+    )
+
     @model_validator(mode="after")
     def _substitute_stripe_dev_placeholders(self) -> "Settings":
         """In dev: log a warning per missing AP_STRIPE_* and substitute a

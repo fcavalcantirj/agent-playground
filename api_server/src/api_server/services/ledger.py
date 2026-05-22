@@ -210,7 +210,8 @@ async def record_tier_change(
     user_id: UUID,
     from_tier: str,
     to_tier: str,
-    stripe_event_id: str,
+    stripe_event_id: str | None = None,
+    revenuecat_event_id: str | None = None,
 ) -> None:
     """Insert a kind='tier_change', amount_cents=0 audit row (D-26).
 
@@ -218,27 +219,45 @@ async def record_tier_change(
     webhook handler's responsibility (D-04 — webhook is the sole tier
     writer); this helper only records the audit trail.
 
-    Idempotent on UNIQUE(reference_id, reference_type) where
-    reference_id = stripe_event_id and reference_type = 'stripe_event'.
+    Idempotent on UNIQUE(reference_id, reference_type). The discriminator
+    distinguishes Stripe events from RevenueCat (IAP) events:
+
+      * stripe_event_id      → reference_type='stripe_event'   (web subs)
+      * revenuecat_event_id  → reference_type='revenuecat_event' (iOS/Android IAP)
+
+    Exactly one of the two MUST be provided. The existing partial UNIQUE
+    on (reference_id, reference_type) — added in migration 014 — handles
+    cross-source idempotency without a schema change: a Stripe replay
+    can't collide with an RC replay because the reference_type differs.
 
     Caller MUST be inside ``conn.transaction()``.
 
     Note: ``from_tier`` and ``to_tier`` are accepted but NOT persisted in
     a separate column — Phase B keeps the audit trail in the existing
     ledger schema (D-26 — no separate audit_log table). The webhook
-    handler logs the from/to transition; the ledger row's
-    ``stripe_event_id`` lets ops cross-reference the Stripe event payload
-    if a per-event from→to lookup is needed.
+    handler logs the from/to transition; the ledger row's reference_id
+    lets ops cross-reference the upstream payload if a per-event from→to
+    lookup is needed.
     """
     # Defensive validation — caller may pass unknown tier strings if a
-    # future Stripe webhook payload surprises us; raise so we surface
-    # the issue early rather than silently store nonsense.
+    # future webhook payload surprises us; raise so we surface the issue
+    # early rather than silently store nonsense.
     valid_tiers = ("free", "pro", "ultra")
     if from_tier not in valid_tiers or to_tier not in valid_tiers:
         raise ValueError(
             f"record_tier_change: from_tier={from_tier!r} to_tier={to_tier!r} "
             f"— both must be in {valid_tiers}"
         )
+    # Exactly one event-source — caller bug if both or neither provided.
+    if (stripe_event_id is None) == (revenuecat_event_id is None):
+        raise ValueError(
+            "record_tier_change: exactly one of stripe_event_id or "
+            "revenuecat_event_id must be provided"
+        )
+    if stripe_event_id is not None:
+        reference_id, reference_type = stripe_event_id, "stripe_event"
+    else:
+        reference_id, reference_type = revenuecat_event_id, "revenuecat_event"
     # Savepoint around the INSERT — UNIQUE-violation rollback aborts only
     # the savepoint, not the outer webhook-handler transaction. Same
     # defensive isolation as debit_user / credit_user.
@@ -247,8 +266,8 @@ async def record_tier_change(
             await conn.execute(
                 "INSERT INTO credit_transactions "
                 "  (user_id, kind, amount_cents, reference_id, reference_type) "
-                "  VALUES ($1, 'tier_change', 0, $2, 'stripe_event')",
-                user_id, stripe_event_id,
+                "  VALUES ($1, 'tier_change', 0, $2, $3)",
+                user_id, reference_id, reference_type,
             )
     except asyncpg.UniqueViolationError:
         # Already audited — webhook is being retried after a 5xx blip.
