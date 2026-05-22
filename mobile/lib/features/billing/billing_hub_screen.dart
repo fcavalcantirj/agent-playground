@@ -27,7 +27,8 @@ import 'package:agent_playground/features/billing/checkout_webview_screen.dart';
 import 'package:agent_playground/features/billing/iap_offerings_provider.dart';
 import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/usage/usage_providers.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -36,14 +37,34 @@ class BillingHubScreen extends ConsumerWidget {
   const BillingHubScreen({super.key});
 
   Future<void> _startProUpgrade(BuildContext context, WidgetRef ref) async {
-    // Dispatch: web → Stripe Checkout (existing path). Mobile (iOS or
-    // Android) → IAP via RevenueCat. Apple 3.1.1 + Google Play Billing
-    // policy both require IAP for digital subs on their stores.
+    // Three-way dispatch:
+    //   * web → Stripe Checkout (existing web-view path)
+    //   * mobile + IAP configured → RevenueCat (iOS Apple 3.1.1, Android
+    //     Play Billing)
+    //   * mobile + IAP NOT configured → Android falls back to
+    //     Stripe-via-WebView (Google's Reader-App rule allows hybrid
+    //     apps to use external payment), iOS shows "coming soon"
+    //     (Apple disallows Stripe for digital goods).
+    // The fallback keeps the pre-+13 Android purchase path working
+    // until RC keys land in prod .env.prod.
     final messenger = ScaffoldMessenger.of(context);
     if (kIsWeb) {
       await _startProUpgradeViaStripe(context, ref, messenger);
-    } else {
+      return;
+    }
+    if (IapService.instance.enabled) {
       await _startProUpgradeViaIap(context, ref, messenger);
+      return;
+    }
+    // Mobile, no IAP — Android falls back to Stripe, iOS shows a stub.
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _startProUpgradeViaStripe(context, ref, messenger);
+    } else {
+      messenger.showSnackBar(
+        const SnackBar(content: Text(
+          'Pro upgrade is coming soon to iOS.',
+        )),
+      );
     }
   }
 

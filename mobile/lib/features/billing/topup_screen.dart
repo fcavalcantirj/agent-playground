@@ -29,7 +29,8 @@ import 'package:agent_playground/features/billing/iap_offerings_provider.dart';
 import 'package:agent_playground/features/billing/iap_service.dart';
 import 'package:agent_playground/features/billing/pack_picker_widget.dart';
 import 'package:agent_playground/features/billing/topup_inflight_widget.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -54,10 +55,26 @@ class _TopUpScreenState extends ConsumerState<TopUpScreen> {
     final bal = ref.read(balanceProvider).value;
     _baselineBalanceCents = bal?.balanceCents ?? 0;
 
+    // Three-way dispatch (mirrors billing_hub_screen._startProUpgrade):
+    // web→Stripe, mobile+IAP-on→RC, Android+IAP-off→Stripe fallback,
+    // iOS+IAP-off→"coming soon".
     if (kIsWeb) {
       await _onPackSelectedViaStripe(pack);
-    } else {
+      return;
+    }
+    if (IapService.instance.enabled) {
       await _onPackSelectedViaIap(pack);
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _onPackSelectedViaStripe(pack);
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(
+          'Top-up is coming soon to iOS.',
+        )),
+      );
     }
   }
 
